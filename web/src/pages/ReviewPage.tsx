@@ -8,8 +8,10 @@ import type { ReviewDetail, RoundDetail, Side, Thread as ThreadType, ThreadAncho
 import { StateChip, ThemeToggle } from "../App";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
+import { useFullDiffs } from "../components/ContextExpand";
 import DiffView, { fileDomId, type AnnotationMeta, type DiffStyle } from "../components/DiffView";
 import FileTree from "../components/FileTree";
+import RoundSwitcher from "../components/RoundSwitcher";
 import SubmitDialog from "../components/SubmitDialog";
 import Thread from "../components/Thread";
 import ThreadsPanel from "../components/ThreadsPanel";
@@ -57,9 +59,11 @@ function annotationsEqual(
 
 export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate }: ReviewPageProps) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
-  // U9 adds a round switcher; until then the latest round is shown.
-  const roundSeq: number | null = null;
+  // null tracks the latest round; a number pins a frozen prior round.
+  const [roundSeq, setRoundSeq] = useState<number | null>(null);
   const [roundDetail, setRoundDetail] = useState<RoundDetail | null>(null);
+  const [patch, setPatch] = useState<string | null>(null);
+  const [roundError, setRoundError] = useState<string | null>(null);
   const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[] | null>(null);
   const [threads, setThreads] = useState<ThreadType[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
@@ -91,29 +95,33 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
   const latestSeq = detail?.rounds.length ? detail.rounds[detail.rounds.length - 1].seq : null;
   const effectiveSeq = roundSeq ?? latestSeq;
 
+  const [roundFetchNonce, setRoundFetchNonce] = useState(0);
   useEffect(() => {
     if (effectiveSeq === null) return;
     let cancelled = false;
     setRoundDetail(null);
     setParsedFiles(null);
+    setPatch(null);
+    setRoundError(null);
     Promise.all([api.getRound(reviewId, effectiveSeq), api.getPatch(reviewId, effectiveSeq)])
-      .then(([round, patch]) => {
+      .then(([round, patchText]) => {
         if (cancelled) return;
         setRoundDetail(round);
-        if (patch.trim() === "") {
+        setPatch(patchText);
+        if (patchText.trim() === "") {
           setParsedFiles([]);
           return;
         }
-        const parsed = parsePatchFiles(patch);
+        const parsed = parsePatchFiles(patchText);
         setParsedFiles(parsed.flatMap((p) => p.files));
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) setRoundError(String(e));
       });
     return () => {
       cancelled = true;
     };
-  }, [reviewId, effectiveSeq]);
+  }, [reviewId, effectiveSeq, roundFetchNonce]);
 
   // Live updates (R7): agent replies and new rounds appear without
   // reload. Draft edits are local-only, so refetching on every event
@@ -139,6 +147,9 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
 
   const roundFiles = useMemo(() => roundDetail?.files ?? [], [roundDetail]);
   const currentRoundId = roundDetail?.round.id ?? 0;
+  const viewingLatest = effectiveSeq !== null && effectiveSeq === latestSeq;
+  // R25: expansion content comes from the frozen snapshot.
+  const displayFiles = useFullDiffs(reviewId, effectiveSeq, parsedFiles, roundFiles, patch);
   const reviewState = detail?.review.state ?? "open";
 
   const draftCount = useMemo(
@@ -229,6 +240,7 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
             anchorState="live"
             reviewState={reviewState}
             onChanged={loadThreads}
+            onJumpToOrigin={(seq) => setRoundSeq(seq)}
           />
         );
       }
@@ -250,10 +262,17 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
     setPending({ path, side, line: end, startLine: start !== end ? start : undefined });
   }, []);
 
+  // R22: a live thread scrolls to its anchor; an outdated or orphaned
+  // one jumps to its originating round snapshot.
   const jumpToThread = useCallback(
     (thread: ThreadType, anchor: ThreadAnchor | undefined) => {
-      const target = anchor ?? thread.anchors.find((a) => a.roundId === thread.originRoundId);
-      if (target) scrollToFile(target.path);
+      if (anchor && anchor.state === "live") {
+        scrollToFile(anchor.path);
+      } else {
+        setRoundSeq(thread.originRoundSeq);
+        const origin = thread.anchors.find((a) => a.roundId === thread.originRoundId);
+        if (origin) setSelectedPath(origin.path);
+      }
       setShowPanel(false);
     },
     [scrollToFile],
@@ -308,7 +327,17 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
               #{detail.review.id} {detail.review.branch || detail.review.sourceArgs.join(" ") || "working tree"}
             </span>
             <StateChip state={detail.review.state} />
-            {effectiveSeq !== null && <span className="round-label">round {effectiveSeq}</span>}
+            {effectiveSeq !== null && (
+              <RoundSwitcher
+                rounds={detail.rounds}
+                current={effectiveSeq}
+                disabled={roundDetail === null && roundError === null}
+                onSelect={(seq) => setRoundSeq(seq === latestSeq ? null : seq)}
+              />
+            )}
+            {effectiveSeq !== null && !viewingLatest && (
+              <span className="chip chip-outdated">viewing a past round</span>
+            )}
           </>
         )}
         <div className="topbar-actions">
@@ -360,20 +389,27 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
           />
         </aside>
         <main className="diff-pane">
-          {parsedFiles === null ? (
-            <div className="diff-loading" data-testid="diff-loading">
+          {roundError !== null ? (
+            <div className="diff-error" data-testid="diff-error">
+              <p className="error">{roundError}</p>
+              <button type="button" className="btn" onClick={() => setRoundFetchNonce((n) => n + 1)}>
+                Retry
+              </button>
+            </div>
+          ) : displayFiles === null ? (
+            <div className="diff-loading diff-skeleton" data-testid="diff-loading">
               Loading diff…
             </div>
           ) : (
             <DiffView
-              files={parsedFiles}
+              files={displayFiles}
               roundFiles={roundFiles}
               diffStyle={diffStyle}
               theme={theme}
               annotationsByFile={annotationsByFile}
               renderAnnotation={renderAnnotation}
-              onGutterAdd={reviewState !== "closed" ? onGutterAdd : undefined}
-              onLineSelect={reviewState !== "closed" ? onLineSelect : undefined}
+              onGutterAdd={reviewState !== "closed" && viewingLatest ? onGutterAdd : undefined}
+              onLineSelect={reviewState !== "closed" && viewingLatest ? onLineSelect : undefined}
             />
           )}
         </main>

@@ -30,6 +30,7 @@ vi.mock("@pierre/diffs/react", () => ({
 
 vi.mock("@pierre/diffs", () => ({
   parsePatchFiles: () => [{ files: [{ name: "a.go" }] }],
+  processFile: () => undefined,
 }));
 
 vi.mock("../api", () => ({
@@ -38,6 +39,7 @@ vi.mock("../api", () => ({
     listThreads: vi.fn(),
     getRound: vi.fn(),
     getPatch: vi.fn(),
+    getFileVersions: vi.fn(() => new Promise(() => {})),
     createThread: vi.fn(),
     reply: vi.fn(),
     editComment: vi.fn(),
