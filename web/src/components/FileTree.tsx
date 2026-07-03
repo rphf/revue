@@ -123,10 +123,13 @@ export default function FileTree({ files, viewed, onToggleViewed, onSelect, sele
       const { file } = node;
       const badge = statusBadge[file.status];
       return (
+        // The whole row is the click target (the viewed dot opts out),
+        // so the pointer affordance matches the hit area.
         <div
           key={`file:${file.path}`}
           className={`tree-row tree-file${selectedPath === file.path ? " selected" : ""}`}
           style={{ paddingLeft: depth * 14 + 6 }}
+          onClick={() => onSelect(file.path)}
         >
           <button
             type="button"
@@ -134,9 +137,12 @@ export default function FileTree({ files, viewed, onToggleViewed, onSelect, sele
             title={viewed.has(file.path) ? "Mark as not viewed" : "Mark as viewed"}
             aria-label={`Toggle viewed: ${file.path}`}
             aria-pressed={viewed.has(file.path)}
-            onClick={() => onToggleViewed(file.path)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleViewed(file.path);
+            }}
           />
-          <button type="button" className="tree-name tree-link" onClick={() => onSelect(file.path)}>
+          <button type="button" className="tree-name tree-link">
             {file.status === "renamed" && file.oldPath ? (
               <span className="tree-rename">
                 <span className="tree-old-path">{file.oldPath}</span>

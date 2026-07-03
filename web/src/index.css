@@ -369,3 +369,12 @@ code {
   font-weight: 700;
   padding: 0;
 }
+
+/* Tree rows are fully clickable; show it. */
+.tree-row {
+  cursor: pointer;
+}
+
+.tree-file:active {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
