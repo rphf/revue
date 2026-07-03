@@ -5,7 +5,7 @@ UI_DIST := internal/server/ui/dist
 # the ambient environment.
 export GOFLAGS :=
 
-.PHONY: build web-install web-build ui-dist test web-test smoke clean
+.PHONY: build web-install web-build ui-dist test web-test smoke e2e clean
 
 build: web-build
 	$(GO) build -o bin/revue ./cmd/revue
@@ -32,6 +32,11 @@ web-test:
 # -> agent reads -> reply -> round 2 -> anchors recomputed.
 smoke: build
 	bash scripts/smoke.sh
+
+# Browser e2e: the full review loop in chromium against the built
+# binary and a seeded fixture repo.
+e2e: build
+	cd web && npx playwright test
 
 clean:
 	rm -rf bin $(UI_DIST)
