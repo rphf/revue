@@ -16,6 +16,7 @@ execution: code
 - **Objective:** Ship revue v1 — a fully local, open-source code-review tool where a human reviews AI-agent-written diffs in a GitHub-style browser UI and the agent consumes that feedback through a CLI, with first-class git-spice stack support.
 - **Product authority:** The Product Contract below (2026-07-03 brainstorm, clarified by planning research — see the preservation note in the Planning Contract). Raphael is the sole decision-maker.
 - **Execution profile:** Greenfield repo. Three phased milestones: core review loop, rounds/anchoring, stacks + export + release. The anchoring engine is built test-first.
+- **Landing strategy (global):** Everything stays local — no remote, no pushes, no PRs. Work lands as a git-spice stack with one branch per implementation unit; defects found in earlier units are patched with fixup commits on the owning branch followed by an upstack restack. Full mechanics in the Planning Contract's Landing Strategy section.
 - **Stop conditions:** Surface anything that changes Product Contract behavior or contradicts a Key Technical Decision instead of guessing. Details the plan leaves open are implementer judgment.
 - **Open blockers:** None.
 
@@ -207,6 +208,13 @@ flowchart TB
 - KTD13. **git-spice integration reads only `gs log short --all --json`.** Stack model built from `name/down/ups`; per-branch reviews diff each branch against the merge-base with its down branch (three-dot semantics, matching how GitHub computes PR diffs) so a not-yet-restacked stack never shows inverted downstack changes. `gs` missing, too old, or erroring → stack features hidden with a notice (R16).
 - KTD14. **License: MIT** (default for maximum-adoption personal OSS; trivial to change before first release if you prefer).
 
+### Landing Strategy (global — applies to every unit)
+
+- **Local only.** No remote is configured or required; nothing is ever pushed and no PRs are opened (`gs branch submit` is not used). All history lives in the local repo until the user decides otherwise.
+- **One git-spice branch per unit.** U1 runs `git init` and `gs repo init` (trunk `main`). Each unit lands on its own branch stacked bottom-up in dependency order (naming directional: `u01-scaffold`, `u02-storage`, …), created with `gs branch create` on top of the previous unit's branch.
+- **Fix-forward via fixup + restack.** When a later unit reveals a defect in an earlier unit, do not patch it in place on the current branch: check out the owning unit's branch (`gs branch checkout`), land the fix as a fixup commit targeting the original commit (`git commit --fixup <sha>`), then restack everything above (`gs upstack restack`, or `gs stack restack`). Leave fixup commits unsquashed — the history must read as what each unit built and what later work had to patch.
+- **Dogfood bonus.** This development stack doubles as a real git-spice fixture: once U10 lands, revue can review its own remaining stack, exercising AE1 on real restacks.
+
 ### High-Level Technical Design
 
 Component topology — one binary, three faces (CLI, HTTP+SSE, embedded SPA):
@@ -281,7 +289,8 @@ flowchart TB
 | U9 | Round history and context expansion UI | web/src/ | U6, U8 |
 | U10 | git-spice stack integration | internal/spice/, web/src/ | U3, U4, U6 |
 | U11 | Markdown export | internal/export/ | U2, U4, U8 |
-| U12 | Release pipeline and docs | .goreleaser.yaml, README.md | U1–U11 |
+| U12 | Release pipeline and docs | .goreleaser.yaml, README.md | U1–U11, U13 |
+| U13 | Playwright e2e suite | web/playwright.config.ts, web/tests/ | U4, U5, U6, U7 |
 
 ### Phase 1 — Core review loop
 
@@ -291,7 +300,7 @@ flowchart TB
 - **Requirements:** R17, R18.
 - **Dependencies:** none.
 - **Files:** `go.mod`, `cmd/revue/main.go`, `internal/server/ui/embed.go`, `web/` (Vite + React 19 + TypeScript scaffold), `Makefile`, `.gitignore`, `LICENSE`, `README.md` (stub), `.github/workflows/ci.yml`.
-- **Approach:** `git init`; Go module with a minimal cobra-or-stdlib command entry (implementer's call); Vite scaffold in `web/`; `make build` runs the web build then `go build` with `go:embed all:dist` and index-fallback middleware; CI runs build + both test suites. MIT license per KTD14.
+- **Approach:** `git init` and `gs repo init` with trunk `main`; every unit from here lands on its own git-spice branch per the Landing Strategy. Go module with a minimal cobra-or-stdlib command entry (implementer's call); Vite scaffold in `web/`; `make build` runs the web build then `go build` with `go:embed all:dist` and index-fallback middleware; CI config runs build + both test suites (it activates if the repo is ever pushed — nothing is pushed during this plan). MIT license per KTD14.
 - **Test scenarios:** Test expectation: none — scaffolding; CI itself is the proof.
 - **Verification:** `make build` produces a binary; running it serves the placeholder page on 127.0.0.1; CI green on the initial push.
 
@@ -400,11 +409,21 @@ flowchart TB
 - **Test scenarios:** golden-file test for a review with live, outdated, and resolved threads across two rounds; drafts absent from output; export of a closed review works.
 - **Verification:** `go test ./internal/export` green against goldens.
 
+### U13. Playwright end-to-end suite
+
+- **Goal:** Browser-level proof of the review loop against the real binary — same e2e shape as `mamimo/client`, chromium-only for now.
+- **Requirements:** R2, R4, R5, R7; exercises AE3 and AE7 end-to-end.
+- **Dependencies:** U4, U5, U6, U7.
+- **Files:** `web/playwright.config.ts`, `web/tests/*.spec.ts`, `web/tests/helpers/seed.ts`, `web/tests/scripts/start-test-server.sh`, `web/package.json` (`test:e2e` script, `@playwright/test` dev dep), `Makefile` (e2e target), `.github/workflows/ci.yml` (e2e job).
+- **Approach:** Mirror `mamimo/client`'s Playwright setup: a single `chromium` project (`devices["Desktop Chrome"]`) — one browser for now; `fullyParallel: false` with `workers: 1` (specs share one seeded server); `retries: 2` on CI only; `trace: "on-first-retry"` with the html reporter; external hosts blocked at DNS level via `--host-resolver-rules` (localhost/127.0.0.1 only). The `webServer` block runs a start script that builds the binary, creates a throwaway fixture git repo and temp data dir, seeds a review through the CLI, and serves on a fixed test port with a health URL; `globalSetup` waits for health. Specs drive the served UI; agent-side actions run the real CLI as a child process so the loop under test is the real one.
+- **Test scenarios:** smoke — the seeded review renders tree and diff; draft → submit with verdict → CLI feedback returns the comments and verdict (Covers AE3, end-to-end); agent reply appears live without reload; round 2 via CLI → unchanged-hunk thread stays live, changed-hunk thread shows outdated (Covers AE7, end-to-end); threads panel filters partition live/outdated/resolved; empty-diff round renders the empty state.
+- **Verification:** `make e2e` green locally and in CI (playwright report uploaded as CI artifact on failure).
+
 ### U12. Release pipeline and docs
 
 - **Goal:** Shippable open-source project: cross-compiled releases and a README that onboards a stranger.
 - **Requirements:** R17, R18.
-- **Dependencies:** U1–U11.
+- **Dependencies:** U1–U11, U13.
 - **Files:** `.goreleaser.yaml`, `.github/workflows/release.yml`, `README.md`.
 - **Approach:** goreleaser: darwin/linux × amd64/arm64, `CGO_ENABLED=0`, web build as a pre-hook. README: install (release binary + `go install`), quickstart (ad-hoc review in 3 commands), the agent integration guide — human-resume loop first, `wait` + exit-code contract second — and the git-spice section.
 - **Test scenarios:** Test expectation: none — packaging; the snapshot build is the proof.
@@ -420,18 +439,20 @@ flowchart TB
 | Web tests | `make web-test` (vitest in `web/`) | UI components: tree, diff, threads, panel, rounds | U5, U6, U9 |
 | Build | `make build` | SPA builds, embeds, binary compiles and serves | U1, U4, U5 |
 | Loop smoke | `make smoke` | scripted end-to-end on a fixture repo: open → draft → submit → agent reads → reply → round 2 → anchors recomputed | U3–U8 |
+| Browser e2e | `make e2e` (Playwright, chromium only) | the full review loop in a real browser against the built binary and a seeded fixture repo | U5–U9, U13 |
 | Release | `goreleaser release --snapshot --clean` | CGO-free cross-compilation, four targets | U12 |
 | Lint | `go vet ./...` (inside `make test`) | static sanity | all Go units |
 
-Acceptance-example trace: AE1, AE2, AE7 → anchor suite (U8); AE3, AE6, AE8, AE9 → server + CLI suites (U4, U7); AE4 → server suite + threads UI test (U4, U6); AE5 → spice suite (U10).
+Acceptance-example trace: AE1, AE2, AE7 → anchor suite (U8); AE3, AE6, AE8, AE9 → server + CLI suites (U4, U7); AE4 → server suite + threads UI test (U4, U6); AE5 → spice suite (U10); AE3 and AE7 additionally proven end-to-end in the browser by the Playwright suite (U13).
 
 ---
 
 ## Definition of Done
 
-- All twelve units landed with their per-unit verification green; `make test`, `make web-test`, `make build`, and `make smoke` all pass.
+- All thirteen units landed with their per-unit verification green; `make test`, `make web-test`, `make build`, `make smoke`, and `make e2e` all pass.
 - Every acceptance example (AE1–AE9) is enforced by at least one automated test named for it.
 - The README lets a stranger install revue and complete a first review; the agent integration section documents the human-resume loop, `wait`, and the exit-code contract.
 - `goreleaser` snapshot build succeeds for darwin/linux × amd64/arm64 with CGO disabled.
 - No dead-end or experimental code from abandoned approaches remains in the tree; `go vet` is clean.
+- History is a local git-spice stack with one branch per unit; later-discovered defects were patched as fixup commits on the owning unit's branch followed by an upstack restack; fixups remain unsquashed; nothing was pushed to any remote.
 - Product Contract behaviors are unchanged from this plan without explicit user sign-off.
