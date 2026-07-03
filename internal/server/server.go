@@ -77,13 +77,18 @@ type State struct {
 
 // DataDir returns the per-repo data directory under the user config
 // dir, keyed by a hash of the repo path — nothing is written inside
-// the repo.
+// the repo. REVUE_DATA_DIR overrides the base for tests and scripted
+// runs that must not touch the real user dir.
 func DataDir(repoRoot string) (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	base := os.Getenv("REVUE_DATA_DIR")
+	if base == "" {
+		userDir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(userDir, "revue")
 	}
-	return filepath.Join(base, "revue", repoKey(repoRoot)), nil
+	return filepath.Join(base, repoKey(repoRoot)), nil
 }
 
 func statePath(dataDir string) string { return filepath.Join(dataDir, "state.json") }
