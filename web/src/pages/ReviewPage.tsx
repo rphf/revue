@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { api } from "../api";
@@ -26,6 +26,33 @@ interface PendingComment {
   side: Side;
   line: number;
   startLine?: number;
+}
+
+// threadRev fingerprints a thread's visible content so annotation
+// equality can tell "same anchor, changed conversation" apart.
+function threadRev(t: ThreadType): string {
+  return `${t.resolved ? 1 : 0}|${t.comments.map((c) => `${c.id}#${c.draft ? 1 : 0}#${c.body}`).join("\u0000")}`;
+}
+
+function annotationsEqual(
+  a: DiffLineAnnotation<AnnotationMeta>[],
+  b: DiffLineAnnotation<AnnotationMeta>[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ma = a[i].metadata;
+    const mb = b[i].metadata;
+    if (
+      a[i].side !== b[i].side ||
+      a[i].lineNumber !== b[i].lineNumber ||
+      ma?.kind !== mb?.kind ||
+      ma?.threadId !== mb?.threadId ||
+      ma?.rev !== mb?.rev
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate }: ReviewPageProps) {
@@ -120,13 +147,17 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
   );
 
   // Inline annotations: every thread with a live anchor in the shown
-  // round, plus the single pending comment form.
+  // round, plus the single pending comment form. Per-file arrays keep
+  // their identity when their content is unchanged, so a thread reload
+  // (every SSE event) re-renders only the file diffs whose annotations
+  // actually changed — not all of them.
+  const prevAnnotationsRef = useRef<Map<string, DiffLineAnnotation<AnnotationMeta>[]>>(new Map());
   const annotationsByFile = useMemo(() => {
-    const map = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
+    const next = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
     const push = (path: string, a: DiffLineAnnotation<AnnotationMeta>) => {
-      const list = map.get(path) ?? [];
+      const list = next.get(path) ?? [];
       list.push(a);
-      map.set(path, list);
+      next.set(path, list);
     };
     for (const t of threads) {
       const anchor = t.anchors.find((a) => a.roundId === currentRoundId && a.state === "live");
@@ -134,7 +165,9 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
         push(anchor.path, {
           side: anchor.side,
           lineNumber: anchor.line,
-          metadata: { kind: "thread", threadId: t.id },
+          // rev captures the thread's visible content: any reply,
+          // edit, or resolve changes it and re-renders just that file.
+          metadata: { kind: "thread", threadId: t.id, rev: threadRev(t) },
         });
       }
     }
@@ -145,13 +178,23 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
         metadata: { kind: "pending" },
       });
     }
-    return map;
+    const prev = prevAnnotationsRef.current;
+    for (const [path, arr] of next) {
+      const old = prev.get(path);
+      if (old && annotationsEqual(old, arr)) next.set(path, old);
+    }
+    prevAnnotationsRef.current = next;
+    return next;
   }, [threads, currentRoundId, pending]);
 
   const threadsById = useMemo(() => new Map(threads.map((t) => [t.id, t])), [threads]);
 
-  const renderAnnotation = useCallback(
-    (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => {
+  // renderAnnotation must be identity-stable or every annotation map
+  // change re-renders every file; the latest closure lives in a ref.
+  const renderAnnotationRef = useRef<(a: DiffLineAnnotation<AnnotationMeta>, path: string) => React.ReactNode>(
+    () => null,
+  );
+  renderAnnotationRef.current = (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => {
       const meta = annotation.metadata;
       if (meta?.kind === "pending" && pending && pending.path === path) {
         return (
@@ -190,8 +233,10 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
         );
       }
       return null;
-    },
-    [pending, reviewId, threadsById, reviewState, loadThreads],
+  };
+  const renderAnnotation = useCallback(
+    (a: DiffLineAnnotation<AnnotationMeta>, path: string) => renderAnnotationRef.current(a, path),
+    [],
   );
 
   const onGutterAdd = useCallback((path: string, side: Side, lineNumber: number) => {

@@ -8,10 +8,13 @@ import { treePathCompare } from "./FileTree";
 export type DiffStyle = "unified" | "split";
 
 // Metadata attached to each annotation; U6 renders threads and
-// pending comment forms through it.
+// pending comment forms through it. rev fingerprints the thread's
+// visible content so annotation-array identity can be preserved when
+// nothing changed (re-render containment).
 export interface AnnotationMeta {
   kind: "thread" | "pending";
   threadId?: number;
+  rev?: string;
 }
 
 export interface DiffViewProps {
