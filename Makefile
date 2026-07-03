@@ -1,6 +1,10 @@
 GO ?= go
 UI_DIST := internal/server/ui/dist
 
+# This repo does not vendor; shield builds from a stray -mod=vendor in
+# the ambient environment.
+export GOFLAGS :=
+
 .PHONY: build web-install web-build ui-dist test web-test clean
 
 build: web-build
