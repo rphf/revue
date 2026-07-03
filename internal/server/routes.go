@@ -174,6 +174,7 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
 	}
 	var review *store.Review
 	var round *store.Round
+	var evt *store.Event
 	err = s.store.WithTx(func(tx *store.Store) error {
 		var err error
 		review, err = tx.CreateReview(s.repoRoot, req.Branch, req.Args)
@@ -184,7 +185,7 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		_, err = tx.AppendEvent(review.ID, eventReviewCreated, map[string]any{"review": review, "round": round.Seq})
+		evt, err = tx.AppendEvent(review.ID, eventReviewCreated, map[string]any{"review": review, "round": round.Seq})
 		return err
 	})
 	if err != nil {
@@ -192,7 +193,8 @@ func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bus.notify(review.ID)
-	writeJSON(w, http.StatusCreated, map[string]any{"review": review, "round": round})
+	// cursor: reads from here see only what happens after creation.
+	writeJSON(w, http.StatusCreated, map[string]any{"review": review, "round": round, "cursor": evt.ID})
 }
 
 func roundFiles(c *gitx.Result) []store.NewRoundFile {
@@ -292,6 +294,7 @@ func (s *Server) handleCreateRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var round *store.Round
+	var evt *store.Event
 	err = s.store.WithTx(func(tx *store.Store) error {
 		var err error
 		round, err = tx.CreateRound(review.ID, capture.Patch, roundFiles(capture))
@@ -301,7 +304,7 @@ func (s *Server) handleCreateRound(w http.ResponseWriter, r *http.Request) {
 		if err := s.anchor.Recompute(tx, review.ID, latest.ID, round.ID); err != nil {
 			return err
 		}
-		_, err = tx.AppendEvent(review.ID, eventRoundCreated, map[string]any{"round": round})
+		evt, err = tx.AppendEvent(review.ID, eventRoundCreated, map[string]any{"round": round})
 		return err
 	})
 	if err != nil {
@@ -309,7 +312,7 @@ func (s *Server) handleCreateRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.bus.notify(review.ID)
-	writeJSON(w, http.StatusCreated, map[string]any{"round": round, "deduped": false})
+	writeJSON(w, http.StatusCreated, map[string]any{"round": round, "deduped": false, "cursor": evt.ID})
 }
 
 func (s *Server) handleListRounds(w http.ResponseWriter, r *http.Request) {
@@ -654,6 +657,7 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 	}
 	draft := req.Role == store.RoleReviewer
 	var comment *store.Comment
+	var evt *store.Event
 	err = s.store.WithTx(func(tx *store.Store) error {
 		var err error
 		comment, err = tx.AddComment(threadID, req.Role, req.Body, draft)
@@ -661,7 +665,7 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if !draft {
-			_, err = tx.AppendEvent(review.ID, eventReplied, map[string]any{"thread": thread, "comment": comment})
+			evt, err = tx.AppendEvent(review.ID, eventReplied, map[string]any{"thread": thread, "comment": comment})
 		}
 		return err
 	})
@@ -669,10 +673,12 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	resp := map[string]any{"comment": comment}
 	if !draft {
 		s.bus.notify(review.ID)
+		resp["cursor"] = evt.ID
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"comment": comment})
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleResolve(resolved bool) http.HandlerFunc {
