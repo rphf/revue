@@ -83,3 +83,13 @@ describe("FileTree", () => {
     expect(screen.getByText("No changed files")).toBeInTheDocument();
   });
 });
+
+describe("treePathCompare", () => {
+  it("orders leaves exactly as the rendered tree flattens them", async () => {
+    const { treePathCompare } = await import("./FileTree");
+    const paths = ["zz.md", "src/b.ts", "app/deep/x.ts", "src/a.ts", "app/a.ts", "README.md"];
+    const sorted = [...paths].sort(treePathCompare);
+    // Dirs first (app, src), depth-first within, then root files.
+    expect(sorted).toEqual(["app/deep/x.ts", "app/a.ts", "src/a.ts", "src/b.ts", "README.md", "zz.md"]);
+  });
+});

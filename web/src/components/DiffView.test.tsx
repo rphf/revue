@@ -58,3 +58,25 @@ describe("DiffView", () => {
     expect(screen.getByTestId("diff-empty")).toHaveTextContent("No changes in this diff");
   });
 });
+
+describe("DiffView ordering", () => {
+  it("renders cards in tree order with binary rows interleaved", () => {
+    render(
+      <DiffView
+        files={[meta("zz.go"), meta("src/a.go")]}
+        roundFiles={[
+          roundFile("zz.go"),
+          roundFile("src/a.go"),
+          roundFile("src/img.png", { isBinary: true, status: "added" }),
+        ]}
+        diffStyle="unified"
+        theme="light"
+      />,
+    );
+    const cards = [...document.querySelectorAll("[data-testid^='filediff-'], [data-testid^='binary-']")];
+    const order = cards.map((c) => c.getAttribute("data-testid"));
+    // Tree order: src/ first (a.go then img.png), then root zz.go —
+    // the binary row sits in place, not grouped first.
+    expect(order).toEqual(["filediff-src/a.go", "binary-src/img.png", "filediff-zz.go"]);
+  });
+});

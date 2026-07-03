@@ -3,6 +3,7 @@ import type { FileDiffMetadata, DiffLineAnnotation } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import type { RoundFile, Side } from "../types";
 import type { Theme } from "../theme";
+import { treePathCompare } from "./FileTree";
 
 export type DiffStyle = "unified" | "split";
 
@@ -35,11 +36,16 @@ export default function DiffView({
   renderAnnotation,
   onGutterAdd,
 }: DiffViewProps) {
+  // Cards render in the exact order the tree lists files — binary
+  // stat rows interleaved in place, not grouped first.
   const binaryByPath = new Map(roundFiles.filter((f) => f.isBinary).map((f) => [f.path, f]));
-  const textFiles = files.filter((f) => !binaryByPath.has(f.name));
-  const empty = textFiles.length === 0 && binaryByPath.size === 0;
+  type RenderItem = { path: string; binary?: RoundFile; meta?: FileDiffMetadata };
+  const items: RenderItem[] = [
+    ...[...binaryByPath.values()].map((f) => ({ path: f.path, binary: f })),
+    ...files.filter((f) => !binaryByPath.has(f.name)).map((f) => ({ path: f.name, meta: f })),
+  ].sort((a, b) => treePathCompare(a.path, b.path));
 
-  if (empty) {
+  if (items.length === 0) {
     return (
       <div className="diff-empty" data-testid="diff-empty">
         <p>No changes in this diff</p>
@@ -49,20 +55,21 @@ export default function DiffView({
 
   return (
     <Virtualizer className="diff-scroll" contentClassName="diff-content">
-      {[...binaryByPath.values()].map((f) => (
-        <BinaryRow key={`bin:${f.path}`} file={f} />
-      ))}
-      {textFiles.map((f) => (
-        <MemoFileDiff
-          key={f.name}
-          file={f}
-          diffStyle={diffStyle}
-          theme={theme}
-          annotations={annotationsByFile?.get(f.name)}
-          renderAnnotation={renderAnnotation}
-          onGutterAdd={onGutterAdd}
-        />
-      ))}
+      {items.map((item) =>
+        item.binary ? (
+          <BinaryRow key={`bin:${item.path}`} file={item.binary} />
+        ) : (
+          <MemoFileDiff
+            key={item.path}
+            file={item.meta!}
+            diffStyle={diffStyle}
+            theme={theme}
+            annotations={annotationsByFile?.get(item.path)}
+            renderAnnotation={renderAnnotation}
+            onGutterAdd={onGutterAdd}
+          />
+        ),
+      )}
     </Virtualizer>
   );
 }
