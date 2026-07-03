@@ -1,0 +1,9 @@
+/bin/
+/dist/
+web/node_modules/
+web/dist/
+/internal/server/ui/dist/
+web/playwright-report/
+web/test-results/
+.DS_Store
+*.log
