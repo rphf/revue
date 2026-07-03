@@ -56,11 +56,11 @@ func Healthy(st *State) bool {
 // as a detached process if none is running (KTD5: any CLI command
 // starts the server if absent).
 func Ensure(repoRoot string) (*State, error) {
-	dataDir, err := DataDir(repoRoot)
+	stateDir, err := StateDir(repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	if st, err := ReadState(dataDir); err == nil && Healthy(st) {
+	if st, err := ReadState(stateDir); err == nil && Healthy(st) {
 		return st, nil
 	}
 
@@ -68,15 +68,12 @@ func Ensure(repoRoot string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	logFile, err := os.OpenFile(filepath.Join(dataDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return nil, err
+	}
+	logFile, err := os.OpenFile(filepath.Join(stateDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		if err := os.MkdirAll(dataDir, 0o700); err != nil {
-			return nil, err
-		}
-		logFile, err = os.OpenFile(filepath.Join(dataDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	defer logFile.Close()
 
@@ -93,12 +90,12 @@ func Ensure(repoRoot string) (*State, error) {
 	// Wait for the state file to reflect the new server and turn healthy.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if st, err := ReadState(dataDir); err == nil && Healthy(st) {
+		if st, err := ReadState(stateDir); err == nil && Healthy(st) {
 			return st, nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return nil, fmt.Errorf("server for %s did not become healthy in time (see %s)", repoRoot, filepath.Join(dataDir, "server.log"))
+	return nil, fmt.Errorf("server for %s did not become healthy in time (see %s)", repoRoot, filepath.Join(stateDir, "server.log"))
 }
 
 // BaseURL renders the browser/CLI base URL for a state.

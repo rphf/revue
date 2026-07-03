@@ -758,3 +758,49 @@ func TestIdleShutdownBlockedByOpenStreams(t *testing.T) {
 		})
 	}
 }
+
+func TestXDGDirectorySplit(t *testing.T) {
+	t.Setenv("REVUE_DATA_DIR", "")
+	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+	t.Setenv("XDG_STATE_HOME", "/tmp/xdg-state")
+
+	dataDir, err := DataDir("/some/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err := StateDir("/some/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := repoKey("/some/repo")
+	if dataDir != filepath.Join("/tmp/xdg-data", "revue", key) {
+		t.Errorf("dataDir = %s, want under XDG_DATA_HOME", dataDir)
+	}
+	if stateDir != filepath.Join("/tmp/xdg-state", "revue", key) {
+		t.Errorf("stateDir = %s, want under XDG_STATE_HOME", stateDir)
+	}
+
+	// Defaults follow the nvim-style convention.
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir, _ = DataDir("/some/repo")
+	stateDir, _ = StateDir("/some/repo")
+	if dataDir != filepath.Join(home, ".local", "share", "revue", key) {
+		t.Errorf("default dataDir = %s, want ~/.local/share/revue/...", dataDir)
+	}
+	if stateDir != filepath.Join(home, ".local", "state", "revue", key) {
+		t.Errorf("default stateDir = %s, want ~/.local/state/revue/...", stateDir)
+	}
+
+	// A single REVUE_DATA_DIR root overrides both (tests, smoke, e2e).
+	t.Setenv("REVUE_DATA_DIR", "/tmp/one-root")
+	dataDir, _ = DataDir("/some/repo")
+	stateDir, _ = StateDir("/some/repo")
+	if dataDir != stateDir || dataDir != filepath.Join("/tmp/one-root", key) {
+		t.Errorf("REVUE_DATA_DIR override: data=%s state=%s", dataDir, stateDir)
+	}
+}

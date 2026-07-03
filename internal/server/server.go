@@ -47,7 +47,7 @@ func (carryForwardAnchor) Recompute(tx *store.Store, reviewID, prevRoundID, newR
 
 type Config struct {
 	RepoRoot    string
-	DataDir     string        // state file + db; defaults to the per-repo dir under the user data dir
+	DataDir     string        // when set, db AND state live under this one dir (tests, scripts)
 	IdleTimeout time.Duration // 0 disables idle shutdown
 	Anchor      Anchor        // nil selects the Phase-1 carry-forward stub
 }
@@ -75,27 +75,56 @@ type State struct {
 	PID   int    `json:"pid"`
 }
 
-// DataDir returns the per-repo data directory under the user config
-// dir, keyed by a hash of the repo path — nothing is written inside
-// the repo. REVUE_DATA_DIR overrides the base for tests and scripted
-// runs that must not touch the real user dir.
-func DataDir(repoRoot string) (string, error) {
-	base := os.Getenv("REVUE_DATA_DIR")
-	if base == "" {
-		userDir, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(userDir, "revue")
+// Per-repo directories follow the XDG base-directory convention (like
+// nvim: config-style trees under the home dir, not ~/Library), keyed
+// by a hash of the repo path — nothing is written inside the repo.
+// REVUE_DATA_DIR overrides BOTH bases with a single root for tests
+// and scripted runs that must not touch the real user dirs.
+
+// xdgDir resolves one XDG base dir with its conventional fallback.
+func xdgDir(envVar, fallback string) (string, error) {
+	if v := os.Getenv(envVar); v != "" {
+		return v, nil
 	}
-	return filepath.Join(base, repoKey(repoRoot)), nil
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, fallback), nil
 }
 
-func statePath(dataDir string) string { return filepath.Join(dataDir, "state.json") }
+// DataDir holds durable per-repo data (the reviews database):
+// $XDG_DATA_HOME/revue/<key>, default ~/.local/share/revue/<key>.
+func DataDir(repoRoot string) (string, error) {
+	if base := os.Getenv("REVUE_DATA_DIR"); base != "" {
+		return filepath.Join(base, repoKey(repoRoot)), nil
+	}
+	base, err := xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share"))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "revue", repoKey(repoRoot)), nil
+}
+
+// StateDir holds ephemeral per-repo runtime state (the server state
+// file and log): $XDG_STATE_HOME/revue/<key>, default
+// ~/.local/state/revue/<key>.
+func StateDir(repoRoot string) (string, error) {
+	if base := os.Getenv("REVUE_DATA_DIR"); base != "" {
+		return filepath.Join(base, repoKey(repoRoot)), nil
+	}
+	base, err := xdgDir("XDG_STATE_HOME", filepath.Join(".local", "state"))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "revue", repoKey(repoRoot)), nil
+}
+
+func statePath(stateDir string) string { return filepath.Join(stateDir, "state.json") }
 
 // ReadState loads the state file if present.
-func ReadState(dataDir string) (*State, error) {
-	data, err := os.ReadFile(statePath(dataDir))
+func ReadState(stateDir string) (*State, error) {
+	data, err := os.ReadFile(statePath(stateDir))
 	if err != nil {
 		return nil, err
 	}
@@ -106,16 +135,16 @@ func ReadState(dataDir string) (*State, error) {
 	return &st, nil
 }
 
-func writeState(dataDir string, st *State) error {
+func writeState(stateDir string, st *State) error {
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	tmp := statePath(dataDir) + ".tmp"
+	tmp := statePath(stateDir) + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, statePath(dataDir))
+	return os.Rename(tmp, statePath(stateDir))
 }
 
 func newToken() string {
@@ -130,20 +159,26 @@ func newToken() string {
 // first so open tab URLs survive restarts), writes the state file, and
 // serves in the background.
 func Start(cfg Config) (*Server, error) {
-	dataDir := cfg.DataDir
-	if dataDir == "" {
+	dataDir, stateDir := cfg.DataDir, cfg.DataDir
+	if cfg.DataDir == "" {
 		var err error
 		if dataDir, err = DataDir(cfg.RepoRoot); err != nil {
+			return nil, err
+		}
+		if stateDir, err = StateDir(cfg.RepoRoot); err != nil {
 			return nil, err
 		}
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return nil, err
+	}
 
 	// Reuse the recorded port and token on revival (KTD5): the port
 	// keeps open-tab URLs working, the token keeps their cookies valid.
-	prev, _ := ReadState(dataDir)
+	prev, _ := ReadState(stateDir)
 	token := newToken()
 	if prev != nil && prev.Token != "" {
 		token = prev.Token
@@ -186,7 +221,7 @@ func Start(cfg Config) (*Server, error) {
 	s.http = &http.Server{Handler: s.Handler()}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := writeState(dataDir, &State{Port: port, Token: token, PID: os.Getpid()}); err != nil {
+	if err := writeState(stateDir, &State{Port: port, Token: token, PID: os.Getpid()}); err != nil {
 		st.Close()
 		ln.Close()
 		return nil, err
