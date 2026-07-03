@@ -92,14 +92,15 @@ export async function draftComment(
   body: string,
 ): Promise<void> {
   await page.getByText(lineText).first().hover();
-  const gutterAdd = page
-    .locator(`[data-file-path="${filePath}"]`)
-    .locator(".gutter-add");
+  const gutterAdd = page.locator(`.gutter-add[data-path="${filePath}"]`);
   await gutterAdd.dispatchEvent("click");
   const box = page.getByPlaceholder(/Comment on line/);
   await expect(box).toBeVisible();
   await box.fill(body);
-  await page.getByRole("button", { name: "Start thread" }).click();
+  // Annotation controls live inside CodeView's virtualized layout,
+  // where Playwright's scroll-into-view can't stabilize elements
+  // below the fold; dispatch the click directly.
+  await page.getByRole("button", { name: "Start thread" }).dispatchEvent("click");
   await expect(page.getByText(body)).toBeVisible();
 }
 

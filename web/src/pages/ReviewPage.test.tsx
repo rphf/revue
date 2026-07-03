@@ -1,31 +1,37 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DiffLineAnnotation, FileDiffMetadata } from "@pierre/diffs";
+import type { DiffLineAnnotation } from "@pierre/diffs";
 import type { AnnotationMeta } from "../components/DiffView";
 import type { Comment, Thread } from "../types";
 
 // Mock the diff renderer but keep the annotation wiring real: the
-// stub FileDiff invokes renderAnnotation for every annotation, so
-// threads flow through the same path as in the browser.
+// stub CodeView invokes renderAnnotation for every item annotation,
+// so threads flow through the same path as in the browser.
+interface StubItem {
+  id: string;
+  type: "diff" | "file";
+  annotations?: DiffLineAnnotation<AnnotationMeta>[];
+}
 vi.mock("@pierre/diffs/react", () => ({
-  FileDiff: ({
-    fileDiff,
-    lineAnnotations,
+  CodeView: ({
+    items,
     renderAnnotation,
   }: {
-    fileDiff: FileDiffMetadata;
-    lineAnnotations?: DiffLineAnnotation<AnnotationMeta>[];
-    renderAnnotation?: (a: DiffLineAnnotation<AnnotationMeta>) => React.ReactNode;
+    items: StubItem[];
+    renderAnnotation?: (a: DiffLineAnnotation<AnnotationMeta>, item: StubItem) => React.ReactNode;
   }) => (
-    <div data-testid={`filediff-${fileDiff.name}`}>
-      {lineAnnotations?.map((a, i) => (
-        <div key={i} data-testid={`annotation-${fileDiff.name}-${a.lineNumber}`}>
-          {renderAnnotation?.(a)}
+    <div>
+      {items.map((item) => (
+        <div key={item.id} data-testid={`filediff-${item.id}`}>
+          {item.annotations?.map((a, i) => (
+            <div key={i} data-testid={`annotation-${item.id}-${a.lineNumber}`}>
+              {renderAnnotation?.(a, item)}
+            </div>
+          ))}
         </div>
       ))}
     </div>
   ),
-  Virtualizer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@pierre/diffs", () => ({

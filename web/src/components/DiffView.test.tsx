@@ -4,13 +4,37 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { RoundFile } from "../types";
 
 // The real @pierre/diffs renderer needs Shadow DOM + workers; mock the
-// react entry so tests exercise revue's wiring, not the library.
+// react entry so tests exercise revue's wiring, not the library. The
+// stub CodeView walks items in order and invokes the render callbacks
+// the way the real one does.
+interface StubItem {
+  id: string;
+  type: "diff" | "file";
+  annotations?: unknown[];
+}
 vi.mock("@pierre/diffs/react", () => ({
-  FileDiff: ({ fileDiff }: { fileDiff: FileDiffMetadata }) => (
-    <div data-testid={`filediff-${fileDiff.name}`}>{fileDiff.name}</div>
-  ),
-  Virtualizer: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <div className={className}>{children}</div>
+  CodeView: ({
+    items,
+    renderAnnotation,
+    renderHeaderMetadata,
+    className,
+  }: {
+    items: StubItem[];
+    renderAnnotation?: (a: unknown, item: StubItem) => React.ReactNode;
+    renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
+    className?: string;
+  }) => (
+    <div className={className}>
+      {items.map((item) => (
+        <div key={item.id} data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}>
+          {item.id}
+          {renderHeaderMetadata?.(item)}
+          {item.annotations?.map((a, i) => (
+            <div key={i}>{renderAnnotation?.(a, item)}</div>
+          ))}
+        </div>
+      ))}
+    </div>
   ),
 }));
 

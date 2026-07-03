@@ -1,27 +1,34 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FileDiffMetadata } from "@pierre/diffs";
 import type { RoundDetail, Thread } from "../types";
 
 // Round switching and origin-round links (R8, R22 UI). The diff
 // renderer is mocked; parsePatchFiles derives the file name from the
 // patch text so each round renders distinguishable content.
+interface StubItem {
+  id: string;
+  type: "diff" | "file";
+  annotations?: { lineNumber: number }[];
+}
 vi.mock("@pierre/diffs/react", () => ({
-  FileDiff: ({
-    fileDiff,
-    lineAnnotations,
+  CodeView: ({
+    items,
     renderAnnotation,
   }: {
-    fileDiff: FileDiffMetadata;
-    lineAnnotations?: { lineNumber: number }[];
-    renderAnnotation?: (a: unknown) => React.ReactNode;
+    items: StubItem[];
+    renderAnnotation?: (a: unknown, item: StubItem) => React.ReactNode;
   }) => (
-    <div data-testid={`filediff-${fileDiff.name}`}>
-      {fileDiff.name}
-      {lineAnnotations?.map((a, i) => <div key={i}>{renderAnnotation?.(a)}</div>)}
+    <div>
+      {items.map((item) => (
+        <div key={item.id} data-testid={`filediff-${item.id}`}>
+          {item.id}
+          {item.annotations?.map((a, i) => (
+            <div key={i}>{renderAnnotation?.(a, item)}</div>
+          ))}
+        </div>
+      ))}
     </div>
   ),
-  Virtualizer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@pierre/diffs", () => ({

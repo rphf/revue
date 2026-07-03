@@ -46,8 +46,9 @@ test("threads panel partitions live, outdated, and resolved", async ({ page }) =
   await authenticate(page, "/reviews/1");
   await expect(page.getByText("beta draft note")).toBeVisible();
 
-  // Resolve the beta thread (reviewer-only action, R6).
-  await page.getByRole("button", { name: "Resolve", exact: true }).first().click();
+  // Resolve the beta thread (reviewer-only action, R6). The button
+  // sits in a virtualized annotation; dispatch the click directly.
+  await page.getByRole("button", { name: "Resolve", exact: true }).first().dispatchEvent("click");
   await expect(page.getByText("Resolved", { exact: true }).first()).toBeVisible();
 
   await page.getByRole("button", { name: /threads/ }).click();

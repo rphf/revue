@@ -9,7 +9,7 @@ import { StateChip, ThemeToggle } from "../App";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import { useFullDiffs } from "../components/ContextExpand";
-import DiffView, { fileDomId, type AnnotationMeta, type DiffStyle } from "../components/DiffView";
+import DiffView, { type AnnotationMeta, type DiffStyle, type DiffViewHandle } from "../components/DiffView";
 import FileTree from "../components/FileTree";
 import RoundSwitcher from "../components/RoundSwitcher";
 import SubmitDialog from "../components/SubmitDialog";
@@ -140,9 +140,10 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
     });
   }, []);
 
+  const diffViewRef = useRef<DiffViewHandle>(null);
   const scrollToFile = useCallback((path: string) => {
     setSelectedPath(path);
-    document.getElementById(fileDomId(path))?.scrollIntoView({ block: "start" });
+    diffViewRef.current?.scrollToFile(path);
   }, []);
 
   const roundFiles = useMemo(() => roundDetail?.files ?? [], [roundDetail]);
@@ -408,6 +409,7 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
             </div>
           ) : (
             <DiffView
+              ref={diffViewRef}
               files={displayFiles}
               roundFiles={roundFiles}
               diffStyle={diffStyle}
