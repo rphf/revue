@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from "react";
-import type { FileDiffMetadata, DiffLineAnnotation } from "@pierre/diffs";
+import type { FileDiffMetadata, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import type { RoundFile, Side } from "../types";
 import type { Theme } from "../theme";
@@ -22,6 +22,7 @@ export interface DiffViewProps {
   annotationsByFile?: Map<string, DiffLineAnnotation<AnnotationMeta>[]>;
   renderAnnotation?: (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => ReactNode;
   onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
+  onLineSelect?: (path: string, range: SelectedLineRange) => void;
 }
 
 // One FileDiff per file under the Virtualizer, which owns scrolling
@@ -35,6 +36,7 @@ export default function DiffView({
   annotationsByFile,
   renderAnnotation,
   onGutterAdd,
+  onLineSelect,
 }: DiffViewProps) {
   // Cards render in the exact order the tree lists files — binary
   // stat rows interleaved in place, not grouped first.
@@ -67,6 +69,7 @@ export default function DiffView({
             annotations={annotationsByFile?.get(item.path)}
             renderAnnotation={renderAnnotation}
             onGutterAdd={onGutterAdd}
+            onLineSelect={onLineSelect}
           />
         ),
       )}
@@ -97,6 +100,7 @@ interface FileDiffCardProps {
   annotations?: DiffLineAnnotation<AnnotationMeta>[];
   renderAnnotation?: (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => ReactNode;
   onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
+  onLineSelect?: (path: string, range: SelectedLineRange) => void;
 }
 
 const MemoFileDiff = memo(function FileDiffCard({
@@ -106,6 +110,7 @@ const MemoFileDiff = memo(function FileDiffCard({
   annotations,
   renderAnnotation,
   onGutterAdd,
+  onLineSelect,
 }: FileDiffCardProps) {
   return (
     // Key includes isPartial: the virtualized FileDiff does not
@@ -120,6 +125,12 @@ const MemoFileDiff = memo(function FileDiffCard({
           stickyHeader: true,
           expansionLineCount: 20,
           enableGutterUtility: Boolean(onGutterAdd),
+          enableLineSelection: Boolean(onLineSelect),
+          onLineSelectionEnd: onLineSelect
+            ? (range) => {
+                if (range) onLineSelect(file.name, range);
+              }
+            : undefined,
           theme: { dark: "github-dark", light: "github-light" },
           themeType: theme,
         }}

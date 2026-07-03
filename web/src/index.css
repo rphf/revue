@@ -378,3 +378,273 @@ code {
 .tree-file:active {
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
+
+/* --- threads and review UI (U6) --- */
+
+.thread {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 6px 10px;
+  padding: 8px 10px;
+  max-width: 780px;
+  font-size: 13px;
+}
+
+.thread-resolved {
+  opacity: 0.75;
+}
+
+.thread-header {
+  display: flex;
+  gap: 6px;
+}
+
+.comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.comment {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.comment:last-child {
+  border-bottom: none;
+}
+
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.comment-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.role {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.role-agent {
+  color: var(--accent);
+}
+
+.chip {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+}
+
+.chip-draft {
+  color: var(--renamed);
+  border-color: var(--renamed);
+}
+
+.chip-resolved,
+.chip-live {
+  color: var(--added);
+  border-color: var(--added);
+}
+
+.chip-outdated {
+  color: var(--renamed);
+  border-color: var(--renamed);
+  cursor: pointer;
+}
+
+.markdown p {
+  margin: 4px 0;
+}
+
+.markdown pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.thread-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.comment-form textarea,
+.dialog textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.form-error {
+  color: var(--removed);
+  font-size: 13px;
+  margin: 4px 10px;
+}
+
+.btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--added);
+  border-color: var(--added);
+  color: #fff;
+  font-weight: 600;
+}
+
+.link-btn {
+  color: var(--accent);
+  padding: 0;
+  font-size: 12px;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.dialog {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  width: 460px;
+  max-width: 92vw;
+}
+
+.dialog h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.verdict-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.verdict-option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.panel-sidebar {
+  width: 340px;
+  flex: none;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-filters {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.panel-filter {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.panel-filter.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.filter-count {
+  color: var(--muted);
+}
+
+.panel-empty {
+  padding: 10px 14px;
+}
+
+.panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px;
+}
+
+.panel-thread {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.panel-thread:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.panel-anchor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.panel-excerpt {
+  width: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
