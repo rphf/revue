@@ -18,38 +18,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rphf/revue/internal/anchor"
 	"github.com/rphf/revue/internal/store"
 )
 
 // Anchor is the carry-over seam (KTD3): round creation calls it to map
 // every thread's and draft's anchor from the previous round into the
-// new one. The real engine lands in the anchor package (U8).
+// new one. The real engine lives in the anchor package.
 type Anchor interface {
 	Recompute(tx *store.Store, reviewID, prevRoundID, newRoundID int64) error
-}
-
-// carryForwardAnchor is the Phase-1 stub: every anchor carries to the
-// new round unchanged and live.
-type carryForwardAnchor struct{}
-
-func (carryForwardAnchor) Recompute(tx *store.Store, reviewID, prevRoundID, newRoundID int64) error {
-	anchors, err := tx.AnchorsForRound(prevRoundID)
-	if err != nil {
-		return err
-	}
-	for _, a := range anchors {
-		if err := tx.UpsertAnchor(a.ThreadID, newRoundID, a.Anchor, a.State, a.HunkHash); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type Config struct {
 	RepoRoot    string
 	DataDir     string        // when set, db AND state live under this one dir (tests, scripts)
 	IdleTimeout time.Duration // 0 disables idle shutdown
-	Anchor      Anchor        // nil selects the Phase-1 carry-forward stub
+	Anchor      Anchor        // nil selects the real anchor engine
 }
 
 type Server struct {
@@ -202,16 +186,16 @@ func Start(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	anchor := cfg.Anchor
-	if anchor == nil {
-		anchor = carryForwardAnchor{}
+	anchorEngine := cfg.Anchor
+	if anchorEngine == nil {
+		anchorEngine = anchor.New()
 	}
 
 	s := &Server{
 		store:    st,
 		repoRoot: cfg.RepoRoot,
 		token:    token,
-		anchor:   anchor,
+		anchor:   anchorEngine,
 		bus:      newBus(),
 		activity: newActivity(),
 		closing:  make(chan struct{}),
