@@ -1,29 +1,39 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
-	"net"
-	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/rphf/revue/internal/server/ui"
+	"github.com/rphf/revue/internal/server"
 )
 
+// Temporary entry point until the full agent CLI lands (U7): serve
+// the given repo in the foreground.
 func main() {
 	fs := flag.NewFlagSet("revue", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:7369", "listen address")
+	repo := fs.String("repo", ".", "repository to serve")
 	fs.Parse(os.Args[1:])
 
-	ln, err := net.Listen("tcp", *addr)
+	s, err := server.Start(server.Config{RepoRoot: *repo, IdleTimeout: 30 * time.Minute})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	log.Printf("revue serving on http://%s", ln.Addr())
-	if err := http.Serve(ln, ui.Handler()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	fmt.Printf("revue serving %s\n", *repo)
+	fmt.Printf("open: %s\n", s.URL()+"/auth?token="+s.Token()+"&next=/")
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	select {
+	case <-sig:
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.Shutdown(ctx)
+	case <-s.Done():
 	}
 }
