@@ -629,8 +629,12 @@ func TestSSEStreamsReplayAndLive(t *testing.T) {
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "event: ") {
-				types <- strings.TrimPrefix(line, "event: ")
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var evt store.Event
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
+				types <- evt.Type
 			}
 		}
 	}()

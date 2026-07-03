@@ -89,7 +89,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, data); err != nil {
+			// No `event:` field: named SSE events bypass
+			// EventSource.onmessage, and the type is already in the
+			// JSON payload.
+			if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, data); err != nil {
 				return
 			}
 			cursor = e.ID
