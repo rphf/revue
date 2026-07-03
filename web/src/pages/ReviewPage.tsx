@@ -149,7 +149,13 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
   const currentRoundId = roundDetail?.round.id ?? 0;
   const viewingLatest = effectiveSeq !== null && effectiveSeq === latestSeq;
   // R25: expansion content comes from the frozen snapshot.
-  const displayFiles = useFullDiffs(reviewId, effectiveSeq, parsedFiles, roundFiles, patch);
+  const { files: displayFiles, requestUpgrade } = useFullDiffs(
+    reviewId,
+    effectiveSeq,
+    parsedFiles,
+    roundFiles,
+    patch,
+  );
   const reviewState = detail?.review.state ?? "open";
 
   const draftCount = useMemo(
@@ -410,6 +416,7 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
               renderAnnotation={renderAnnotation}
               onGutterAdd={reviewState !== "closed" && viewingLatest ? onGutterAdd : undefined}
               onLineSelect={reviewState !== "closed" && viewingLatest ? onLineSelect : undefined}
+              onExpandContext={requestUpgrade}
             />
           )}
         </main>

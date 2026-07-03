@@ -26,6 +26,7 @@ export interface DiffViewProps {
   renderAnnotation?: (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => ReactNode;
   onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
+  onExpandContext?: (path: string) => void;
 }
 
 // One FileDiff per file under the Virtualizer, which owns scrolling
@@ -40,6 +41,7 @@ export default function DiffView({
   renderAnnotation,
   onGutterAdd,
   onLineSelect,
+  onExpandContext,
 }: DiffViewProps) {
   // Cards render in the exact order the tree lists files — binary
   // stat rows interleaved in place, not grouped first.
@@ -73,6 +75,7 @@ export default function DiffView({
             renderAnnotation={renderAnnotation}
             onGutterAdd={onGutterAdd}
             onLineSelect={onLineSelect}
+            onExpandContext={onExpandContext}
           />
         ),
       )}
@@ -104,6 +107,7 @@ interface FileDiffCardProps {
   renderAnnotation?: (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => ReactNode;
   onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
+  onExpandContext?: (path: string) => void;
 }
 
 const MemoFileDiff = memo(function FileDiffCard({
@@ -114,6 +118,7 @@ const MemoFileDiff = memo(function FileDiffCard({
   renderAnnotation,
   onGutterAdd,
   onLineSelect,
+  onExpandContext,
 }: FileDiffCardProps) {
   return (
     // Key includes isPartial: the virtualized FileDiff does not
@@ -139,6 +144,20 @@ const MemoFileDiff = memo(function FileDiffCard({
         }}
         lineAnnotations={annotations}
         renderAnnotation={renderAnnotation ? (a) => renderAnnotation(a, file.name) : undefined}
+        renderHeaderMetadata={
+          onExpandContext && file.isPartial
+            ? () => (
+                <button
+                  type="button"
+                  className="expand-context"
+                  title="Load full file contents from the round snapshot to expand hunk context"
+                  onClick={() => onExpandContext(file.name)}
+                >
+                  Expand context
+                </button>
+              )
+            : undefined
+        }
         renderGutterUtility={
           onGutterAdd
             ? (getHoveredLine) => (

@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { processFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { api } from "../api";
 import type { RoundFile } from "../types";
 
-// Hunk-context expansion (R25): upgrade each partial diff to a full
-// one with old/new contents served from the round's frozen snapshot —
-// never the live tree. A full diff lets @pierre/diffs render its
-// expand-context affordances; DiffView keys on isPartial so the
-// upgrade forces a remount (virtualizer constraint).
+// Hunk-context expansion (R25): upgrade a partial diff to a full one
+// with old/new contents served from the round's frozen snapshot —
+// never the live tree. Upgrades are LAZY and per file (the reviewer
+// asks via the file header button): upgrading eagerly re-processed and
+// remounted every file diff on load, which made large reviews lag.
+// A full diff lets @pierre/diffs render its expand-context
+// affordances; DiffView keys on isPartial so the upgrade remounts.
 
 // splitPatch slices a multi-file git patch into per-file sections so
 // processFile can re-parse one file with full contents attached.
@@ -25,59 +27,69 @@ export function splitPatch(patch: string): Map<string, string> {
   return sections;
 }
 
+export interface FullDiffs {
+  files: FileDiffMetadata[] | null;
+  // requestUpgrade fetches snapshot contents for one file and swaps
+  // its diff for the full version. No-op for binary files, unknown
+  // paths, and files already upgraded or in flight.
+  requestUpgrade: (path: string) => void;
+}
+
 export function useFullDiffs(
   reviewId: number,
   roundSeq: number | null,
   parsed: FileDiffMetadata[] | null,
   roundFiles: RoundFile[],
   patch: string | null,
-): FileDiffMetadata[] | null {
+): FullDiffs {
   const [upgraded, setUpgraded] = useState<Map<string, FileDiffMetadata>>(new Map());
+  const inFlight = useRef<Set<string>>(new Set());
 
+  // New round (or review): drop upgrades from the previous one.
   useEffect(() => {
-    // New round (or review): drop upgrades from the previous one.
     setUpgraded(new Map());
-    if (roundSeq === null || parsed === null || patch === null) return;
+    inFlight.current = new Set();
+  }, [reviewId, roundSeq, patch]);
 
-    const sections = splitPatch(patch);
-    const binary = new Set(roundFiles.filter((f) => f.isBinary).map((f) => f.path));
-    let cancelled = false;
-
-    for (const file of parsed) {
-      if (!file.isPartial || binary.has(file.name)) continue;
-      const section = sections.get(file.name);
-      if (!section) continue;
+  const requestUpgrade = useCallback(
+    (path: string) => {
+      if (roundSeq === null || patch === null) return;
+      if (inFlight.current.has(path)) return;
+      if (roundFiles.some((f) => f.path === path && f.isBinary)) return;
+      const section = splitPatch(patch).get(path);
+      if (!section) return;
+      inFlight.current.add(path);
       api
-        .getFileVersions(reviewId, roundSeq, file.name)
+        .getFileVersions(reviewId, roundSeq, path)
         .then((versions) => {
-          if (cancelled) return;
           const full = processFile(section, {
-            cacheKey: `${reviewId}:${roundSeq}:${file.name}:full`,
+            cacheKey: `${reviewId}:${roundSeq}:${path}:full`,
             oldFile:
               versions.oldContent !== null
-                ? { name: versions.oldPath || file.name, contents: versions.oldContent }
+                ? { name: versions.oldPath || path, contents: versions.oldContent }
                 : undefined,
-            newFile: versions.newContent !== null ? { name: file.name, contents: versions.newContent } : undefined,
+            newFile: versions.newContent !== null ? { name: path, contents: versions.newContent } : undefined,
           });
           if (full) {
             setUpgraded((prev) => {
               const next = new Map(prev);
-              next.set(file.name, full);
+              next.set(path, full);
               return next;
             });
           }
         })
         .catch(() => {
-          // Expansion is progressive enhancement; the partial diff
-          // stays perfectly reviewable.
+          // Expansion is progressive enhancement; allow a retry.
+          inFlight.current.delete(path);
         });
-    }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reviewId, roundSeq, parsed, patch]);
+    },
+    [reviewId, roundSeq, patch, roundFiles],
+  );
 
-  if (parsed === null) return null;
-  return parsed.map((f) => upgraded.get(f.name) ?? f);
+  const files = useMemo(() => {
+    if (parsed === null) return null;
+    return parsed.map((f) => upgraded.get(f.name) ?? f);
+  }, [parsed, upgraded]);
+
+  return { files, requestUpgrade };
 }
