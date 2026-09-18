@@ -28,7 +28,17 @@ export default defineConfig({
       args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost"],
     },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      // A review surface: split view plus thread cards need more height
+      // than the 1280x720 device default before rows leave the viewport.
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 1000 },
+      },
+    },
+  ],
   webServer: {
     command: "bash tests/scripts/start-test-server.sh",
     port: E2E_PORT,

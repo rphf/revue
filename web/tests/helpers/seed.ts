@@ -81,29 +81,50 @@ export function writeFixtureFile(name: string, content: string): void {
 }
 
 // draftComment creates a reviewer draft through the real gutter UI on
-// the diff line containing lineText. Hovering the line registers it
-// with the diff's interaction manager; the gutter "+" is CSS-hover
-// gated, so the click is dispatched directly — the manager resolves
-// the line from its own hover state, not the pointer.
+// the diff line containing lineText: hover the line, click the diff's
+// own "+" (inside the shadow root, which locators pierce), fill the
+// form, start the thread. CodeView virtualizes rows and re-renders
+// them as highlighting streams in, so any step can find its node gone;
+// each block retries as a whole until it passes.
 export async function draftComment(
   page: Page,
-  filePath: string,
   lineText: string,
   body: string,
 ): Promise<void> {
-  await page.getByText(lineText).first().hover();
-  const gutterAdd = page.locator(`.gutter-add[data-path="${filePath}"]`);
-  await gutterAdd.dispatchEvent("click");
-  const box = page.getByPlaceholder(/Comment on line/);
-  await expect(box).toBeVisible();
-  await box.fill(body);
+  const line = page.getByText(lineText).first();
+  await expect(async () => {
+    await line.scrollIntoViewIfNeeded();
+    await line.hover();
+    const plus = page.locator("[data-utility-button]").first();
+    const lineBox = await line.boundingBox();
+    const plusBox = await plus.boundingBox();
+    expect(lineBox).not.toBeNull();
+    expect(plusBox).not.toBeNull();
+    const lineMid = lineBox!.y + lineBox!.height / 2;
+    expect(Math.abs(plusBox!.y + plusBox!.height / 2 - lineMid)).toBeLessThan(
+      lineBox!.height,
+    );
+    await page.mouse.move(
+      plusBox!.x + plusBox!.width / 2,
+      plusBox!.y + plusBox!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(page.getByPlaceholder(/Comment on line/)).toBeVisible({
+      timeout: 1000,
+    });
+  }).toPass({ timeout: 15_000 });
+  await page.getByPlaceholder(/Comment on line/).fill(body);
   // Annotation controls live inside CodeView's virtualized layout,
   // where Playwright's scroll-into-view can't stabilize elements
   // below the fold; dispatch the click directly.
   await page
     .getByRole("button", { name: "Start thread" })
     .dispatchEvent("click");
-  await expect(page.getByText(body)).toBeVisible();
+  await expect(async () => {
+    await line.scrollIntoViewIfNeeded();
+    await expect(page.getByText(body)).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
 }
 
 export function readFixtureFile(name: string): string {

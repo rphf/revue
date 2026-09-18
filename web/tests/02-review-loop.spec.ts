@@ -21,7 +21,6 @@ test("draft -> submit with verdict -> CLI feedback -> live agent reply", async (
 
   await draftComment(
     page,
-    "alpha.go",
     "alpha three v2",
     "use fmt.Println instead of println",
   );

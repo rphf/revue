@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import type {
+  CodeViewLineSelection,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -49,6 +50,25 @@ interface RoundLoad {
   error: string | null;
 }
 
+const DIFF_STYLE_KEY = "revue-diff-style";
+
+function loadDiffStyle(): DiffStyle {
+  try {
+    if (localStorage.getItem(DIFF_STYLE_KEY) === "unified") return "unified";
+  } catch {
+    // Storage can be unavailable; split is the default either way.
+  }
+  return "split";
+}
+
+function saveDiffStyle(style: DiffStyle): void {
+  try {
+    localStorage.setItem(DIFF_STYLE_KEY, style);
+  } catch {
+    // Not remembering the choice is fine.
+  }
+}
+
 // threadRev fingerprints a thread's visible content so annotation
 // equality can tell "same anchor, changed conversation" apart.
 function threadRev(t: ThreadType): string {
@@ -71,7 +91,8 @@ export default function ReviewPage({
   const [showSubmit, setShowSubmit] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified");
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(loadDiffStyle);
+  useEffect(() => saveDiffStyle(diffStyle), [diffStyle]);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
 
@@ -228,32 +249,50 @@ export default function ReviewPage({
     return next;
   }, [threads, currentRoundId, pending, reviewState]);
 
+  const selectedLines = useMemo<CodeViewLineSelection | null>(
+    () =>
+      pending
+        ? {
+            id: pending.path,
+            range: {
+              start: pending.startLine ?? pending.line,
+              end: pending.line,
+              side: pending.side,
+              endSide: pending.side,
+            },
+          }
+        : null,
+    [pending],
+  );
+
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<AnnotationMeta>) => {
       const meta = annotation.metadata;
       if (meta?.kind === "pending" && meta.pending) {
         const p = meta.pending;
         return (
-          <CommentForm
-            placeholder={
-              p.startLine && p.startLine !== p.line
-                ? `Comment on lines ${p.startLine}–${p.line}`
-                : `Comment on line ${p.line}`
-            }
-            submitLabel="Start thread"
-            onSubmit={async (body) => {
-              await api.createThread(reviewId, {
-                path: p.path,
-                side: p.side,
-                line: p.line,
-                startLine: p.startLine,
-                body,
-              });
-              setPending(null);
-              loadThreads();
-            }}
-            onCancel={() => setPending(null)}
-          />
+          <div className="thread thread-new">
+            <CommentForm
+              placeholder={
+                p.startLine && p.startLine !== p.line
+                  ? `Comment on lines ${p.startLine}–${p.line}`
+                  : `Comment on line ${p.line}`
+              }
+              submitLabel="Start thread"
+              onSubmit={async (body) => {
+                await api.createThread(reviewId, {
+                  path: p.path,
+                  side: p.side,
+                  line: p.line,
+                  startLine: p.startLine,
+                  body,
+                });
+                setPending(null);
+                loadThreads();
+              }}
+              onCancel={() => setPending(null)}
+            />
+          </div>
         );
       }
       if (meta?.kind === "thread" && meta.thread) {
@@ -270,13 +309,6 @@ export default function ReviewPage({
       return null;
     },
     [reviewId, loadThreads],
-  );
-
-  const onGutterAdd = useCallback(
-    (path: string, side: Side, lineNumber: number) => {
-      setPending({ path, side, line: lineNumber });
-    },
-    [],
   );
 
   const onLineSelect = useCallback((path: string, range: SelectedLineRange) => {
@@ -471,12 +503,8 @@ export default function ReviewPage({
               diffStyle={diffStyle}
               theme={theme}
               annotationsByFile={annotationsByFile}
+              selectedLines={selectedLines}
               renderAnnotation={renderAnnotation}
-              onGutterAdd={
-                reviewState !== "closed" && viewingLatest
-                  ? onGutterAdd
-                  : undefined
-              }
               onLineSelect={
                 reviewState !== "closed" && viewingLatest
                   ? onLineSelect

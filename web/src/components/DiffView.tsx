@@ -7,6 +7,7 @@ import {
 } from "react";
 import type {
   CodeViewItem,
+  CodeViewLineSelection,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -78,8 +79,10 @@ export interface DiffViewProps {
     annotation: DiffLineAnnotation<AnnotationMeta>,
     path: string,
   ) => ReactNode;
-  onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
+  // Controlled selection: the highlighted lines follow the pending comment
+  // and clear with it, so the next gutter click starts a fresh range.
+  selectedLines?: CodeViewLineSelection | null;
   onExpandContext?: (path: string) => void;
 }
 
@@ -103,8 +106,8 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     theme,
     annotationsByFile,
     renderAnnotation,
-    onGutterAdd,
     onLineSelect,
+    selectedLines,
     onExpandContext,
   }: DiffViewProps,
   ref,
@@ -187,12 +190,21 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       ref={codeView}
       className="diff-scroll"
       items={items}
+      selectedLines={selectedLines ?? null}
       options={{
         diffStyle,
         stickyHeaders: true,
         expansionLineCount: 20,
-        enableGutterUtility: Boolean(onGutterAdd),
+        // The library's own gutter "+" carries the GitHub gesture: a click
+        // selects that line, a drag from it selects a range, and both land
+        // in onGutterUtilityClick; a custom-rendered button would lose the
+        // drag. Dragging line numbers also selects a range and lands in
+        // onLineSelectionEnd.
+        enableGutterUtility: Boolean(onLineSelect),
         enableLineSelection: Boolean(onLineSelect),
+        onGutterUtilityClick: onLineSelect
+          ? (range, context) => onLineSelect(context.item.id, range)
+          : undefined,
         onLineSelectionEnd: onLineSelect
           ? (range, context) => {
               if (range) onLineSelect(context.item.id, range);
@@ -208,26 +220,6 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                 annotation as DiffLineAnnotation<AnnotationMeta>,
                 item.id,
               )
-          : undefined
-      }
-      renderGutterUtility={
-        onGutterAdd
-          ? (getHoveredLine, item) =>
-              item.type === "diff" ? (
-                <button
-                  type="button"
-                  className="gutter-add"
-                  data-path={item.id}
-                  aria-label="Add comment"
-                  onClick={() => {
-                    const line = getHoveredLine();
-                    if (line && "side" in line)
-                      onGutterAdd(item.id, line.side as Side, line.lineNumber);
-                  }}
-                >
-                  +
-                </button>
-              ) : undefined
           : undefined
       }
       renderHeaderMetadata={(item) => {

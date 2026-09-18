@@ -19,8 +19,8 @@ test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async
 
   // Two unsubmitted drafts: one on the alpha hunk (about to change),
   // one on the beta hunk (stays identical).
-  await draftComment(page, "alpha.go", "alpha three v2", "alpha draft note");
-  await draftComment(page, "beta.go", "beta two v2", "beta draft note");
+  await draftComment(page, "alpha three v2", "alpha draft note");
+  await draftComment(page, "beta two v2", "beta draft note");
 
   // The agent rewrites the alpha hunk and signals round 2 while the
   // reviewer's drafts are still pending.
