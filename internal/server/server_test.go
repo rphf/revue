@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -802,5 +803,111 @@ func TestXDGDirectorySplit(t *testing.T) {
 	stateDir, _ = StateDir("/some/repo")
 	if dataDir != stateDir || dataDir != filepath.Join("/tmp/one-root", key) {
 		t.Errorf("REVUE_DATA_DIR override: data=%s state=%s", dataDir, stateDir)
+	}
+}
+
+func TestPublicURLAllowsItsOriginAndIsRecorded(t *testing.T) {
+	repo := initRepo(t)
+	dataDir := t.TempDir()
+	s, err := Start(Config{RepoRoot: repo, DataDir: dataDir, PublicURL: "http://agent1.localhost:3191/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		s.Shutdown(ctx)
+		cancel()
+	}()
+	if s.PublicURL() != "http://agent1.localhost:3191" {
+		t.Errorf("PublicURL = %q, want trailing slash stripped", s.PublicURL())
+	}
+	if !strings.HasPrefix(s.URL(), "http://127.0.0.1:") {
+		t.Errorf("URL = %q, want the loopback dial address", s.URL())
+	}
+
+	for origin, want := range map[string]int{
+		"http://agent1.localhost:3191": http.StatusOK,
+		"http://agent2.localhost:3191": http.StatusForbidden,
+		"http://agent1.localhost":      http.StatusForbidden,
+	} {
+		req, _ := http.NewRequest("GET", s.URL()+"/api/reviews", nil)
+		req.Header.Set("Authorization", "Bearer "+s.Token())
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("origin %s: status %d, want %d", origin, resp.StatusCode, want)
+		}
+	}
+
+	st, err := ReadState(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.PublicURL != "http://agent1.localhost:3191" {
+		t.Errorf("state publicUrl = %q", st.PublicURL)
+	}
+	if got := st.AuthURL("/reviews/1"); got != "http://agent1.localhost:3191/auth?token="+s.Token()+"&next=%2Freviews%2F1" {
+		t.Errorf("AuthURL = %q", got)
+	}
+	if st.BaseURL() != s.URL() {
+		t.Errorf("state BaseURL = %q, server URL = %q", st.BaseURL(), s.URL())
+	}
+}
+
+func TestFixedPortIsHonouredAndConflictIsAnError(t *testing.T) {
+	repo := initRepo(t)
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	s, err := Start(Config{RepoRoot: repo, DataDir: t.TempDir(), Bind: "127.0.0.1", Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		s.Shutdown(ctx)
+		cancel()
+	}()
+	if want := fmt.Sprintf("http://127.0.0.1:%d", port); s.URL() != want {
+		t.Errorf("URL = %q, want %q", s.URL(), want)
+	}
+
+	if _, err := Start(Config{RepoRoot: repo, DataDir: t.TempDir(), Port: port}); err == nil {
+		t.Error("second Start on the same fixed port succeeded, want error")
+	}
+}
+
+func TestLoopbackHostAndPublicURLNormalization(t *testing.T) {
+	for bind, want := range map[string]string{
+		"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "127.0.0.1", "[::]": "127.0.0.1",
+		"127.0.0.1": "127.0.0.1", "10.0.0.5": "10.0.0.5",
+	} {
+		if got := loopbackHost(bind); got != want {
+			t.Errorf("loopbackHost(%q) = %q, want %q", bind, got, want)
+		}
+	}
+	for raw, want := range map[string]string{
+		"":                              "",
+		"http://agent1.localhost:3191":  "http://agent1.localhost:3191",
+		"http://agent1.localhost:3191/": "http://agent1.localhost:3191",
+		"https://box.example/revue/":    "https://box.example/revue",
+	} {
+		got, err := normalizePublicURL(raw)
+		if err != nil || got != want {
+			t.Errorf("normalizePublicURL(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"agent1.localhost:3191", "ftp://x", "http://x/?q=1", "http://x/#f", "http://"} {
+		if _, err := normalizePublicURL(raw); err == nil {
+			t.Errorf("normalizePublicURL(%q) accepted, want error", raw)
+		}
 	}
 }

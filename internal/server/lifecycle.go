@@ -5,10 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -29,7 +32,7 @@ func Healthy(st *State) bool {
 	if st == nil || st.Port == 0 || st.Token == "" {
 		return false
 	}
-	req, err := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/healthz", st.Port), nil)
+	req, err := http.NewRequest("GET", st.BaseURL()+"/healthz", nil)
 	if err != nil {
 		return false
 	}
@@ -98,12 +101,19 @@ func Ensure(repoRoot string) (*State, error) {
 	return nil, fmt.Errorf("server for %s did not become healthy in time (see %s)", repoRoot, filepath.Join(stateDir, "server.log"))
 }
 
-// BaseURL renders the browser/CLI base URL for a state.
+// BaseURL renders the loopback base URL the CLI dials.
 func (st *State) BaseURL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d", st.Port)
+	return "http://" + net.JoinHostPort(loopbackHost(st.Bind), strconv.Itoa(st.Port))
+}
+
+func (st *State) PublicBaseURL() string {
+	if st.PublicURL != "" {
+		return st.PublicURL
+	}
+	return st.BaseURL()
 }
 
 // AuthURL renders the one-time token exchange URL that lands on next.
 func (st *State) AuthURL(next string) string {
-	return fmt.Sprintf("%s/auth?token=%s&next=%s", st.BaseURL(), st.Token, next)
+	return fmt.Sprintf("%s/auth?token=%s&next=%s", st.PublicBaseURL(), st.Token, url.QueryEscape(next))
 }

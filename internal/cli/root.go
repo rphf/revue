@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +39,7 @@ const usage = `revue — local code review for agent-written diffs
 
 Human commands:
   open [git-diff args]   capture a diff, open the review in the browser
+  url [--review N]       print the browser URL of a review (default: this branch's open review)
   serve                  run the per-repo server in the foreground
 
 Agent commands (JSON output, exit-code contract in README):
@@ -49,17 +52,25 @@ Agent commands (JSON output, exit-code contract in README):
 
 Exit codes: 0 ok, 1 error, 2 validation, 3 no open review,
             4 wait timeout, 5 review closed, 6 review approved (read-only)
+
+Environment (read when a server starts; see README "Configuration"):
+  REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR
 `
 
 // env carries everything a command needs, so tests can inject a
 // client pointed at a test server.
 type env struct {
-	client   *Client
-	repoRoot string
-	branch   string
-	stdout   io.Writer
-	stderr   io.Writer
-	openURL  func(string) error
+	client    *Client
+	publicURL string
+	repoRoot  string
+	branch    string
+	stdout    io.Writer
+	stderr    io.Writer
+	openURL   func(string) error
+}
+
+func (e *env) authURL(next string) string {
+	return fmt.Sprintf("%s/auth?token=%s&next=%s", e.publicURL, e.client.Token, url.QueryEscape(next))
 }
 
 // Main is the CLI entry point; it returns the process exit code.
@@ -89,6 +100,8 @@ func Main(args []string) int {
 	switch cmd {
 	case "open":
 		return e.cmdOpen(rest)
+	case "url":
+		return e.cmdURL(rest)
 	case "reviews":
 		return e.cmdReviews(rest)
 	case "feedback":
@@ -123,12 +136,13 @@ func connect(stdout, stderr io.Writer) (*env, int) {
 		return nil, ExitError
 	}
 	return &env{
-		client:   &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},
-		repoRoot: repoRoot,
-		branch:   branch,
-		stdout:   stdout,
-		stderr:   stderr,
-		openURL:  openInBrowser,
+		client:    &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},
+		publicURL: st.PublicBaseURL(),
+		repoRoot:  repoRoot,
+		branch:    branch,
+		stdout:    stdout,
+		stderr:    stderr,
+		openURL:   openInBrowser,
 	}, ExitOK
 }
 
@@ -272,7 +286,11 @@ func cmdServe(args []string) int {
 	fs := newFlagSet("serve")
 	repo := fs.String("repo", "", "repository to serve (default: enclosing repo)")
 	idle := fs.Duration("idle-timeout", defaultIdleTimeout(), "shut down after this quiet period (0 disables)")
+	bind := fs.String("bind", os.Getenv("REVUE_BIND"), "listen address (default 127.0.0.1; $REVUE_BIND)")
+	port := fs.Int("port", envInt("REVUE_PORT"), "fixed listen port (default: recorded or ephemeral; $REVUE_PORT)")
+	publicURL := fs.String("public-url", os.Getenv("REVUE_PUBLIC_URL"), "browser-facing base URL ($REVUE_PUBLIC_URL)")
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return ExitValidation
 	}
 	repoRoot := *repo
@@ -284,12 +302,18 @@ func cmdServe(args []string) int {
 			return ExitValidation
 		}
 	}
-	s, err := server.Start(server.Config{RepoRoot: repoRoot, IdleTimeout: *idle})
+	s, err := server.Start(server.Config{
+		RepoRoot:    repoRoot,
+		IdleTimeout: *idle,
+		Bind:        *bind,
+		Port:        *port,
+		PublicURL:   *publicURL,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return ExitError
 	}
-	fmt.Printf("revue serving %s on %s\n", repoRoot, s.URL())
+	fmt.Printf("revue serving %s on %s (browser: %s)\n", repoRoot, s.URL(), s.PublicURL())
 	waitForSignalOr(s)
 	return ExitOK
 }
@@ -301,4 +325,17 @@ func defaultIdleTimeout() time.Duration {
 		}
 	}
 	return 30 * time.Minute
+}
+
+func envInt(name string) int {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ignoring %s=%q: not an integer\n", name, v)
+		return 0
+	}
+	return n
 }

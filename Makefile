@@ -1,14 +1,30 @@
 GO ?= go
 UI_DIST := internal/server/ui/dist
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X github.com/rphf/revue/internal/cli.Version=$(VERSION)
+PLATFORMS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 
 # This repo does not vendor; shield builds from a stray -mod=vendor in
 # the ambient environment.
 export GOFLAGS :=
 
-.PHONY: build web-install web-build ui-dist test web-test smoke e2e clean
+.PHONY: build release web-install web-build ui-dist test web-test smoke e2e clean
 
 build: web-build
-	$(GO) build -o bin/revue ./cmd/revue
+	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/revue ./cmd/revue
+
+#TODO: Consider a comment here
+release: web-build
+	rm -rf dist && mkdir -p dist
+	for p in $(PLATFORMS); do \
+	  os=$${p%/*}; arch=$${p#*/}; dir=dist/revue_$${os}_$${arch}; \
+	  mkdir -p $$dir; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $$dir/revue ./cmd/revue || exit 1; \
+	  tar -czf $$dir.tar.gz -C $$dir revue; \
+	  rm -r $$dir; \
+	done
+	cd dist && shasum -a 256 *.tar.gz > checksums.txt
+	@ls -l dist
 
 web-install:
 	cd web && npm install
@@ -39,4 +55,4 @@ e2e: build
 	cd web && npx playwright test
 
 clean:
-	rm -rf bin $(UI_DIST)
+	rm -rf bin dist $(UI_DIST)

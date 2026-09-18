@@ -51,7 +51,7 @@ func (e *env) cmdOpen(args []string) int {
 	if err := e.client.do("POST", "/api/reviews", map[string]any{"args": diffArgs, "branch": e.branch}, &out); err != nil {
 		return e.fail(err)
 	}
-	url := fmt.Sprintf("%s/auth?token=%s&next=/reviews/%d", e.client.BaseURL, e.client.Token, out.Review.ID)
+	url := e.authURL(fmt.Sprintf("/reviews/%d", out.Review.ID))
 	code := e.printJSON(map[string]any{
 		"review": out.Review,
 		"round":  out.Round,
@@ -67,6 +67,47 @@ func (e *env) cmdOpen(args []string) int {
 		}
 	}
 	return ExitOK
+}
+
+// Plain text, not JSON: a host-side helper hands the output to a browser.
+// Never fails for lack of a review; it falls back to the review list.
+func (e *env) cmdURL(args []string) int {
+	fs := newFlagSet("url")
+	review := fs.Int64("review", 0, "review id (default: single open review for this branch, else the list)")
+	if err := fs.Parse(args); err != nil {
+		return e.failValidation(err.Error())
+	}
+	next := "/"
+	switch {
+	case *review > 0:
+		next = fmt.Sprintf("/reviews/%d", *review)
+	default:
+		var out struct {
+			Reviews []*store.Review `json:"reviews"`
+		}
+		if err := e.client.do("GET", "/api/reviews", nil, &out); err != nil {
+			return e.fail(err)
+		}
+		if open := e.openReviewsForBranch(out.Reviews); len(open) == 1 {
+			next = fmt.Sprintf("/reviews/%d", open[0].ID)
+		}
+	}
+	fmt.Fprintln(e.stdout, e.authURL(next))
+	return ExitOK
+}
+
+func (e *env) openReviewsForBranch(reviews []*store.Review) []*store.Review {
+	var open []*store.Review
+	for _, r := range reviews {
+		if r.State != store.StateOpen {
+			continue
+		}
+		if e.branch != "" && r.Branch != e.branch {
+			continue
+		}
+		open = append(open, r)
+	}
+	return open
 }
 
 func (e *env) cmdReviews(args []string) int {
@@ -95,16 +136,7 @@ func (e *env) resolveReview(explicit int64) (int64, int) {
 	if err := e.client.do("GET", "/api/reviews", nil, &out); err != nil {
 		return 0, e.fail(err)
 	}
-	var open []*store.Review
-	for _, r := range out.Reviews {
-		if r.State != store.StateOpen {
-			continue
-		}
-		if e.branch != "" && r.Branch != e.branch {
-			continue
-		}
-		open = append(open, r)
-	}
+	open := e.openReviewsForBranch(out.Reviews)
 	switch len(open) {
 	case 1:
 		return open[0].ID, ExitOK

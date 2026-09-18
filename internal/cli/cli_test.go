@@ -73,12 +73,13 @@ func newHarness(t *testing.T) *harness {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	return &harness{
 		env: &env{
-			client:   &Client{BaseURL: srv.URL(), Token: srv.Token(), HTTP: &http.Client{}},
-			repoRoot: repo,
-			branch:   "main",
-			stdout:   out,
-			stderr:   errOut,
-			openURL:  func(string) error { return nil },
+			client:    &Client{BaseURL: srv.URL(), Token: srv.Token(), HTTP: &http.Client{}},
+			publicURL: srv.PublicURL(),
+			repoRoot:  repo,
+			branch:    "main",
+			stdout:    out,
+			stderr:    errOut,
+			openURL:   func(string) error { return nil },
 		},
 		t: t, repo: repo, srv: srv, out: out, errOut: errOut,
 	}
@@ -110,7 +111,7 @@ func (h *harness) openReview() (int64, int64) {
 		Review struct {
 			ID int64 `json:"id"`
 		} `json:"review"`
-		Cursor int64 `json:"cursor"`
+		Cursor int64  `json:"cursor"`
 		URL    string `json:"url"`
 	}
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
@@ -473,5 +474,60 @@ func TestReviewsListsAndDefaultResolution(t *testing.T) {
 	}
 	if !strings.Contains(out, fmt.Sprintf(`"id": %d`, id)) {
 		t.Errorf("resolved wrong review: %s", out)
+	}
+}
+
+func TestURLPrintsPublicAuthURL(t *testing.T) {
+	h := newHarness(t)
+	h.publicURL = "http://agent1.localhost:3191"
+	token := h.client.Token
+
+	code, out := h.run(h.cmdURL)
+	if code != ExitOK {
+		t.Fatalf("url with no review: exit %d: %s", code, out)
+	}
+	if want := "http://agent1.localhost:3191/auth?token=" + token + "&next=%2F\n"; out != want {
+		t.Errorf("url with no review = %q, want %q", out, want)
+	}
+
+	id, _ := h.openReview()
+	code, out = h.run(h.cmdURL)
+	if code != ExitOK {
+		t.Fatalf("url: exit %d: %s", code, out)
+	}
+	if want := fmt.Sprintf("http://agent1.localhost:3191/auth?token=%s&next=%%2Freviews%%2F%d\n", token, id); out != want {
+		t.Errorf("url = %q, want %q", out, want)
+	}
+
+	code, out = h.run(h.cmdURL, "--review", "42")
+	if code != ExitOK {
+		t.Fatalf("url --review: exit %d: %s", code, out)
+	}
+	if !strings.HasSuffix(out, "&next=%2Freviews%2F42\n") {
+		t.Errorf("url --review 42 = %q", out)
+	}
+}
+
+func TestOpenReportsPublicURL(t *testing.T) {
+	h := newHarness(t)
+	h.publicURL = "http://agent1.localhost:3191"
+	h.modify("package main\n\nfunc main() {\n\tprintln(\"v2\")\n}\n")
+	var opened string
+	h.openURL = func(u string) error { opened = u; return nil }
+	code, out := h.run(h.cmdOpen)
+	if code != ExitOK {
+		t.Fatalf("open: exit %d: %s", code, out)
+	}
+	var parsed struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(parsed.URL, "http://agent1.localhost:3191/auth?token=") {
+		t.Errorf("open url = %q, want the public base", parsed.URL)
+	}
+	if opened != parsed.URL {
+		t.Errorf("browser opened %q, printed %q", opened, parsed.URL)
 	}
 }
