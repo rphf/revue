@@ -7,7 +7,6 @@ import {
 } from "react";
 import type {
   CodeViewItem,
-  CodeViewLineSelection,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -67,6 +66,9 @@ export interface DiffViewHandle {
   // Exact jump: CodeView computes the offset from its own layout
   // math, so far-away files land instantly with no settling.
   scrollToFile(path: string): void;
+  // Drops the line selection the library keeps after a gutter click or
+  // drag, so the next one starts fresh instead of extending it.
+  clearSelection(): void;
 }
 
 export interface DiffViewProps {
@@ -80,9 +82,6 @@ export interface DiffViewProps {
     path: string,
   ) => ReactNode;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
-  // Controlled selection: the highlighted lines follow the pending comment
-  // and clear with it, so the next gutter click starts a fresh range.
-  selectedLines?: CodeViewLineSelection | null;
   onExpandContext?: (path: string) => void;
 }
 
@@ -107,7 +106,6 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     annotationsByFile,
     renderAnnotation,
     onLineSelect,
-    selectedLines,
     onExpandContext,
   }: DiffViewProps,
   ref,
@@ -123,6 +121,9 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           align: "start",
           behavior: "instant",
         });
+      },
+      clearSelection: () => {
+        codeView.current?.getInstance()?.setSelectedLines(null);
       },
     }),
     [],
@@ -190,7 +191,6 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       ref={codeView}
       className="diff-scroll"
       items={items}
-      selectedLines={selectedLines ?? null}
       options={{
         diffStyle,
         stickyHeaders: true,

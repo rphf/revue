@@ -100,8 +100,10 @@ describe("Thread", () => {
     );
     expect(onChanged).toHaveBeenCalled();
 
-    // Delete (confirmed)
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    // Delete asks inline, then deletes on the second Delete.
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Delete this draft?");
+    expect(api.deleteComment).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(api.deleteComment).toHaveBeenCalledWith(draft.id),

@@ -39,6 +39,21 @@ type Config struct {
 	Bind        string
 	Port        int
 	PublicURL   string
+	BuildStamp  string // identifies the binary; "" derives it from the executable
+}
+
+// BuildStamp identifies the running binary by path and modification
+// time, so a CLI from a newer build can tell a stale server apart.
+func BuildStamp() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	info, err := os.Stat(exe)
+	if err != nil {
+		return exe
+	}
+	return fmt.Sprintf("%s@%d", exe, info.ModTime().UnixNano())
 }
 
 const defaultBind = "127.0.0.1"
@@ -73,6 +88,7 @@ type Server struct {
 	store     *store.Store
 	repoRoot  string
 	token     string
+	build     string
 	publicURL string
 	anchor    Anchor
 	bus       *bus
@@ -187,6 +203,9 @@ func Start(cfg Config) (*Server, error) {
 	if bind == "" {
 		bind = defaultBind
 	}
+	if cfg.BuildStamp == "" {
+		cfg.BuildStamp = BuildStamp()
+	}
 	dataDir, stateDir := cfg.DataDir, cfg.DataDir
 	if cfg.DataDir == "" {
 		var err error
@@ -246,6 +265,7 @@ func Start(cfg Config) (*Server, error) {
 		store:     st,
 		repoRoot:  cfg.RepoRoot,
 		token:     token,
+		build:     cfg.BuildStamp,
 		publicURL: publicURL,
 		anchor:    anchorEngine,
 		bus:       newBus(),

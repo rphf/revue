@@ -143,7 +143,7 @@ func stateError(w http.ResponseWriter, review *store.Review) {
 // --- health ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repoRoot": s.repoRoot})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repoRoot": s.repoRoot, "build": s.build})
 }
 
 // --- reviews ---

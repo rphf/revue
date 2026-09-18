@@ -5,8 +5,7 @@ import CommentForm from "./CommentForm";
 describe("CommentForm", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("prompts confirm-discard when cancelling with non-empty content", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("asks inline before discarding non-empty content", () => {
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
 
@@ -14,32 +13,40 @@ describe("CommentForm", () => {
       target: { value: "unsaved thought" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(confirm).toHaveBeenCalled();
-    expect(onCancel).not.toHaveBeenCalled(); // declined the discard
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Discard this comment?",
+    );
+    expect(onCancel).not.toHaveBeenCalled();
 
-    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue("unsaved thought");
+
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it("cancels without prompting when empty", () => {
-    const confirm = vi.spyOn(window, "confirm");
+  it("cancels without asking when empty", () => {
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it("Escape dismisses through the same confirm-discard flow", () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("Escape asks first, and a second Escape discards", () => {
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "text" },
     });
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
-    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Discard this comment?",
+    );
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalled();
   });
 

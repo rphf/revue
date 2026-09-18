@@ -24,6 +24,7 @@ export default function Thread({
 }: ThreadProps) {
   const [replying, setReplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const run = (op: Promise<unknown>) =>
@@ -36,7 +37,7 @@ export default function Thread({
     );
 
   const deleteComment = (id: number) => {
-    if (!window.confirm("Delete this draft comment?")) return;
+    setDeletingId(null);
     void run(api.deleteComment(id));
   };
 
@@ -68,24 +69,47 @@ export default function Thread({
                 {c.authorRole}
               </span>
               {c.draft && <span className="chip chip-draft">Draft</span>}
-              {c.draft && c.authorRole === "reviewer" && (
-                <span className="comment-actions">
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => setEditingId(c.id)}
+              {c.draft &&
+                c.authorRole === "reviewer" &&
+                (deletingId === c.id ? (
+                  <span
+                    className="comment-actions confirm-inline"
+                    role="status"
                   >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => deleteComment(c.id)}
-                  >
-                    Delete
-                  </button>
-                </span>
-              )}
+                    Delete this draft?
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => setDeletingId(null)}
+                    >
+                      Keep
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn link-danger"
+                      onClick={() => deleteComment(c.id)}
+                    >
+                      Delete
+                    </button>
+                  </span>
+                ) : (
+                  <span className="comment-actions">
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => setEditingId(c.id)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => setDeletingId(c.id)}
+                    >
+                      Delete
+                    </button>
+                  </span>
+                ))}
             </div>
             {editingId === c.id ? (
               <CommentForm

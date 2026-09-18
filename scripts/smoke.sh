@@ -97,6 +97,15 @@ step "identical round signal is a no-op with notice (KTD12)"
 "$BIN" round --review "$REVIEW_ID" > "$WORK/dedupe.json"
 [ "$(json "$WORK/dedupe.json" "data['deduped']")" = "True" ] || fail "identical round not deduped"
 
+step "a rebuilt binary restarts the running server on the next call"
+OLD_PID="$(json "$STATE_FILE" "data['pid']")"
+touch "$BIN"
+"$BIN" reviews > "$WORK/reviews-after-rebuild.json" || fail "reviews after rebuild failed"
+NEW_PID="$(json "$STATE_FILE" "data['pid']")"
+[ "$OLD_PID" != "$NEW_PID" ] || fail "server pid unchanged after the binary changed"
+[ "$(json "$WORK/reviews-after-rebuild.json" "len(data['reviews'])")" = "1" ] || fail "review list lost across the restart"
+SERVER_PID="$NEW_PID"
+
 step "wait: timeout is distinct (exit 4)"
 set +e
 "$BIN" wait --review "$REVIEW_ID" --since "$(json "$WORK/fb.json" "data['cursor']")" --timeout 1s > "$WORK/wait1.json"

@@ -911,3 +911,27 @@ func TestLoopbackHostAndPublicURLNormalization(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthReportsBuildAndProbeReadsIt(t *testing.T) {
+	repo := initRepo(t)
+	s, err := Start(Config{RepoRoot: repo, DataDir: t.TempDir(), BuildStamp: "build-A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.Shutdown(ctx)
+		cancel()
+	}()
+	st := &State{Port: s.ln.Addr().(*net.TCPAddr).Port, Token: s.Token(), PID: os.Getpid()}
+	build, ok := probe(st)
+	if !ok || build != "build-A" {
+		t.Fatalf("probe = (%q, %v), want (build-A, true)", build, ok)
+	}
+	if BuildStamp() == "" || BuildStamp() == "build-A" {
+		t.Errorf("BuildStamp() = %q, want the test binary's own stamp", BuildStamp())
+	}
+	if !Healthy(st) {
+		t.Error("Healthy should still hold for a live server of any build")
+	}
+}

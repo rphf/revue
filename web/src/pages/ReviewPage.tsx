@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import type {
-  CodeViewLineSelection,
   DiffLineAnnotation,
   FileDiffMetadata,
   SelectedLineRange,
@@ -249,22 +248,6 @@ export default function ReviewPage({
     return next;
   }, [threads, currentRoundId, pending, reviewState]);
 
-  const selectedLines = useMemo<CodeViewLineSelection | null>(
-    () =>
-      pending
-        ? {
-            id: pending.path,
-            range: {
-              start: pending.startLine ?? pending.line,
-              end: pending.line,
-              side: pending.side,
-              endSide: pending.side,
-            },
-          }
-        : null,
-    [pending],
-  );
-
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<AnnotationMeta>) => {
       const meta = annotation.metadata;
@@ -288,9 +271,13 @@ export default function ReviewPage({
                   body,
                 });
                 setPending(null);
+                diffViewRef.current?.clearSelection();
                 loadThreads();
               }}
-              onCancel={() => setPending(null)}
+              onCancel={() => {
+                setPending(null);
+                diffViewRef.current?.clearSelection();
+              }}
             />
           </div>
         );
@@ -503,7 +490,6 @@ export default function ReviewPage({
               diffStyle={diffStyle}
               theme={theme}
               annotationsByFile={annotationsByFile}
-              selectedLines={selectedLines}
               renderAnnotation={renderAnnotation}
               onLineSelect={
                 reviewState !== "closed" && viewingLatest

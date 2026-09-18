@@ -29,30 +29,57 @@ func repoKey(repoRoot string) string {
 // Healthy probes a recorded server state and reports whether a live
 // revue server for this repo answers with the recorded token.
 func Healthy(st *State) bool {
+	_, ok := probe(st)
+	return ok
+}
+
+// probe asks the recorded server for its health and build stamp.
+func probe(st *State) (build string, ok bool) {
 	if st == nil || st.Port == 0 || st.Token == "" {
-		return false
+		return "", false
 	}
 	req, err := http.NewRequest("GET", st.BaseURL()+"/healthz", nil)
 	if err != nil {
-		return false
+		return "", false
 	}
 	req.Header.Set("Authorization", "Bearer "+st.Token)
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return "", false
 	}
 	var body struct {
-		OK bool `json:"ok"`
+		OK    bool   `json:"ok"`
+		Build string `json:"build"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return false
+		return "", false
 	}
-	return body.OK
+	return body.Build, body.OK
+}
+
+// stopStale asks a server from another build to exit and waits for its
+// port to fall silent, so the replacement can take the recorded port.
+func stopStale(st *State) {
+	if st.PID <= 0 {
+		return
+	}
+	proc, err := os.FindProcess(st.PID)
+	if err != nil {
+		return
+	}
+	_ = terminateProcess(proc)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, alive := probe(st); !alive {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // Ensure returns a healthy server's state for the repo, starting one
@@ -63,8 +90,15 @@ func Ensure(repoRoot string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st, err := ReadState(stateDir); err == nil && Healthy(st) {
-		return st, nil
+	if st, err := ReadState(stateDir); err == nil {
+		if build, alive := probe(st); alive {
+			if build == BuildStamp() {
+				return st, nil
+			}
+			// A server from another build keeps serving its own embedded
+			// UI and API; after a rebuild or an upgrade it must go.
+			stopStale(st)
+		}
 	}
 
 	exe, err := os.Executable()

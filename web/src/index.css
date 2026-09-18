@@ -535,6 +535,17 @@ code {
   font-weight: 600;
 }
 
+.confirm-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.link-danger,
+.btn-danger {
+  color: var(--removed);
+}
 .link-btn {
   color: var(--accent);
   padding: 0;

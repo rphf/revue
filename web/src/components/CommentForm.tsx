@@ -23,10 +23,14 @@ export default function CommentForm({
   const [body, setBody] = useState(initial);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
+  // Unsaved text asks before it goes, inline rather than through the
+  // browser's modal confirm, which blocks the page and paints oddly.
   const cancel = () => {
-    if (body.trim() !== "" && body !== initial) {
-      if (!window.confirm("Discard this comment?")) return;
+    if (body.trim() !== "" && body !== initial && !confirmingDiscard) {
+      setConfirmingDiscard(true);
+      return;
     }
     onCancel();
   };
@@ -71,14 +75,30 @@ export default function CommentForm({
         </p>
       )}
       <div className="form-actions">
-        <button
-          type="button"
-          className="btn"
-          onClick={cancel}
-          disabled={pending}
-        >
-          Cancel
-        </button>
+        {confirmingDiscard ? (
+          <span className="confirm-inline" role="status">
+            Discard this comment?
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setConfirmingDiscard(false)}
+            >
+              Keep
+            </button>
+            <button type="button" className="btn btn-danger" onClick={onCancel}>
+              Discard
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="btn"
+            onClick={cancel}
+            disabled={pending}
+          >
+            Cancel
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-primary"
