@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -38,10 +39,16 @@ func waitForSignalOr(s *server.Server) {
 func (e *env) cmdOpen(args []string) int {
 	fs := newFlagSet("open")
 	noBrowser := fs.Bool("no-browser", false, "print the URL without launching a browser")
+	reuse := fs.Bool("reuse", false, "add a round to this branch's open review with the same diff arguments instead of creating another review")
 	if err := fs.Parse(args); err != nil {
 		return e.failValidation(err.Error())
 	}
 	diffArgs := fs.Args()
+	if *reuse {
+		if code, done := e.reuseReview(diffArgs, *noBrowser); done {
+			return code
+		}
+	}
 
 	var out struct {
 		Review *store.Review `json:"review"`
@@ -67,6 +74,49 @@ func (e *env) cmdOpen(args []string) int {
 		}
 	}
 	return ExitOK
+}
+
+// reuseReview finds this branch's open review with the same diff
+// arguments and adds a round to it. done is false when there is none,
+// so cmdOpen falls through to creating a review.
+func (e *env) reuseReview(diffArgs []string, noBrowser bool) (code int, done bool) {
+	var list struct {
+		Reviews []*store.Review `json:"reviews"`
+	}
+	if err := e.client.do("GET", "/api/reviews", nil, &list); err != nil {
+		return e.fail(err), true
+	}
+	for _, r := range e.openReviewsForBranch(list.Reviews) {
+		if !slices.Equal(r.SourceArgs, diffArgs) {
+			continue
+		}
+		var rd struct {
+			Round   *store.Round `json:"round"`
+			Cursor  int64        `json:"cursor"`
+			Deduped bool         `json:"deduped"`
+			Notice  string       `json:"notice"`
+		}
+		if err := e.client.do("POST", fmt.Sprintf("/api/reviews/%d/rounds", r.ID), map[string]any{}, &rd); err != nil {
+			return e.fail(err), true
+		}
+		url := e.authURL(fmt.Sprintf("/reviews/%d", r.ID))
+		out := map[string]any{"review": r, "round": rd.Round, "url": url, "reused": true}
+		if rd.Deduped {
+			out["notice"] = rd.Notice
+		} else {
+			out["cursor"] = rd.Cursor
+		}
+		if code := e.printJSON(out); code != ExitOK {
+			return code, true
+		}
+		if !noBrowser {
+			if err := e.openURL(url); err != nil {
+				_, _ = fmt.Fprintln(e.stderr, "could not open a browser:", err)
+			}
+		}
+		return ExitOK, true
+	}
+	return ExitOK, false
 }
 
 // Plain text, not JSON: a host-side helper hands the output to a browser.

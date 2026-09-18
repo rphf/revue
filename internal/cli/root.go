@@ -39,6 +39,7 @@ const usage = `revue — local code review for agent-written diffs
 
 Human commands:
   open [git-diff args]   capture a diff, open the review in the browser
+                         (--reuse: add a round to this branch's open review with the same args)
   url [--review N]       print the browser URL of a review (default: this branch's open review)
   serve                  run the per-repo server in the foreground
 
@@ -242,12 +243,13 @@ func (c *Client) do(method, path string, body any, out any) error {
 // printJSON writes indented JSON to stdout — the machine-readable
 // surface (R10).
 func (e *env) printJSON(v any) int {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	enc := json.NewEncoder(e.stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
 		_, _ = fmt.Fprintln(e.stderr, err)
 		return ExitError
 	}
-	_, _ = fmt.Fprintln(e.stdout, string(data))
 	return ExitOK
 }
 

@@ -78,7 +78,7 @@ Human commands:
 
 | Command | Effect |
 | --- | --- |
-| `revue open [git-diff args]` | Capture a diff, create a review, open the browser. `--no-browser` only prints. |
+| `revue open [git-diff args]` | Capture a diff, create a review, open the browser. `--no-browser` only prints. `--reuse` adds a round to this branch's open review with the same arguments instead of creating another review. |
 | `revue url [--review N]` | Print the browser URL of a review. Default: this branch's open review, else the review list. |
 | `revue serve` | Run the per-repo server in the foreground. Other commands start it on demand. |
 | `revue version` | Print the version. |
@@ -115,13 +115,14 @@ Exit codes are stable across releases:
 These steps are written for an agent. Put them in the agent's instructions.
 
 1. Finish the change. Run the tests.
-2. Run `revue open main...HEAD`. The output has a `url` and a `cursor`.
+2. Run `revue open --no-browser --reuse main...HEAD`. The output has a `url`
+   and a `cursor`.
 3. Give the URL to the human. Then end your turn.
 4. When the human resumes you, run `revue feedback --since <cursor>`. The
    output has the verdict and every thread with quoted code.
 5. If a comment needs an answer, run `revue reply --thread <id> -m "..."`.
-6. If the verdict is "request changes", change the code. Then run
-   `revue round`.
+6. If the verdict is "request changes", change the code. Then run the same
+   `revue open --reuse` command again, or `revue round`. Both add a round.
 7. Repeat from step 3 until the verdict is "approve".
 
 `revue wait --timeout 10m` is an alternative to step 4 for unattended runs. It

@@ -526,3 +526,53 @@ func TestOpenReportsPublicURL(t *testing.T) {
 		t.Errorf("browser opened %q, printed %q", opened, parsed.URL)
 	}
 }
+
+func TestOpenReuseAddsRoundInsteadOfNewReview(t *testing.T) {
+	h := newHarness(t)
+	id, _ := h.openReview()
+
+	h.modify("package main\n\nfunc main() {\n\tprintln(\"v3\")\n}\n")
+	code, out := h.run(h.cmdOpen, "--no-browser", "--reuse")
+	if code != ExitOK {
+		t.Fatalf("open --reuse: exit %d: %s", code, out)
+	}
+	var reused struct {
+		Reused bool `json:"reused"`
+		Review struct {
+			ID int64 `json:"id"`
+		} `json:"review"`
+		Round struct {
+			Seq int `json:"seq"`
+		} `json:"round"`
+		Cursor int64  `json:"cursor"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(out), &reused); err != nil {
+		t.Fatal(err)
+	}
+	if !reused.Reused || reused.Review.ID != id || reused.Round.Seq != 2 || reused.Cursor == 0 {
+		t.Errorf("reuse = %+v, want review %d round 2 with a cursor", reused, id)
+	}
+	if !strings.Contains(reused.URL, "&next=") {
+		t.Errorf("url = %q, want a plain & (no HTML escaping)", reused.URL)
+	}
+
+	code, out = h.run(h.cmdOpen, "--no-browser", "--reuse")
+	if code != ExitOK || !strings.Contains(out, `"notice"`) || strings.Contains(out, `"cursor"`) {
+		t.Errorf("unchanged diff: exit %d, want a dedupe notice and no cursor: %s", code, out)
+	}
+
+	code, out = h.run(h.cmdReviews)
+	if code != ExitOK || strings.Count(out, `"sourceArgs"`) != 1 {
+		t.Errorf("reuse created extra reviews: %s", out)
+	}
+
+	code, out = h.run(h.cmdOpen, "--no-browser")
+	if code != ExitOK || strings.Contains(out, `"reused"`) {
+		t.Errorf("open without --reuse should create a review: exit %d: %s", code, out)
+	}
+	_, out = h.run(h.cmdReviews)
+	if strings.Count(out, `"sourceArgs"`) != 2 {
+		t.Errorf("want two reviews after a plain open: %s", out)
+	}
+}
