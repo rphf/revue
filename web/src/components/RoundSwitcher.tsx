@@ -10,7 +10,12 @@ export interface RoundSwitcherProps {
 // Navigate the review's frozen rounds (R8): any prior round renders
 // exactly the patch it was reviewed against. Disabled while a round
 // fetch is in flight.
-export default function RoundSwitcher({ rounds, current, disabled, onSelect }: RoundSwitcherProps) {
+export default function RoundSwitcher({
+  rounds,
+  current,
+  disabled,
+  onSelect,
+}: RoundSwitcherProps) {
   if (rounds.length <= 1) {
     return <span className="round-label">round {current}</span>;
   }

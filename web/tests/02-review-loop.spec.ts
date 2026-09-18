@@ -13,11 +13,18 @@ interface Feedback {
 // Covers AE3 end-to-end: drafts stay invisible until the reviewer
 // submits with a verdict; then the agent's read returns everything at
 // once. Then the agent's reply appears live, without reload.
-test("draft -> submit with verdict -> CLI feedback -> live agent reply", async ({ page }) => {
+test("draft -> submit with verdict -> CLI feedback -> live agent reply", async ({
+  page,
+}) => {
   await authenticate(page, "/reviews/1");
   await expect(page.getByText("alpha three v2").first()).toBeVisible();
 
-  await draftComment(page, "alpha.go", "alpha three v2", "use fmt.Println instead of println");
+  await draftComment(
+    page,
+    "alpha.go",
+    "alpha three v2",
+    "use fmt.Println instead of println",
+  );
   await expect(page.getByText("Draft", { exact: true }).first()).toBeVisible();
 
   // AE3 first half: the agent sees nothing before submission.
@@ -39,12 +46,20 @@ test("draft -> submit with verdict -> CLI feedback -> live agent reply", async (
   const fb = cliJSON<Feedback>(result);
   expect(fb.verdict).toBe("request_changes");
   expect(fb.threads).toHaveLength(1);
-  expect(fb.threads[0].comments[0].body).toBe("use fmt.Println instead of println");
+  expect(fb.threads[0].comments[0].body).toBe(
+    "use fmt.Println instead of println",
+  );
   expect(fb.threads[0].quote?.path).toBe("alpha.go");
   expect(fb.threads[0].quote?.lines.join("\n")).toContain("alpha three v2");
 
   // The agent replies; the browser shows it without any reload (R7).
-  const reply = await cli(["reply", "--thread", String(fb.threads[0].id), "-m", "switched to fmt.Println"]);
+  const reply = await cli([
+    "reply",
+    "--thread",
+    String(fb.threads[0].id),
+    "-m",
+    "switched to fmt.Println",
+  ]);
   expect(reply.code).toBe(0);
   await expect(page.getByText("switched to fmt.Println")).toBeVisible();
   await expect(page.getByText("agent", { exact: true })).toBeVisible();

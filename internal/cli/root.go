@@ -83,10 +83,10 @@ func Main(args []string) int {
 
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(os.Stdout, usage)
+		_, _ = fmt.Fprint(os.Stdout, usage)
 		return ExitOK
 	case "version", "--version":
-		fmt.Fprintln(os.Stdout, Version)
+		_, _ = fmt.Fprintln(os.Stdout, Version)
 		return ExitOK
 	case "serve", "__serve":
 		return cmdServe(rest)
@@ -125,14 +125,14 @@ func Main(args []string) int {
 func connect(stdout, stderr io.Writer) (*env, int) {
 	repoRoot, err := gitOutput("", "rev-parse", "--show-toplevel")
 	if err != nil {
-		fmt.Fprintln(stderr, "revue must run inside a git repository:", err)
+		_, _ = fmt.Fprintln(stderr, "revue must run inside a git repository:", err)
 		return nil, ExitValidation
 	}
 	branch, _ := gitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
 
 	st, err := server.Ensure(repoRoot)
 	if err != nil {
-		fmt.Fprintln(stderr, "could not start the revue server:", err)
+		_, _ = fmt.Fprintln(stderr, "could not start the revue server:", err)
 		return nil, ExitError
 	}
 	return &env{
@@ -197,7 +197,7 @@ func (c *Client) newRequest(method, path string) (*http.Request, error) {
 }
 
 func unmarshalAPIError(data []byte, apiErr *APIError) {
-	json.Unmarshal(data, apiErr)
+	_ = json.Unmarshal(data, apiErr)
 }
 
 func (c *Client) do(method, path string, body any, out any) error {
@@ -221,14 +221,14 @@ func (c *Client) do(method, path string, body any, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Code: "unknown", Message: string(data)}
-		json.Unmarshal(data, apiErr)
+		_ = json.Unmarshal(data, apiErr)
 		return apiErr
 	}
 	if out != nil {
@@ -244,10 +244,10 @@ func (c *Client) do(method, path string, body any, out any) error {
 func (e *env) printJSON(v any) int {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		fmt.Fprintln(e.stderr, err)
+		_, _ = fmt.Fprintln(e.stderr, err)
 		return ExitError
 	}
-	fmt.Fprintln(e.stdout, string(data))
+	_, _ = fmt.Fprintln(e.stdout, string(data))
 	return ExitOK
 }
 

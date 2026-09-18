@@ -102,8 +102,6 @@ func gitDiffExit1OK(repoRoot string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-const zeroOID = "0000000000000000000000000000000000000000"
-
 func isZeroOID(s string) bool {
 	for _, c := range s {
 		if c != '0' {
@@ -216,15 +214,9 @@ func newSideContent(repoRoot, oid, path string) ([]byte, error) {
 // working tree with no revision pinned: only then do untracked files
 // belong in the review (R1).
 func isWorkingTreeCapture(args []string) bool {
-	for _, a := range args {
-		if a == "--" {
-			break
-		}
-		// Anything else pins a side: --staged makes the index the new
-		// side, a revision makes the old side a commit.
-		return false
-	}
-	return true
+	// Anything before a bare "--" pins a side: --staged makes the index
+	// the new side, a revision makes the old side a commit.
+	return len(args) == 0 || args[0] == "--"
 }
 
 // pathspecs extracts everything after a bare "--".

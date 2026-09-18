@@ -36,6 +36,8 @@ func beta() {
   expect(created.deduped).toBe(false);
 
   await authenticate(page, "/reviews/1");
-  await expect(page.getByTestId("diff-empty")).toHaveText(/No changes in this diff/);
+  await expect(page.getByTestId("diff-empty")).toHaveText(
+    /No changes in this diff/,
+  );
   await expect(page.getByText("No changed files")).toBeVisible();
 });

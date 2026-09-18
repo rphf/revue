@@ -1,15 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
-import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
+import type {
+  DiffLineAnnotation,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import { api } from "../api";
 import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
-import type { ReviewDetail, RoundDetail, Side, Thread as ThreadType, ThreadAnchor, Verdict } from "../types";
+import type {
+  ReviewDetail,
+  RoundDetail,
+  Side,
+  Thread as ThreadType,
+  ThreadAnchor,
+  Verdict,
+} from "../types";
 import { StateChip, ThemeToggle } from "../App";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import { useFullDiffs } from "../components/ContextExpand";
-import DiffView, { type AnnotationMeta, type DiffStyle, type DiffViewHandle } from "../components/DiffView";
+import DiffView, {
+  type AnnotationMeta,
+  type DiffStyle,
+  type DiffViewHandle,
+  type PendingComment,
+} from "../components/DiffView";
 import FileTree from "../components/FileTree";
 import RoundSwitcher from "../components/RoundSwitcher";
 import SubmitDialog from "../components/SubmitDialog";
@@ -23,11 +39,14 @@ export interface ReviewPageProps {
   onNavigate: (to: string) => void;
 }
 
-interface PendingComment {
-  path: string;
-  side: Side;
-  line: number;
-  startLine?: number;
+// One fetch of a round, tagged with the key it was requested under, so
+// a stale result is ignored by derivation instead of reset in an effect.
+interface RoundLoad {
+  key: string;
+  detail: RoundDetail | null;
+  patch: string | null;
+  files: FileDiffMetadata[] | null;
+  error: string | null;
 }
 
 // threadRev fingerprints a thread's visible content so annotation
@@ -36,35 +55,16 @@ function threadRev(t: ThreadType): string {
   return `${t.resolved ? 1 : 0}|${t.comments.map((c) => `${c.id}#${c.draft ? 1 : 0}#${c.body}`).join("\u0000")}`;
 }
 
-function annotationsEqual(
-  a: DiffLineAnnotation<AnnotationMeta>[],
-  b: DiffLineAnnotation<AnnotationMeta>[],
-): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const ma = a[i].metadata;
-    const mb = b[i].metadata;
-    if (
-      a[i].side !== b[i].side ||
-      a[i].lineNumber !== b[i].lineNumber ||
-      ma?.kind !== mb?.kind ||
-      ma?.threadId !== mb?.threadId ||
-      ma?.rev !== mb?.rev
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate }: ReviewPageProps) {
+export default function ReviewPage({
+  reviewId,
+  theme,
+  onToggleTheme,
+  onNavigate,
+}: ReviewPageProps) {
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
   // null tracks the latest round; a number pins a frozen prior round.
   const [roundSeq, setRoundSeq] = useState<number | null>(null);
-  const [roundDetail, setRoundDetail] = useState<RoundDetail | null>(null);
-  const [patch, setPatch] = useState<string | null>(null);
-  const [roundError, setRoundError] = useState<string | null>(null);
-  const [parsedFiles, setParsedFiles] = useState<FileDiffMetadata[] | null>(null);
+  const [roundLoad, setRoundLoad] = useState<RoundLoad | null>(null);
   const [threads, setThreads] = useState<ThreadType[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
@@ -92,36 +92,53 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
   useEffect(loadReview, [loadReview]);
   useEffect(loadThreads, [loadThreads]);
 
-  const latestSeq = detail?.rounds.length ? detail.rounds[detail.rounds.length - 1].seq : null;
+  const latestSeq = detail?.rounds.length
+    ? detail.rounds[detail.rounds.length - 1].seq
+    : null;
   const effectiveSeq = roundSeq ?? latestSeq;
 
   const [roundFetchNonce, setRoundFetchNonce] = useState(0);
+  const roundKey = `${reviewId}:${effectiveSeq}:${roundFetchNonce}`;
   useEffect(() => {
     if (effectiveSeq === null) return;
     let cancelled = false;
-    setRoundDetail(null);
-    setParsedFiles(null);
-    setPatch(null);
-    setRoundError(null);
-    Promise.all([api.getRound(reviewId, effectiveSeq), api.getPatch(reviewId, effectiveSeq)])
+    Promise.all([
+      api.getRound(reviewId, effectiveSeq),
+      api.getPatch(reviewId, effectiveSeq),
+    ])
       .then(([round, patchText]) => {
         if (cancelled) return;
-        setRoundDetail(round);
-        setPatch(patchText);
-        if (patchText.trim() === "") {
-          setParsedFiles([]);
-          return;
-        }
-        const parsed = parsePatchFiles(patchText);
-        setParsedFiles(parsed.flatMap((p) => p.files));
+        const files =
+          patchText.trim() === ""
+            ? []
+            : parsePatchFiles(patchText).flatMap((p) => p.files);
+        setRoundLoad({
+          key: roundKey,
+          detail: round,
+          patch: patchText,
+          files,
+          error: null,
+        });
       })
       .catch((e) => {
-        if (!cancelled) setRoundError(String(e));
+        if (!cancelled)
+          setRoundLoad({
+            key: roundKey,
+            detail: null,
+            patch: null,
+            files: null,
+            error: String(e),
+          });
       });
     return () => {
       cancelled = true;
     };
-  }, [reviewId, effectiveSeq, roundFetchNonce]);
+  }, [reviewId, effectiveSeq, roundFetchNonce, roundKey]);
+  const loaded = roundLoad?.key === roundKey ? roundLoad : null;
+  const roundDetail = loaded?.detail ?? null;
+  const patch = loaded?.patch ?? null;
+  const parsedFiles = loaded?.files ?? null;
+  const roundError = loaded?.error ?? null;
 
   // Live updates (R7): agent replies and new rounds appear without
   // reload. Draft edits are local-only, so refetching on every event
@@ -165,11 +182,10 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
   );
 
   // Inline annotations: every thread with a live anchor in the shown
-  // round, plus the single pending comment form. Per-file arrays keep
-  // their identity when their content is unchanged, so a thread reload
-  // (every SSE event) re-renders only the file diffs whose annotations
-  // actually changed — not all of them.
-  const prevAnnotationsRef = useRef<Map<string, DiffLineAnnotation<AnnotationMeta>[]>>(new Map());
+  // round, plus the single pending comment form. Each annotation's
+  // metadata carries what rendering it needs, and DiffView compares
+  // annotation content per file, so a thread reload (every SSE event)
+  // re-renders only the file diffs whose annotations actually changed.
   const annotationsByFile = useMemo(() => {
     const next = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
     const push = (path: string, a: DiffLineAnnotation<AnnotationMeta>) => {
@@ -178,14 +194,23 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
       next.set(path, list);
     };
     for (const t of threads) {
-      const anchor = t.anchors.find((a) => a.roundId === currentRoundId && a.state === "live");
+      const anchor = t.anchors.find(
+        (a) => a.roundId === currentRoundId && a.state === "live",
+      );
       if (anchor) {
         push(anchor.path, {
           side: anchor.side,
           lineNumber: anchor.line,
           // rev captures the thread's visible content: any reply,
-          // edit, or resolve changes it and re-renders just that file.
-          metadata: { kind: "thread", threadId: t.id, rev: threadRev(t) },
+          // edit, resolve, or review state change re-renders just
+          // that file.
+          metadata: {
+            kind: "thread",
+            threadId: t.id,
+            rev: `${reviewState}|${threadRev(t)}`,
+            thread: t,
+            reviewState,
+          },
         });
       }
     }
@@ -193,42 +218,35 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
       push(pending.path, {
         side: pending.side,
         lineNumber: pending.line,
-        metadata: { kind: "pending" },
+        metadata: {
+          kind: "pending",
+          rev: String(pending.startLine ?? ""),
+          pending,
+        },
       });
     }
-    const prev = prevAnnotationsRef.current;
-    for (const [path, arr] of next) {
-      const old = prev.get(path);
-      if (old && annotationsEqual(old, arr)) next.set(path, old);
-    }
-    prevAnnotationsRef.current = next;
     return next;
-  }, [threads, currentRoundId, pending]);
+  }, [threads, currentRoundId, pending, reviewState]);
 
-  const threadsById = useMemo(() => new Map(threads.map((t) => [t.id, t])), [threads]);
-
-  // renderAnnotation must be identity-stable or every annotation map
-  // change re-renders every file; the latest closure lives in a ref.
-  const renderAnnotationRef = useRef<(a: DiffLineAnnotation<AnnotationMeta>, path: string) => React.ReactNode>(
-    () => null,
-  );
-  renderAnnotationRef.current = (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => {
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<AnnotationMeta>) => {
       const meta = annotation.metadata;
-      if (meta?.kind === "pending" && pending && pending.path === path) {
+      if (meta?.kind === "pending" && meta.pending) {
+        const p = meta.pending;
         return (
           <CommentForm
             placeholder={
-              pending.startLine && pending.startLine !== pending.line
-                ? `Comment on lines ${pending.startLine}–${pending.line}`
-                : `Comment on line ${pending.line}`
+              p.startLine && p.startLine !== p.line
+                ? `Comment on lines ${p.startLine}–${p.line}`
+                : `Comment on line ${p.line}`
             }
             submitLabel="Start thread"
             onSubmit={async (body) => {
               await api.createThread(reviewId, {
-                path: pending.path,
-                side: pending.side,
-                line: pending.line,
-                startLine: pending.startLine,
+                path: p.path,
+                side: p.side,
+                line: p.line,
+                startLine: p.startLine,
                 body,
               });
               setPending(null);
@@ -238,35 +256,39 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
           />
         );
       }
-      if (meta?.kind === "thread" && meta.threadId !== undefined) {
-        const thread = threadsById.get(meta.threadId);
-        if (!thread) return null;
+      if (meta?.kind === "thread" && meta.thread) {
         return (
           <Thread
-            thread={thread}
+            thread={meta.thread}
             anchorState="live"
-            reviewState={reviewState}
+            reviewState={meta.reviewState ?? "open"}
             onChanged={loadThreads}
             onJumpToOrigin={(seq) => setRoundSeq(seq)}
           />
         );
       }
       return null;
-  };
-  const renderAnnotation = useCallback(
-    (a: DiffLineAnnotation<AnnotationMeta>, path: string) => renderAnnotationRef.current(a, path),
-    [],
+    },
+    [reviewId, loadThreads],
   );
 
-  const onGutterAdd = useCallback((path: string, side: Side, lineNumber: number) => {
-    setPending({ path, side, line: lineNumber });
-  }, []);
+  const onGutterAdd = useCallback(
+    (path: string, side: Side, lineNumber: number) => {
+      setPending({ path, side, line: lineNumber });
+    },
+    [],
+  );
 
   const onLineSelect = useCallback((path: string, range: SelectedLineRange) => {
     const side = (range.endSide ?? range.side ?? "additions") as Side;
     const start = Math.min(range.start, range.end);
     const end = Math.max(range.start, range.end);
-    setPending({ path, side, line: end, startLine: start !== end ? start : undefined });
+    setPending({
+      path,
+      side,
+      line: end,
+      startLine: start !== end ? start : undefined,
+    });
   }, []);
 
   // R22: a live thread scrolls to its anchor; an outdated or orphaned
@@ -277,7 +299,9 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
         scrollToFile(anchor.path);
       } else {
         setRoundSeq(thread.originRoundSeq);
-        const origin = thread.anchors.find((a) => a.roundId === thread.originRoundId);
+        const origin = thread.anchors.find(
+          (a) => a.roundId === thread.originRoundId,
+        );
         if (origin) setSelectedPath(origin.path);
       }
       setShowPanel(false);
@@ -312,7 +336,11 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
     return (
       <div className="page">
         <header className="topbar">
-          <button type="button" className="back-link" onClick={() => onNavigate("/")}>
+          <button
+            type="button"
+            className="back-link"
+            onClick={() => onNavigate("/")}
+          >
             ← reviews
           </button>
         </header>
@@ -325,13 +353,20 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
     <div className="page review-page">
       <ConnectionBanner state={connection} />
       <header className="topbar">
-        <button type="button" className="back-link" onClick={() => onNavigate("/")}>
+        <button
+          type="button"
+          className="back-link"
+          onClick={() => onNavigate("/")}
+        >
           ← reviews
         </button>
         {detail && (
           <>
             <span className="review-title">
-              #{detail.review.id} {detail.review.branch || detail.review.sourceArgs.join(" ") || "working tree"}
+              #{detail.review.id}{" "}
+              {detail.review.branch ||
+                detail.review.sourceArgs.join(" ") ||
+                "working tree"}
             </span>
             <StateChip state={detail.review.state} />
             {effectiveSeq !== null && (
@@ -348,7 +383,11 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
           </>
         )}
         <div className="topbar-actions">
-          <button type="button" className="style-toggle" onClick={() => setShowPanel((v) => !v)}>
+          <button
+            type="button"
+            className="style-toggle"
+            onClick={() => setShowPanel((v) => !v)}
+          >
             threads{threads.length > 0 ? ` (${threads.length})` : ""}
           </button>
           {reviewState === "open" ? (
@@ -361,19 +400,29 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
               >
                 Submit review{draftCount > 0 ? ` (${draftCount})` : ""}
               </button>
-              <button type="button" className="style-toggle" onClick={() => lifecycleAction("close")}>
+              <button
+                type="button"
+                className="style-toggle"
+                onClick={() => lifecycleAction("close")}
+              >
                 Close
               </button>
             </>
           ) : (
-            <button type="button" className="style-toggle" onClick={() => lifecycleAction("reopen")}>
+            <button
+              type="button"
+              className="style-toggle"
+              onClick={() => lifecycleAction("reopen")}
+            >
               Reopen
             </button>
           )}
           <button
             type="button"
             className="style-toggle"
-            onClick={() => setDiffStyle((s) => (s === "unified" ? "split" : "unified"))}
+            onClick={() =>
+              setDiffStyle((s) => (s === "unified" ? "split" : "unified"))
+            }
           >
             {diffStyle === "unified" ? "split view" : "unified view"}
           </button>
@@ -399,12 +448,19 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
           {roundError !== null ? (
             <div className="diff-error" data-testid="diff-error">
               <p className="error">{roundError}</p>
-              <button type="button" className="btn" onClick={() => setRoundFetchNonce((n) => n + 1)}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setRoundFetchNonce((n) => n + 1)}
+              >
                 Retry
               </button>
             </div>
           ) : displayFiles === null ? (
-            <div className="diff-loading diff-skeleton" data-testid="diff-loading">
+            <div
+              className="diff-loading diff-skeleton"
+              data-testid="diff-loading"
+            >
               Loading diff…
             </div>
           ) : (
@@ -416,8 +472,16 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
               theme={theme}
               annotationsByFile={annotationsByFile}
               renderAnnotation={renderAnnotation}
-              onGutterAdd={reviewState !== "closed" && viewingLatest ? onGutterAdd : undefined}
-              onLineSelect={reviewState !== "closed" && viewingLatest ? onLineSelect : undefined}
+              onGutterAdd={
+                reviewState !== "closed" && viewingLatest
+                  ? onGutterAdd
+                  : undefined
+              }
+              onLineSelect={
+                reviewState !== "closed" && viewingLatest
+                  ? onLineSelect
+                  : undefined
+              }
               onExpandContext={requestUpgrade}
             />
           )}
@@ -434,7 +498,11 @@ export default function ReviewPage({ reviewId, theme, onToggleTheme, onNavigate 
         )}
       </div>
       {showSubmit && (
-        <SubmitDialog draftCount={draftCount} onSubmit={submitReview} onClose={() => setShowSubmit(false)} />
+        <SubmitDialog
+          draftCount={draftCount}
+          onSubmit={submitReview}
+          onClose={() => setShowSubmit(false)}
+        />
       )}
     </div>
   );

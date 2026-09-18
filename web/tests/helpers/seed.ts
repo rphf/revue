@@ -100,7 +100,9 @@ export async function draftComment(
   // Annotation controls live inside CodeView's virtualized layout,
   // where Playwright's scroll-into-view can't stabilize elements
   // below the fold; dispatch the click directly.
-  await page.getByRole("button", { name: "Start thread" }).dispatchEvent("click");
+  await page
+    .getByRole("button", { name: "Start thread" })
+    .dispatchEvent("click");
   await expect(page.getByText(body)).toBeVisible();
 }
 

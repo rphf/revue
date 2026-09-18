@@ -10,5 +10,7 @@ export default function Markdown({ source }: { source: string }) {
     const rendered = marked.parse(source, { async: false }) as string;
     return DOMPurify.sanitize(rendered);
   }, [source]);
-  return <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />
+  );
 }

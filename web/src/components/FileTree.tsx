@@ -21,24 +21,6 @@ interface TreeLeaf {
 
 type TreeNode = TreeDir | TreeLeaf;
 
-// treePathCompare orders leaf paths exactly as the rendered tree
-// flattens them: at the first differing component, directories sort
-// before files, then names compare locale-wise. The diff pane sorts
-// its file cards with this so tree order and diff order always match.
-export function treePathCompare(a: string, b: string): number {
-  const as = a.split("/");
-  const bs = b.split("/");
-  const n = Math.min(as.length, bs.length);
-  for (let i = 0; i < n; i++) {
-    if (as[i] === bs[i]) continue;
-    const aIsDir = i < as.length - 1;
-    const bIsDir = i < bs.length - 1;
-    if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-    return as[i].localeCompare(bs[i]);
-  }
-  return as.length - bs.length;
-}
-
 function buildTree(files: RoundFile[]): TreeNode[] {
   const root: TreeDir = { kind: "dir", name: "", path: "", children: [] };
   for (const file of files) {
@@ -83,7 +65,13 @@ export interface FileTreeProps {
   selectedPath?: string;
 }
 
-export default function FileTree({ files, viewed, onToggleViewed, onSelect, selectedPath }: FileTreeProps) {
+export default function FileTree({
+  files,
+  viewed,
+  onToggleViewed,
+  onSelect,
+  selectedPath,
+}: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
@@ -134,7 +122,9 @@ export default function FileTree({ files, viewed, onToggleViewed, onSelect, sele
           <button
             type="button"
             className={`viewed-dot${viewed.has(file.path) ? " viewed" : ""}`}
-            title={viewed.has(file.path) ? "Mark as not viewed" : "Mark as viewed"}
+            title={
+              viewed.has(file.path) ? "Mark as not viewed" : "Mark as viewed"
+            }
             aria-label={`Toggle viewed: ${file.path}`}
             aria-pressed={viewed.has(file.path)}
             onClick={(e) => {

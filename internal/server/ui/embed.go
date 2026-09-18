@@ -24,7 +24,7 @@ func Handler() http.Handler {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p != "" {
 			if f, err := sub.Open(p); err == nil {
-				f.Close()
+				_ = f.Close()
 				files.ServeHTTP(w, r)
 				return
 			}

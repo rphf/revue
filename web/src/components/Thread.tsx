@@ -15,7 +15,13 @@ export interface ThreadProps {
 // A comment thread: comments in order with author roles, draft
 // affordances (edit/delete before submit), reply, and reviewer-only
 // resolve (R4, R5, R6).
-export default function Thread({ thread, anchorState, reviewState, onChanged, onJumpToOrigin }: ThreadProps) {
+export default function Thread({
+  thread,
+  anchorState,
+  reviewState,
+  onChanged,
+  onJumpToOrigin,
+}: ThreadProps) {
   const [replying, setReplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -35,9 +41,14 @@ export default function Thread({ thread, anchorState, reviewState, onChanged, on
   };
 
   return (
-    <div className={`thread${thread.resolved ? " thread-resolved" : ""}`} data-testid={`thread-${thread.id}`}>
+    <div
+      className={`thread${thread.resolved ? " thread-resolved" : ""}`}
+      data-testid={`thread-${thread.id}`}
+    >
       <div className="thread-header">
-        {thread.resolved && <span className="chip chip-resolved">Resolved</span>}
+        {thread.resolved && (
+          <span className="chip chip-resolved">Resolved</span>
+        )}
         {anchorState === "outdated" && (
           <button
             type="button"
@@ -53,14 +64,24 @@ export default function Thread({ thread, anchorState, reviewState, onChanged, on
         {thread.comments.map((c) => (
           <li key={c.id} className="comment" data-testid={`comment-${c.id}`}>
             <div className="comment-meta">
-              <span className={`role role-${c.authorRole}`}>{c.authorRole}</span>
+              <span className={`role role-${c.authorRole}`}>
+                {c.authorRole}
+              </span>
               {c.draft && <span className="chip chip-draft">Draft</span>}
               {c.draft && c.authorRole === "reviewer" && (
                 <span className="comment-actions">
-                  <button type="button" className="link-btn" onClick={() => setEditingId(c.id)}>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => setEditingId(c.id)}
+                  >
                     Edit
                   </button>
-                  <button type="button" className="link-btn" onClick={() => deleteComment(c.id)}>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => deleteComment(c.id)}
+                  >
                     Delete
                   </button>
                 </span>
@@ -103,14 +124,20 @@ export default function Thread({ thread, anchorState, reviewState, onChanged, on
         ) : (
           <>
             {reviewState !== "closed" && (
-              <button type="button" className="btn" onClick={() => setReplying(true)}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setReplying(true)}
+              >
                 Reply
               </button>
             )}
             <button
               type="button"
               className="btn"
-              onClick={() => void run(api.resolveThread(thread.id, !thread.resolved))}
+              onClick={() =>
+                void run(api.resolveThread(thread.id, !thread.resolved))
+              }
             >
               {thread.resolved ? "Unresolve" : "Resolve"}
             </button>

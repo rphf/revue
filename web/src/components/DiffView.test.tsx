@@ -26,7 +26,10 @@ vi.mock("@pierre/diffs/react", () => ({
   }) => (
     <div className={className}>
       {items.map((item) => (
-        <div key={item.id} data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}>
+        <div
+          key={item.id}
+          data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}
+        >
           {item.id}
           {renderHeaderMetadata?.(item)}
           {item.annotations?.map((a, i) => (
@@ -46,7 +49,14 @@ function meta(name: string): FileDiffMetadata {
 
 let nextId = 1;
 function roundFile(path: string, extra: Partial<RoundFile> = {}): RoundFile {
-  return { id: nextId++, roundId: 1, path, status: "modified", isBinary: false, ...extra };
+  return {
+    id: nextId++,
+    roundId: 1,
+    path,
+    status: "modified",
+    isBinary: false,
+    ...extra,
+  };
 }
 
 describe("DiffView", () => {
@@ -67,19 +77,28 @@ describe("DiffView", () => {
     render(
       <DiffView
         files={[meta("img.png"), meta("code.go")]}
-        roundFiles={[roundFile("img.png", { isBinary: true, status: "added" }), roundFile("code.go")]}
+        roundFiles={[
+          roundFile("img.png", { isBinary: true, status: "added" }),
+          roundFile("code.go"),
+        ]}
         diffStyle="unified"
         theme="light"
       />,
     );
-    expect(screen.getByTestId("binary-img.png")).toHaveTextContent("Binary file (added)");
+    expect(screen.getByTestId("binary-img.png")).toHaveTextContent(
+      "Binary file (added)",
+    );
     expect(screen.queryByTestId("filediff-img.png")).not.toBeInTheDocument();
     expect(screen.getByTestId("filediff-code.go")).toBeInTheDocument();
   });
 
   it("renders the empty state for an empty diff", () => {
-    render(<DiffView files={[]} roundFiles={[]} diffStyle="unified" theme="light" />);
-    expect(screen.getByTestId("diff-empty")).toHaveTextContent("No changes in this diff");
+    render(
+      <DiffView files={[]} roundFiles={[]} diffStyle="unified" theme="light" />,
+    );
+    expect(screen.getByTestId("diff-empty")).toHaveTextContent(
+      "No changes in this diff",
+    );
   });
 });
 
@@ -97,10 +116,18 @@ describe("DiffView ordering", () => {
         theme="light"
       />,
     );
-    const cards = [...document.querySelectorAll("[data-testid^='filediff-'], [data-testid^='binary-']")];
+    const cards = [
+      ...document.querySelectorAll(
+        "[data-testid^='filediff-'], [data-testid^='binary-']",
+      ),
+    ];
     const order = cards.map((c) => c.getAttribute("data-testid"));
     // Tree order: src/ first (a.go then img.png), then root zz.go —
     // the binary row sits in place, not grouped first.
-    expect(order).toEqual(["filediff-src/a.go", "binary-src/img.png", "filediff-zz.go"]);
+    expect(order).toEqual([
+      "filediff-src/a.go",
+      "binary-src/img.png",
+      "filediff-zz.go",
+    ]);
   });
 });

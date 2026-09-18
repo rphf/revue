@@ -27,7 +27,7 @@ func waitForSignalOr(s *server.Server) {
 	case <-sig:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.Shutdown(ctx)
+		_ = s.Shutdown(ctx)
 	case <-s.Done():
 	}
 }
@@ -63,7 +63,7 @@ func (e *env) cmdOpen(args []string) int {
 	}
 	if !*noBrowser {
 		if err := e.openURL(url); err != nil {
-			fmt.Fprintln(e.stderr, "could not open a browser:", err)
+			_, _ = fmt.Fprintln(e.stderr, "could not open a browser:", err)
 		}
 	}
 	return ExitOK
@@ -92,7 +92,7 @@ func (e *env) cmdURL(args []string) int {
 			next = fmt.Sprintf("/reviews/%d", open[0].ID)
 		}
 	}
-	fmt.Fprintln(e.stdout, e.authURL(next))
+	_, _ = fmt.Fprintln(e.stdout, e.authURL(next))
 	return ExitOK
 }
 
@@ -226,7 +226,7 @@ func (e *env) cmdExport(args []string) int {
 	if err != nil {
 		return e.fail(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(resp.Body)
 		apiErr := &APIError{Status: resp.StatusCode, Code: "unknown", Message: string(data)}

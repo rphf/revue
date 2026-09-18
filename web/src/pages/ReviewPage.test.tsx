@@ -18,7 +18,10 @@ vi.mock("@pierre/diffs/react", () => ({
     renderAnnotation,
   }: {
     items: StubItem[];
-    renderAnnotation?: (a: DiffLineAnnotation<AnnotationMeta>, item: StubItem) => React.ReactNode;
+    renderAnnotation?: (
+      a: DiffLineAnnotation<AnnotationMeta>,
+      item: StubItem,
+    ) => React.ReactNode;
   }) => (
     <div>
       {items.map((item) => (
@@ -83,7 +86,15 @@ function makeThread(comments: Comment[]): Thread {
     createdAt: "",
     originRoundSeq: 1,
     anchors: [
-      { id: 1, threadId: 1, roundId: ROUND_ID, path: "a.go", side: "additions", line: 5, state: "live" },
+      {
+        id: 1,
+        threadId: 1,
+        roundId: ROUND_ID,
+        path: "a.go",
+        side: "additions",
+        line: 5,
+        state: "live",
+      },
     ],
     comments,
   };
@@ -127,11 +138,21 @@ describe("ReviewPage live updates (AE4 UI half)", () => {
     });
     vi.mocked(api.getRound).mockResolvedValue({
       round: { id: ROUND_ID, reviewId: 1, seq: 1, patch: "x", createdAt: "" },
-      files: [{ id: 1, roundId: ROUND_ID, path: "a.go", status: "modified", isBinary: false }],
+      files: [
+        {
+          id: 1,
+          roundId: ROUND_ID,
+          path: "a.go",
+          status: "modified",
+          isBinary: false,
+        },
+      ],
       anchors: [],
     });
     vi.mocked(api.getPatch).mockResolvedValue("diff --git a/a.go b/a.go\n");
-    vi.mocked(api.listThreads).mockResolvedValue({ threads: [makeThread([reviewerComment])] });
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
   });
 
   afterEach(() => {
@@ -140,11 +161,22 @@ describe("ReviewPage live updates (AE4 UI half)", () => {
   });
 
   it("shows an agent reply arriving over SSE without any reload", async () => {
-    render(<ReviewPage reviewId={1} theme="light" onToggleTheme={() => {}} onNavigate={() => {}} />);
+    render(
+      <ReviewPage
+        reviewId={1}
+        theme="light"
+        onToggleTheme={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
 
     // Initial thread renders inline at its anchor.
-    await waitFor(() => expect(screen.getByText("please rename this")).toBeInTheDocument());
-    expect(screen.queryByText("renamed in the next round")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("please rename this")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText("renamed in the next round"),
+    ).not.toBeInTheDocument();
 
     // The agent replies; the server pushes a thread.replied event.
     vi.mocked(api.listThreads).mockResolvedValue({
@@ -153,12 +185,20 @@ describe("ReviewPage live updates (AE4 UI half)", () => {
     const es = FakeEventSource.instances[0];
     act(() => {
       es.onmessage?.({
-        data: JSON.stringify({ id: 9, reviewId: 1, type: "thread.replied", payload: {}, createdAt: "" }),
+        data: JSON.stringify({
+          id: 9,
+          reviewId: 1,
+          type: "thread.replied",
+          payload: {},
+          createdAt: "",
+        }),
       });
     });
 
     // The reply appears with its author role — no reload, no clicks.
-    await waitFor(() => expect(screen.getByText("renamed in the next round")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("renamed in the next round")).toBeInTheDocument(),
+    );
     expect(screen.getByTestId("thread-1")).toHaveTextContent("agent");
     // And it did not resolve the thread (AE4): resolve is still offered.
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();

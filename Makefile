@@ -8,7 +8,7 @@ PLATFORMS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 # the ambient environment.
 export GOFLAGS :=
 
-.PHONY: build release web-install web-build ui-dist test web-test smoke e2e clean
+.PHONY: build release web-install web-build ui-dist test web-test lint fmt smoke e2e clean
 
 build: web-build
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/revue ./cmd/revue
@@ -43,6 +43,18 @@ test: ui-dist
 
 web-test:
 	cd web && npm run test --if-present
+
+# Default rule sets only: golangci-lint (errcheck, govet, ineffassign,
+# staticcheck, unused) and gofmt for Go; ESLint recommended configs and
+# Prettier for the web. `fmt` rewrites, `lint` only reports.
+lint: ui-dist
+	golangci-lint run ./...
+	golangci-lint fmt --diff ./...
+	cd web && npm run check
+
+fmt:
+	golangci-lint fmt ./...
+	cd web && npm run format
 
 # Scripted end-to-end loop on a fixture repo: open -> draft -> submit
 # -> agent reads -> reply -> round 2 -> anchors recomputed.

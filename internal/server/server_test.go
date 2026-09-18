@@ -68,7 +68,7 @@ func startServer(t *testing.T, repo string, idle time.Duration) *testServer {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		s.Shutdown(ctx)
+		_ = s.Shutdown(ctx)
 	})
 	return &testServer{Server: s, repo: repo, dataDir: dataDir, client: &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
@@ -96,7 +96,7 @@ func (ts *testServer) do(t *testing.T, method, path string, body any, out any) *
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	if out != nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			t.Fatalf("%s %s: decode: %v", method, path, err)
 		}
@@ -164,7 +164,7 @@ func TestRequestWithoutTokenRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("no-token status = %d, want 401", resp.StatusCode)
 	}
@@ -173,7 +173,7 @@ func TestRequestWithoutTokenRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Errorf("SPA no-token status = %d, want 401", resp2.StatusCode)
 	}
@@ -188,7 +188,7 @@ func TestCrossOriginMutationRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("cross-origin status = %d, want 403", resp.StatusCode)
 	}
@@ -202,7 +202,7 @@ func TestCrossOriginMutationRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("same-origin status = %d, want 200", resp2.StatusCode)
 	}
@@ -217,7 +217,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("auth status = %d, want 303", resp.StatusCode)
 	}
@@ -244,7 +244,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("cookie-authed status = %d, want 200", resp2.StatusCode)
 	}
@@ -254,7 +254,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp3.Body.Close()
+	defer func() { _ = resp3.Body.Close() }()
 	if resp3.StatusCode != http.StatusUnauthorized {
 		t.Errorf("bad token status = %d, want 401", resp3.StatusCode)
 	}
@@ -262,7 +262,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp4.Body.Close()
+	defer func() { _ = resp4.Body.Close() }()
 	if loc := resp4.Header.Get("Location"); loc != "/" {
 		t.Errorf("open redirect not neutralized: %q", loc)
 	}
@@ -302,7 +302,7 @@ func TestReviewRoundPatchAndFileEndpoints(t *testing.T) {
 
 	resp := ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/1/patch", rv.Review.ID), nil, nil)
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if !strings.Contains(string(body), "+line two CHANGED") {
 		t.Errorf("patch endpoint content:\n%s", body)
 	}
@@ -620,7 +620,7 @@ func TestSSEStreamsReplayAndLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("content-type = %s", ct)
 	}
@@ -673,7 +673,7 @@ func TestKillAndReviveRebindsRecordedPortAndToken(t *testing.T) {
 	}
 	url1, token1 := s1.URL(), s1.Token()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	s1.Shutdown(ctx)
+	_ = s1.Shutdown(ctx)
 	cancel()
 
 	s2, err := Start(Config{RepoRoot: repo, DataDir: dataDir})
@@ -682,7 +682,7 @@ func TestKillAndReviveRebindsRecordedPortAndToken(t *testing.T) {
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		s2.Shutdown(ctx)
+		_ = s2.Shutdown(ctx)
 		cancel()
 	}()
 	if s2.URL() != url1 {
@@ -738,8 +738,8 @@ func TestIdleShutdownBlockedByOpenStreams(t *testing.T) {
 			go func() {
 				resp, err := http.DefaultClient.Do(req)
 				if err == nil {
-					io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
 				}
 			}()
 
@@ -815,7 +815,7 @@ func TestPublicURLAllowsItsOriginAndIsRecorded(t *testing.T) {
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		s.Shutdown(ctx)
+		_ = s.Shutdown(ctx)
 		cancel()
 	}()
 	if s.PublicURL() != "http://agent1.localhost:3191" {
@@ -837,7 +837,7 @@ func TestPublicURLAllowsItsOriginAndIsRecorded(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Errorf("origin %s: status %d, want %d", origin, resp.StatusCode, want)
 		}
@@ -865,7 +865,7 @@ func TestFixedPortIsHonouredAndConflictIsAnError(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
+	_ = probe.Close()
 
 	s, err := Start(Config{RepoRoot: repo, DataDir: t.TempDir(), Bind: "127.0.0.1", Port: port})
 	if err != nil {
@@ -873,7 +873,7 @@ func TestFixedPortIsHonouredAndConflictIsAnError(t *testing.T) {
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		s.Shutdown(ctx)
+		_ = s.Shutdown(ctx)
 		cancel()
 	}()
 	if want := fmt.Sprintf("http://127.0.0.1:%d", port); s.URL() != want {

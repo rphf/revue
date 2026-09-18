@@ -16,7 +16,7 @@ func openTemp(t *testing.T) (*Store, string) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s, path
 }
 
@@ -64,7 +64,7 @@ func TestMigrationIdempotentAcrossRestarts(t *testing.T) {
 		if got.Branch != "main" {
 			t.Errorf("branch = %q, want main", got.Branch)
 		}
-		s.Close()
+		_ = s.Close()
 	}
 }
 
@@ -76,17 +76,17 @@ func TestSchemaSurvivesDeleteAndReopen(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	mustReview(t, s)
-	s.Close()
+	_ = s.Close()
 
 	for _, f := range []string{path, path + "-wal", path + "-shm"} {
-		os.Remove(f)
+		_ = os.Remove(f)
 	}
 
 	s2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open after delete: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	r := mustReview(t, s2)
 	if r.ID != 1 {
 		t.Errorf("fresh db review id = %d, want 1", r.ID)

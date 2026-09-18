@@ -4,7 +4,9 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { RoundFile } from "../types";
 
 vi.mock("@pierre/diffs", () => ({
-  processFile: vi.fn(() => ({ name: "a.go", isPartial: false }) as FileDiffMetadata),
+  processFile: vi.fn(
+    () => ({ name: "a.go", isPartial: false }) as FileDiffMetadata,
+  ),
 }));
 
 vi.mock("../api", () => ({
@@ -52,7 +54,13 @@ function Harness({
   seq: number;
   target: string;
 }) {
-  const { files, requestUpgrade } = useFullDiffs(1, seq, parsed, roundFiles, PATCH);
+  const { files, requestUpgrade } = useFullDiffs(
+    1,
+    seq,
+    parsed,
+    roundFiles,
+    PATCH,
+  );
   return (
     <div>
       <button type="button" onClick={() => requestUpgrade(target)}>
@@ -92,22 +100,44 @@ describe("useFullDiffs (R25, lazy)", () => {
   afterEach(() => vi.clearAllMocks());
 
   const partial = { name: "a.go", isPartial: true } as FileDiffMetadata;
-  const roundFile: RoundFile = { id: 1, roundId: 3, path: "a.go", status: "modified", isBinary: false };
+  const roundFile: RoundFile = {
+    id: 1,
+    roundId: 3,
+    path: "a.go",
+    status: "modified",
+    isBinary: false,
+  };
 
   it("does nothing eagerly: no snapshot fetches on mount", async () => {
-    render(<Harness parsed={[partial]} roundFiles={[roundFile]} seq={3} target="a.go" />);
+    render(
+      <Harness
+        parsed={[partial]}
+        roundFiles={[roundFile]}
+        seq={3}
+        target="a.go"
+      />,
+    );
     await new Promise((r) => setTimeout(r, 10));
     expect(api.getFileVersions).not.toHaveBeenCalled();
     expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:partial");
   });
 
   it("upgrades one file on request with snapshot contents from the round", async () => {
-    render(<Harness parsed={[partial]} roundFiles={[roundFile]} seq={3} target="a.go" />);
+    render(
+      <Harness
+        parsed={[partial]}
+        roundFiles={[roundFile]}
+        seq={3}
+        target="a.go"
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "upgrade" }));
 
     // The file flips from partial to full, which changes the DiffView
     // key and forces the remount.
-    await waitFor(() => expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:full"));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:full"),
+    );
 
     // Contents came from the round's frozen snapshot endpoint — the
     // live tree is never read (AE-adjacent to R8).
@@ -137,7 +167,14 @@ describe("useFullDiffs (R25, lazy)", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(api.getFileVersions).not.toHaveBeenCalled();
 
-    render(<Harness parsed={[partial]} roundFiles={[roundFile]} seq={3} target="not-in-patch.go" />);
+    render(
+      <Harness
+        parsed={[partial]}
+        roundFiles={[roundFile]}
+        seq={3}
+        target="not-in-patch.go"
+      />,
+    );
     fireEvent.click(screen.getAllByRole("button", { name: "upgrade" })[1]);
     await new Promise((r) => setTimeout(r, 10));
     expect(api.getFileVersions).not.toHaveBeenCalled();

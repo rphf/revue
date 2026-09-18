@@ -14,21 +14,33 @@ export interface ThreadsPanelProps {
 // live/outdated/resolved filters. A thread whose file or hunk is gone
 // from the current round stays reachable here and links back to its
 // originating round.
-export default function ThreadsPanel({ threads, currentRoundId, onJump, onClose }: ThreadsPanelProps) {
+export default function ThreadsPanel({
+  threads,
+  currentRoundId,
+  onJump,
+  onClose,
+}: ThreadsPanelProps) {
   const [filter, setFilter] = useState<PanelFilter>("all");
 
   const classified = useMemo(
     () =>
       threads.map((t) => {
         const anchor = t.anchors.find((a) => a.roundId === currentRoundId);
-        const state: PanelFilter = t.resolved ? "resolved" : anchor?.state === "live" ? "live" : "outdated";
+        const state: PanelFilter = t.resolved
+          ? "resolved"
+          : anchor?.state === "live"
+            ? "live"
+            : "outdated";
         return { thread: t, anchor, state };
       }),
     [threads, currentRoundId],
   );
 
-  const visible = classified.filter((c) => filter === "all" || c.state === filter);
-  const count = (s: PanelFilter) => classified.filter((c) => c.state === s).length;
+  const visible = classified.filter(
+    (c) => filter === "all" || c.state === filter,
+  );
+  const count = (s: PanelFilter) =>
+    classified.filter((c) => c.state === s).length;
 
   return (
     <div className="threads-panel" data-testid="threads-panel">
@@ -54,11 +66,15 @@ export default function ThreadsPanel({ threads, currentRoundId, onJump, onClose 
         ))}
       </div>
       {visible.length === 0 ? (
-        <p className="muted panel-empty">No {filter === "all" ? "" : filter + " "}threads</p>
+        <p className="muted panel-empty">
+          No {filter === "all" ? "" : filter + " "}threads
+        </p>
       ) : (
         <ul className="panel-list">
           {visible.map(({ thread, anchor, state }) => {
-            const origin = thread.anchors.find((a) => a.roundId === thread.originRoundId);
+            const origin = thread.anchors.find(
+              (a) => a.roundId === thread.originRoundId,
+            );
             const shown = anchor ?? origin;
             const first = thread.comments[0];
             return (

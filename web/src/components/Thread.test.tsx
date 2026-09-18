@@ -15,8 +15,19 @@ import { api } from "../api";
 import Thread from "./Thread";
 
 let nextId = 1;
-function comment(role: Comment["authorRole"], body: string, draft = false): Comment {
-  return { id: nextId++, threadId: 1, authorRole: role, body, draft, createdAt: "2026-07-03T10:00:00Z" };
+function comment(
+  role: Comment["authorRole"],
+  body: string,
+  draft = false,
+): Comment {
+  return {
+    id: nextId++,
+    threadId: 1,
+    authorRole: role,
+    body,
+    draft,
+    createdAt: "2026-07-03T10:00:00Z",
+  };
 }
 
 function thread(comments: Comment[], resolved = false): ThreadType {
@@ -53,12 +64,19 @@ describe("Thread", () => {
   });
 
   it("renders script tags in comment bodies inertly (sanitized markdown)", () => {
-    const t = thread([comment("agent", 'before <script>window.__pwned = true</script> <img src=x onerror="window.__pwned=true"> after')]);
+    const t = thread([
+      comment(
+        "agent",
+        'before <script>window.__pwned = true</script> <img src=x onerror="window.__pwned=true"> after',
+      ),
+    ]);
     render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
     expect(document.querySelector("script")).toBeNull();
     const img = document.querySelector("img");
     expect(img?.getAttribute("onerror") ?? null).toBeNull();
-    expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+    expect(
+      (window as unknown as { __pwned?: boolean }).__pwned,
+    ).toBeUndefined();
     expect(screen.getByTestId("thread-1")).toHaveTextContent("before");
     expect(screen.getByTestId("thread-1")).toHaveTextContent("after");
   });
@@ -77,48 +95,76 @@ describe("Thread", () => {
     expect(box).toHaveValue("draft body");
     fireEvent.change(box, { target: { value: "draft body v2" } });
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
-    await waitFor(() => expect(api.editComment).toHaveBeenCalledWith(draft.id, "draft body v2"));
+    await waitFor(() =>
+      expect(api.editComment).toHaveBeenCalledWith(draft.id, "draft body v2"),
+    );
     expect(onChanged).toHaveBeenCalled();
 
     // Delete (confirmed)
     vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(api.deleteComment).toHaveBeenCalledWith(draft.id));
+    await waitFor(() =>
+      expect(api.deleteComment).toHaveBeenCalledWith(draft.id),
+    );
   });
 
   it("hides edit/delete on submitted comments", () => {
     const t = thread([comment("reviewer", "published", false)]);
     render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
   });
 
   it("replies through the api", async () => {
     const t = thread([comment("reviewer", "question")]);
     render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "an answer" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "an answer" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     await waitFor(() => expect(api.reply).toHaveBeenCalledWith(1, "an answer"));
   });
 
   it("resolves and unresolves", async () => {
     const t = thread([comment("reviewer", "x")]);
-    const { rerender } = render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
+    const { rerender } = render(
+      <Thread thread={t} reviewState="open" onChanged={() => {}} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
-    await waitFor(() => expect(api.resolveThread).toHaveBeenCalledWith(1, true));
+    await waitFor(() =>
+      expect(api.resolveThread).toHaveBeenCalledWith(1, true),
+    );
 
-    rerender(<Thread thread={thread([comment("reviewer", "x")], true)} reviewState="open" onChanged={() => {}} />);
+    rerender(
+      <Thread
+        thread={thread([comment("reviewer", "x")], true)}
+        reviewState="open"
+        onChanged={() => {}}
+      />,
+    );
     expect(screen.getByText("Resolved")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unresolve" }));
-    await waitFor(() => expect(api.resolveThread).toHaveBeenCalledWith(1, false));
+    await waitFor(() =>
+      expect(api.resolveThread).toHaveBeenCalledWith(1, false),
+    );
   });
 
   it("links outdated threads to their origin round", () => {
     const jump = vi.fn();
     const t = thread([comment("reviewer", "old context")]);
     render(
-      <Thread thread={t} anchorState="outdated" reviewState="open" onChanged={() => {}} onJumpToOrigin={jump} />,
+      <Thread
+        thread={t}
+        anchorState="outdated"
+        reviewState="open"
+        onChanged={() => {}}
+        onJumpToOrigin={jump}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: /Outdated · round 1/ }));
     expect(jump).toHaveBeenCalledWith(1);

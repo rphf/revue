@@ -68,7 +68,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		_ = srv.Shutdown(ctx)
 	})
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	return &harness{
@@ -171,12 +171,7 @@ func TestOpenEmptyDiffRefusesWithNotice(t *testing.T) {
 
 func TestOpenRejectsFlagShapedArgs(t *testing.T) {
 	h := newHarness(t)
-	code, out := h.run(h.cmdOpen, "--no-browser", "--", "--ext-diff")
-	_ = out
-	if code != ExitValidation {
-		// "--" pathspec passthrough is fine; now a real flag injection:
-	}
-	code, out = h.run(h.cmdOpen, "--no-browser", "--ext-diff=echo pwned")
+	code, out := h.run(h.cmdOpen, "--no-browser", "--ext-diff=echo pwned")
 	if code != ExitValidation {
 		t.Errorf("flag injection exit = %d, want %d: %s", code, ExitValidation, out)
 	}
@@ -314,7 +309,7 @@ func TestAE6SinceReturnsOnlyNewItemsAcrossWaits(t *testing.T) {
 	var fb struct {
 		Events []any `json:"events"`
 	}
-	json.Unmarshal([]byte(out), &fb)
+	_ = json.Unmarshal([]byte(out), &fb)
 	if len(fb.Events) != 0 {
 		t.Errorf("events past cursor = %d, want 0", len(fb.Events))
 	}
@@ -328,7 +323,7 @@ func TestWaitReturnsPromptlyOnSubmit(t *testing.T) {
 	go func() {
 		defer close(done)
 		time.Sleep(150 * time.Millisecond)
-		h.client.do("POST", fmt.Sprintf("/api/reviews/%d/submit", id), map[string]any{"verdict": "approve"}, nil)
+		_ = h.client.do("POST", fmt.Sprintf("/api/reviews/%d/submit", id), map[string]any{"verdict": "approve"}, nil)
 	}()
 
 	start := time.Now()
@@ -437,7 +432,7 @@ func TestRoundSignalAndIdenticalDedupe(t *testing.T) {
 			Seq int `json:"seq"`
 		} `json:"round"`
 	}
-	json.Unmarshal([]byte(out), &res)
+	_ = json.Unmarshal([]byte(out), &res)
 	if !res.Deduped || res.Notice == "" || res.Round.Seq != 1 {
 		t.Errorf("dedupe result = %+v", res)
 	}
@@ -448,7 +443,7 @@ func TestRoundSignalAndIdenticalDedupe(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("round exit = %d: %s", code, out)
 	}
-	json.Unmarshal([]byte(out), &res)
+	_ = json.Unmarshal([]byte(out), &res)
 	if res.Deduped || res.Round.Seq != 2 {
 		t.Errorf("round 2 result = %+v", res)
 	}
@@ -458,7 +453,7 @@ func TestReviewsListsAndDefaultResolution(t *testing.T) {
 	h := newHarness(t)
 	code, out := h.run(h.cmdFeedback)
 	if code != ExitNoOpenReview {
-		t.Errorf("feedback with no reviews: exit = %d, want %d", code, ExitNoOpenReview)
+		t.Errorf("feedback with no reviews: exit = %d, want %d: %s", code, ExitNoOpenReview, out)
 	}
 
 	id, _ := h.openReview()

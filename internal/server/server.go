@@ -233,7 +233,7 @@ func Start(cfg Config) (*Server, error) {
 
 	st, err := store.Open(filepath.Join(dataDir, "revue.db"))
 	if err != nil {
-		ln.Close()
+		_ = ln.Close()
 		return nil, err
 	}
 
@@ -262,12 +262,12 @@ func Start(cfg Config) (*Server, error) {
 		state.Bind = bind
 	}
 	if err := writeState(stateDir, state); err != nil {
-		st.Close()
-		ln.Close()
+		_ = st.Close()
+		_ = ln.Close()
 		return nil, err
 	}
 
-	go s.http.Serve(ln)
+	go func() { _ = s.http.Serve(ln) }()
 	if cfg.IdleTimeout > 0 {
 		go s.idleLoop(cfg.IdleTimeout)
 	}
@@ -299,7 +299,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// them to drain first or http.Shutdown would never return.
 		close(s.closing)
 		err = s.http.Shutdown(ctx)
-		s.store.Close()
+		_ = s.store.Close()
 		close(s.done)
 	})
 	return err
@@ -321,7 +321,7 @@ func (s *Server) idleLoop(timeout time.Duration) {
 		case <-ticker.C:
 			if s.activity.idleFor(timeout) {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				s.Shutdown(ctx)
+				_ = s.Shutdown(ctx)
 				cancel()
 				return
 			}

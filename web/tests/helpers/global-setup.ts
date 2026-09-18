@@ -23,5 +23,7 @@ export default async function globalSetup(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error("e2e server did not become ready with a seeded review in time");
+  throw new Error(
+    "e2e server did not become ready with a seeded review in time",
+  );
 }

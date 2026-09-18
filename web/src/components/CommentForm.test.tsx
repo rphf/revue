@@ -10,7 +10,9 @@ describe("CommentForm", () => {
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
 
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "unsaved thought" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "unsaved thought" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(confirm).toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled(); // declined the discard
@@ -33,7 +35,9 @@ describe("CommentForm", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "text" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "text" },
+    });
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
     expect(confirm).toHaveBeenCalled();
     expect(onCancel).toHaveBeenCalled();
@@ -44,13 +48,17 @@ describe("CommentForm", () => {
     const onSubmit = vi.fn(() => new Promise<void>((_, r) => (reject = r)));
     render(<CommentForm onSubmit={onSubmit} onCancel={() => {}} />);
 
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "hello" } });
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    });
     const submit = screen.getByRole("button", { name: "Add comment" });
     fireEvent.click(submit);
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
 
     reject(new Error("server exploded"));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("server exploded"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("server exploded"),
+    );
     expect(screen.getByRole("button", { name: "Add comment" })).toBeEnabled();
     // The text was not lost.
     expect(screen.getByRole("textbox")).toHaveValue("hello");

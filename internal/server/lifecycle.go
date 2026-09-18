@@ -42,7 +42,7 @@ func Healthy(st *State) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}
@@ -78,7 +78,7 @@ func Ensure(repoRoot string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	cmd := exec.Command(exe, "__serve", "--repo", repoRoot)
 	cmd.Stdout = logFile
@@ -88,7 +88,7 @@ func Ensure(repoRoot string) (*State, error) {
 		return nil, err
 	}
 	// Detach: the server outlives this CLI invocation.
-	go cmd.Wait()
+	go func() { _ = cmd.Wait() }()
 
 	// Wait for the state file to reflect the new server and turn healthy.
 	deadline := time.Now().Add(10 * time.Second)

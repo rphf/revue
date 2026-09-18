@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import type { RevueEvent } from "./types";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting";
@@ -11,8 +11,7 @@ export function useEvents(
   onEvent: (e: RevueEvent) => void,
 ): ConnectionState {
   const [state, setState] = useState<ConnectionState>("connecting");
-  const handler = useRef(onEvent);
-  handler.current = onEvent;
+  const handle = useEffectEvent(onEvent);
 
   useEffect(() => {
     if (reviewId === null) return;
@@ -21,7 +20,7 @@ export function useEvents(
     es.onerror = () => setState("reconnecting");
     es.onmessage = (m) => {
       try {
-        handler.current(JSON.parse(m.data));
+        handle(JSON.parse(m.data));
       } catch {
         // Malformed frame; the next query will resync.
       }

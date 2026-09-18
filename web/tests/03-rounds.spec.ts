@@ -1,10 +1,19 @@
 import { expect, test } from "@playwright/test";
-import { authenticate, cli, cliJSON, draftComment, readFixtureFile, writeFixtureFile } from "./helpers/seed";
+import {
+  authenticate,
+  cli,
+  cliJSON,
+  draftComment,
+  readFixtureFile,
+  writeFixtureFile,
+} from "./helpers/seed";
 
 // Covers AE7 end-to-end: unsubmitted drafts survive a new round —
 // live on unchanged hunks, outdated on changed ones, none lost, and
 // round creation never blocks. Plus the threads panel partition.
-test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async ({ page }) => {
+test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async ({
+  page,
+}) => {
   await authenticate(page, "/reviews/1");
   await expect(page.getByText("alpha three v2").first()).toBeVisible();
 
@@ -15,7 +24,10 @@ test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async
 
   // The agent rewrites the alpha hunk and signals round 2 while the
   // reviewer's drafts are still pending.
-  writeFixtureFile("alpha.go", readFixtureFile("alpha.go").replace("alpha three v2", "alpha three v3"));
+  writeFixtureFile(
+    "alpha.go",
+    readFixtureFile("alpha.go").replace("alpha three v2", "alpha three v3"),
+  );
   const round = await cli(["round", "--review", "1"]);
   expect(round.code).toBe(0);
   const created = cliJSON<{ round: { seq: number }; deduped: boolean }>(round);
@@ -42,14 +54,21 @@ test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async
   await expect(panel.getByText("alpha draft note")).not.toBeVisible();
 });
 
-test("threads panel partitions live, outdated, and resolved", async ({ page }) => {
+test("threads panel partitions live, outdated, and resolved", async ({
+  page,
+}) => {
   await authenticate(page, "/reviews/1");
   await expect(page.getByText("beta draft note")).toBeVisible();
 
   // Resolve the beta thread (reviewer-only action, R6). The button
   // sits in a virtualized annotation; dispatch the click directly.
-  await page.getByRole("button", { name: "Resolve", exact: true }).first().dispatchEvent("click");
-  await expect(page.getByText("Resolved", { exact: true }).first()).toBeVisible();
+  await page
+    .getByRole("button", { name: "Resolve", exact: true })
+    .first()
+    .dispatchEvent("click");
+  await expect(
+    page.getByText("Resolved", { exact: true }).first(),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: /threads/ }).click();
   const panel = page.getByTestId("threads-panel");

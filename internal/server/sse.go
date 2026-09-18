@@ -165,7 +165,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 				var payload struct {
 					Submission *store.Submission `json:"submission"`
 				}
-				json.Unmarshal(e.Payload, &payload)
+				_ = json.Unmarshal(e.Payload, &payload)
 				current, _ := s.store.GetReview(review.ID)
 				writeJSON(w, http.StatusOK, waitOutcome{
 					Outcome: "submitted", Cursor: cursor, Review: current, Submission: payload.Submission,

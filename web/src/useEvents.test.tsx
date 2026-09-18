@@ -69,7 +69,13 @@ describe("useEvents + ConnectionBanner", () => {
     const es = FakeEventSource.instances[0];
     act(() =>
       es.onmessage?.({
-        data: JSON.stringify({ id: 3, reviewId: 7, type: "round.created", payload: {}, createdAt: "" }),
+        data: JSON.stringify({
+          id: 3,
+          reviewId: 7,
+          type: "round.created",
+          payload: {},
+          createdAt: "",
+        }),
       }),
     );
     expect(events).toHaveLength(1);

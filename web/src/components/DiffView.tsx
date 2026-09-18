@@ -1,9 +1,20 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from "react";
-import type { CodeViewItem, DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
+import {
+  forwardRef,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
+import type {
+  CodeViewItem,
+  DiffLineAnnotation,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
-import type { RoundFile, Side } from "../types";
+import type { ReviewState, RoundFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
-import { treePathCompare } from "./FileTree";
+import { treePathCompare } from "./treePath";
 
 export type DiffStyle = "unified" | "split";
 
@@ -14,6 +25,41 @@ export interface AnnotationMeta {
   kind: "thread" | "pending";
   threadId?: number;
   rev?: string;
+  thread?: Thread;
+  reviewState?: ReviewState;
+  pending?: PendingComment;
+}
+
+export interface PendingComment {
+  path: string;
+  side: Side;
+  line: number;
+  startLine?: number;
+}
+
+// annotationsEqual compares what the annotations render, not their
+// identity, so a rebuilt-but-unchanged list keeps its item version.
+function annotationsEqual(
+  a: DiffLineAnnotation<AnnotationMeta>[] | undefined,
+  b: DiffLineAnnotation<AnnotationMeta>[] | undefined,
+): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) {
+    const ma = x[i].metadata;
+    const mb = y[i].metadata;
+    if (
+      x[i].side !== y[i].side ||
+      x[i].lineNumber !== y[i].lineNumber ||
+      ma?.kind !== mb?.kind ||
+      ma?.threadId !== mb?.threadId ||
+      ma?.rev !== mb?.rev
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export interface DiffViewHandle {
@@ -28,7 +74,10 @@ export interface DiffViewProps {
   diffStyle: DiffStyle;
   theme: Theme;
   annotationsByFile?: Map<string, DiffLineAnnotation<AnnotationMeta>[]>;
-  renderAnnotation?: (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => ReactNode;
+  renderAnnotation?: (
+    annotation: DiffLineAnnotation<AnnotationMeta>,
+    path: string,
+  ) => ReactNode;
   onGutterAdd?: (path: string, side: Side, lineNumber: number) => void;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
   onExpandContext?: (path: string) => void;
@@ -65,7 +114,12 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     ref,
     () => ({
       scrollToFile: (path: string) => {
-        codeView.current?.scrollTo({ type: "item", id: path, align: "start", behavior: "instant" });
+        codeView.current?.scrollTo({
+          type: "item",
+          id: path,
+          align: "start",
+          behavior: "instant",
+        });
       },
     }),
     [],
@@ -85,20 +139,38 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       ...files
         .filter((f) => !binaryByPath.has(f.name))
         .map((f) => ({ path: f.name, meta: f as FileDiffMetadata | null })),
-      ...[...binaryByPath.keys()].map((path) => ({ path, meta: null as FileDiffMetadata | null })),
+      ...[...binaryByPath.keys()].map((path) => ({
+        path,
+        meta: null as FileDiffMetadata | null,
+      })),
     ].sort((a, b) => treePathCompare(a.path, b.path));
 
     return ordered.map(({ path, meta }) => {
       if (meta === null) {
         // Binary: a header-only file item in its tree position.
-        return { id: path, type: "file", file: { name: path, contents: "" } } as CodeViewItem<AnnotationMeta>;
+        return {
+          id: path,
+          type: "file",
+          file: { name: path, contents: "" },
+        } as CodeViewItem<AnnotationMeta>;
       }
       const annotations = annotationsByFile?.get(path);
       const prev = memoRef.current.get(path);
       let version = prev?.version ?? 0;
-      if (prev && (prev.fileDiff !== meta || prev.annotations !== annotations)) version++;
+      if (
+        prev &&
+        (prev.fileDiff !== meta ||
+          !annotationsEqual(prev.annotations, annotations))
+      )
+        version++;
       memoRef.current.set(path, { fileDiff: meta, annotations, version });
-      return { id: path, type: "diff", fileDiff: meta, annotations, version } as CodeViewItem<AnnotationMeta>;
+      return {
+        id: path,
+        type: "diff",
+        fileDiff: meta,
+        annotations,
+        version,
+      } as CodeViewItem<AnnotationMeta>;
     });
   }, [files, binaryByPath, annotationsByFile]);
 
@@ -131,7 +203,11 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       }}
       renderAnnotation={
         renderAnnotation
-          ? (annotation, item) => renderAnnotation(annotation as DiffLineAnnotation<AnnotationMeta>, item.id)
+          ? (annotation, item) =>
+              renderAnnotation(
+                annotation as DiffLineAnnotation<AnnotationMeta>,
+                item.id,
+              )
           : undefined
       }
       renderGutterUtility={
@@ -145,7 +221,8 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                   aria-label="Add comment"
                   onClick={() => {
                     const line = getHoveredLine();
-                    if (line && "side" in line) onGutterAdd(item.id, line.side as Side, line.lineNumber);
+                    if (line && "side" in line)
+                      onGutterAdd(item.id, line.side as Side, line.lineNumber);
                   }}
                 >
                   +
@@ -162,7 +239,11 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
             </span>
           );
         }
-        if (item.type === "diff" && item.fileDiff.isPartial && onExpandContext) {
+        if (
+          item.type === "diff" &&
+          item.fileDiff.isPartial &&
+          onExpandContext
+        ) {
           return (
             <button
               type="button"

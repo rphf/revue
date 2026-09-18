@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { processFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { api } from "../api";
@@ -42,23 +42,23 @@ export function useFullDiffs(
   roundFiles: RoundFile[],
   patch: string | null,
 ): FullDiffs {
-  const [upgraded, setUpgraded] = useState<Map<string, FileDiffMetadata>>(new Map());
+  // Keys carry the review and round, so switching rounds stops finding
+  // the previous upgrades; rounds are frozen, so none of them go stale.
+  const scope = `${reviewId}:${roundSeq}`;
+  const [upgraded, setUpgraded] = useState<Map<string, FileDiffMetadata>>(
+    new Map(),
+  );
   const inFlight = useRef<Set<string>>(new Set());
-
-  // New round (or review): drop upgrades from the previous one.
-  useEffect(() => {
-    setUpgraded(new Map());
-    inFlight.current = new Set();
-  }, [reviewId, roundSeq, patch]);
 
   const requestUpgrade = useCallback(
     (path: string) => {
       if (roundSeq === null || patch === null) return;
-      if (inFlight.current.has(path)) return;
+      const key = `${scope}:${path}`;
+      if (inFlight.current.has(key)) return;
       if (roundFiles.some((f) => f.path === path && f.isBinary)) return;
       const section = splitPatch(patch).get(path);
       if (!section) return;
-      inFlight.current.add(path);
+      inFlight.current.add(key);
       api
         .getFileVersions(reviewId, roundSeq, path)
         .then((versions) => {
@@ -66,30 +66,36 @@ export function useFullDiffs(
             cacheKey: `${reviewId}:${roundSeq}:${path}:full`,
             oldFile:
               versions.oldContent !== null
-                ? { name: versions.oldPath || path, contents: versions.oldContent }
+                ? {
+                    name: versions.oldPath || path,
+                    contents: versions.oldContent,
+                  }
                 : undefined,
-            newFile: versions.newContent !== null ? { name: path, contents: versions.newContent } : undefined,
+            newFile:
+              versions.newContent !== null
+                ? { name: path, contents: versions.newContent }
+                : undefined,
           });
           if (full) {
             setUpgraded((prev) => {
               const next = new Map(prev);
-              next.set(path, full);
+              next.set(key, full);
               return next;
             });
           }
         })
         .catch(() => {
           // Expansion is progressive enhancement; allow a retry.
-          inFlight.current.delete(path);
+          inFlight.current.delete(key);
         });
     },
-    [reviewId, roundSeq, patch, roundFiles],
+    [reviewId, roundSeq, patch, roundFiles, scope],
   );
 
   const files = useMemo(() => {
     if (parsed === null) return null;
-    return parsed.map((f) => upgraded.get(f.name) ?? f);
-  }, [parsed, upgraded]);
+    return parsed.map((f) => upgraded.get(`${scope}:${f.name}`) ?? f);
+  }, [parsed, upgraded, scope]);
 
   return { files, requestUpgrade };
 }

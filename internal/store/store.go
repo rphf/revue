@@ -135,9 +135,9 @@ type Anchor struct {
 }
 
 type ThreadAnchor struct {
-	ID       int64  `json:"id"`
-	ThreadID int64  `json:"threadId"`
-	RoundID  int64  `json:"roundId"`
+	ID       int64 `json:"id"`
+	ThreadID int64 `json:"threadId"`
+	RoundID  int64 `json:"roundId"`
 	Anchor
 	State    string `json:"state"`
 	HunkHash string `json:"hunkHash,omitempty"`
@@ -194,7 +194,7 @@ func Open(path string) (*Store, error) {
 	// write volume is one human and one agent.
 	db.SetMaxOpenConns(1)
 	if err := migrate(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return &Store{q: db, db: db}, nil
@@ -218,7 +218,7 @@ func (s *Store) WithTx(fn func(*Store) error) error {
 		return err
 	}
 	if err := fn(&Store{q: tx}); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
@@ -256,13 +256,13 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 		if _, err := tx.Exec(string(sqlText)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("store: applying %s: %w", name, err)
 		}
 		// PRAGMA cannot be parameterized; num comes from the
 		// filename we just parsed as an int.
 		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", num)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -330,7 +330,7 @@ func (s *Store) ListReviews(repoRoot string) ([]*Review, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Review
 	for rows.Next() {
 		var r Review
@@ -356,7 +356,7 @@ func (s *Store) OpenReviewsForBranch(repoRoot, branch string) ([]*Review, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Review
 	for rows.Next() {
 		var r Review
@@ -507,7 +507,7 @@ func (s *Store) ListRounds(reviewID int64) ([]*Round, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Round
 	for rows.Next() {
 		var r Round
@@ -529,7 +529,7 @@ func (s *Store) FilesForRound(roundID int64) ([]*RoundFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*RoundFile
 	for rows.Next() {
 		var f RoundFile
@@ -607,7 +607,7 @@ func (s *Store) UpsertAnchor(threadID, roundID int64, anchor Anchor, state, hunk
 }
 
 func scanAnchors(rows *sql.Rows) ([]*ThreadAnchor, error) {
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*ThreadAnchor
 	for rows.Next() {
 		var a ThreadAnchor
@@ -744,7 +744,7 @@ func (s *Store) CommentsForThread(threadID int64, includeDrafts bool) ([]*Commen
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Comment
 	for rows.Next() {
 		var c Comment
@@ -776,7 +776,7 @@ func (s *Store) ThreadsForReview(reviewID int64, includeDrafts bool) ([]*Thread,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Thread
 	for rows.Next() {
 		var t Thread
@@ -837,7 +837,7 @@ func (s *Store) SubmissionsForReview(reviewID int64) ([]*Submission, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Submission
 	for rows.Next() {
 		var sub Submission
@@ -891,7 +891,7 @@ func (s *Store) EventsSince(reviewID, since int64) ([]*Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*Event
 	for rows.Next() {
 		var e Event

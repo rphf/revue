@@ -97,7 +97,7 @@ func httpError(w http.ResponseWriter, status int, code, msg string) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -384,7 +384,7 @@ func (s *Server) handleGetPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(round.Patch))
+	_, _ = w.Write([]byte(round.Patch))
 }
 
 // handleGetFileVersions serves full old/new contents from the round's

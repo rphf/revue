@@ -36,12 +36,29 @@ export default function App() {
       />
     );
   }
-  return <ReviewList onNavigate={navigate} theme={theme} onToggleTheme={toggleTheme} />;
+  return (
+    <ReviewList
+      onNavigate={navigate}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+    />
+  );
 }
 
-export function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+export function ThemeToggle({
+  theme,
+  onToggle,
+}: {
+  theme: Theme;
+  onToggle: () => void;
+}) {
   return (
-    <button type="button" className="theme-toggle" onClick={onToggle} aria-label="Toggle theme">
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={onToggle}
+      aria-label="Toggle theme"
+    >
       {theme === "dark" ? "☀️" : "🌙"}
     </button>
   );
@@ -88,10 +105,18 @@ function ReviewList({
           <ul className="review-list">
             {reviews.map((r) => (
               <li key={r.id}>
-                <button type="button" className="review-item" onClick={() => onNavigate(`/reviews/${r.id}`)}>
+                <button
+                  type="button"
+                  className="review-item"
+                  onClick={() => onNavigate(`/reviews/${r.id}`)}
+                >
                   <span className="review-id">#{r.id}</span>
-                  <span className="review-branch">{r.branch || "(no branch)"}</span>
-                  <span className="review-args">{r.sourceArgs.join(" ") || "working tree"}</span>
+                  <span className="review-branch">
+                    {r.branch || "(no branch)"}
+                  </span>
+                  <span className="review-args">
+                    {r.sourceArgs.join(" ") || "working tree"}
+                  </span>
                   <StateChip state={r.state} />
                 </button>
               </li>

@@ -9,14 +9,26 @@ export interface SubmitDialogProps {
 
 const verdicts: { value: Verdict; label: string; hint: string }[] = [
   { value: "comment", label: "Comment", hint: "Feedback without a verdict" },
-  { value: "request_changes", label: "Request changes", hint: "The agent should implement the comments" },
-  { value: "approve", label: "Approve", hint: "Done; the review becomes read-only for the agent" },
+  {
+    value: "request_changes",
+    label: "Request changes",
+    hint: "The agent should implement the comments",
+  },
+  {
+    value: "approve",
+    label: "Approve",
+    hint: "Done; the review becomes read-only for the agent",
+  },
 ];
 
 // Submit review with a verdict and optional summary (R5). A zero-
 // comment, verdict-only submission is legal. Submit-in-flight disables
 // the button; server errors show inline and re-enable it.
-export default function SubmitDialog({ draftCount, onSubmit, onClose }: SubmitDialogProps) {
+export default function SubmitDialog({
+  draftCount,
+  onSubmit,
+  onClose,
+}: SubmitDialogProps) {
   const [verdict, setVerdict] = useState<Verdict>("comment");
   const [summary, setSummary] = useState("");
   const [pending, setPending] = useState(false);
@@ -79,10 +91,20 @@ export default function SubmitDialog({ draftCount, onSubmit, onClose }: SubmitDi
           </p>
         )}
         <div className="form-actions">
-          <button type="button" className="btn" onClick={onClose} disabled={pending}>
+          <button
+            type="button"
+            className="btn"
+            onClick={onClose}
+            disabled={pending}
+          >
             Cancel
           </button>
-          <button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={pending}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void submit()}
+            disabled={pending}
+          >
             {pending ? "Submitting…" : "Submit review"}
           </button>
         </div>

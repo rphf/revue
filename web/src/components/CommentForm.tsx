@@ -71,7 +71,12 @@ export default function CommentForm({
         </p>
       )}
       <div className="form-actions">
-        <button type="button" className="btn" onClick={cancel} disabled={pending}>
+        <button
+          type="button"
+          className="btn"
+          onClick={cancel}
+          disabled={pending}
+        >
           Cancel
         </button>
         <button
