@@ -191,8 +191,17 @@ make e2e        # Playwright suite against the real binary
 make release    # dist/revue_<os>_<arch>.tar.gz for darwin and linux, amd64 and arm64
 ```
 
-A push of a `v*` tag builds the release archives and publishes them on GitHub
-(`.github/workflows/release.yml`).
+GitHub Actions run two workflows. CI runs on every push to main and on pull
+requests: `go vet`, `go test`, the web build with its type check, vitest, the
+smoke script and the Playwright suite. The Release workflow runs only when you
+start it:
+
+```sh
+gh workflow run release.yml -f tag=v0.2.0   # build, test, tag the selected ref, publish the archives
+```
+
+The Release workflow creates the tag on the ref you select when the tag does
+not exist yet, so no local tagging is needed.
 
 ## License
 
