@@ -19,15 +19,8 @@ jobs:
     steps:
       - run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "tag must look like v1.2.3, got '$TAG'" >&2; exit 1; }
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
       - run: cd web && npm ci
       - run: make release VERSION="$TAG"
       - run: make test

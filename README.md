@@ -29,9 +29,12 @@ curl -fsSL "https://github.com/rphf/revue/releases/latest/download/revue_darwin_
 If the repository is private for you, download with the GitHub CLI instead:
 `gh release download -R rphf/revue -p 'revue_linux_arm64.tar.gz'`.
 
-To build from source, you need Go 1.25 or newer and Node 20 or newer:
+To build from source, install the Go and Node versions that `mise.toml` pins.
+With [mise](https://mise.jdx.dev) installed, `mise install` does it. Without
+mise, install the same versions by hand.
 
 ```sh
+mise install       # Go and Node, versions from mise.toml
 make web-install   # once
 make build         # builds the web UI, embeds it, writes bin/revue
 ```
@@ -190,6 +193,10 @@ make smoke      # scripted CLI loop against the real binary
 make e2e        # Playwright suite against the real binary
 make release    # dist/revue_<os>_<arch>.tar.gz for darwin and linux, amd64 and arm64
 ```
+
+`mise.toml` is the only place that names a Go or Node version. Your shell and
+GitHub Actions (`jdx/mise-action`) install from it. To move to newer versions,
+run `mise upgrade --bump`, then commit the changed `mise.toml`.
 
 GitHub Actions run two workflows. CI runs on every push to main and on pull
 requests: `go vet`, `go test`, the web build with its type check, vitest, the
