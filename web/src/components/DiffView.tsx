@@ -60,7 +60,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   }: DiffViewProps,
   ref,
 ) {
-  const codeView = useRef<CodeViewHandle<AnnotationMeta>>(null);
+  const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
   useImperativeHandle(
     ref,
     () => ({
