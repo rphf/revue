@@ -13,7 +13,7 @@ export GOFLAGS :=
 build: web-build
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/revue ./cmd/revue
 
-#TODO: Consider a comment here
+# One archive per platform. No version in the names, so releases/latest/download/ URLs stay stable.
 release: web-build
 	rm -rf dist && mkdir -p dist
 	for p in $(PLATFORMS); do \
