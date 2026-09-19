@@ -48,6 +48,20 @@ resolves to the `@typescript/typescript6` shim and `@typescript/native` provides
 `tsc`, as Microsoft's 7.0 announcement describes. TypeScript 7.1 is planned to
 restore the API; then both entries collapse back to `typescript`.
 
+## Web UI
+
+The UI is React with Tailwind CSS and [shadcn](https://ui.shadcn.com)
+components (Radix primitives, the neutral palette, lucide icons). The diff and
+the file tree come from `@pierre/diffs` and `@pierre/trees`; their skills under
+`.agents/skills/` describe the APIs the components rely on.
+
+`web/components.json` is the shadcn configuration. Add a component with
+`npx shadcn@latest add <name>` from `web/`, then run `npm run format`. The
+generated files live in `web/src/components/ui/` and are ordinary source: the
+react-refresh lint rule wants a module to export only components, so a
+component's `cva` variants live in a sibling `*-variants.ts` file when
+another module imports them.
+
 ## Continuous integration
 
 GitHub Actions run two workflows. CI runs on every push to main and on pull
