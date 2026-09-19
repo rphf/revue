@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import ReviewPage from "./pages/ReviewPage";
 import { loadTheme, saveTheme, type Theme } from "./theme";
 import type { Review } from "./types";
-import ReviewPage from "./pages/ReviewPage";
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname);

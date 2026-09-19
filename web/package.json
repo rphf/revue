@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@pierre/diffs": "1.4.x",
+    "@pierre/trees": "^1.0.0-beta.6",
     "dompurify": "^3.4.11",
     "marked": "^18.0.5",
     "react": "^19.2.7",

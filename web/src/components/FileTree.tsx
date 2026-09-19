@@ -1,61 +1,28 @@
-import { useMemo, useState } from "react";
-import type { FileStatus, RoundFile } from "../types";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import type {
+  ContextMenuItem,
+  ContextMenuOpenContext,
+  FileTreeRowDecorationContext,
+  GitStatusEntry,
+} from "@pierre/trees";
+import { FileTree as Tree, useFileTree } from "@pierre/trees/react";
+import type { RoundFile } from "../types";
 
-// Custom file tree (KTD9): changed-file list -> nested tree with
-// expand/collapse, click-to-scroll, viewed dots, and status badges.
-// Paths render as React text nodes only — they are untrusted repo
-// content and must never become HTML.
-
-interface TreeDir {
-  kind: "dir";
-  name: string;
-  path: string;
-  children: TreeNode[];
-}
-
-interface TreeLeaf {
-  kind: "file";
-  name: string;
-  file: RoundFile;
-}
-
-type TreeNode = TreeDir | TreeLeaf;
-
-function buildTree(files: RoundFile[]): TreeNode[] {
-  const root: TreeDir = { kind: "dir", name: "", path: "", children: [] };
-  for (const file of files) {
-    const parts = file.path.split("/");
-    let dir = root;
-    for (let i = 0; i < parts.length - 1; i++) {
-      const dirPath = parts.slice(0, i + 1).join("/");
-      let next = dir.children.find(
-        (n): n is TreeDir => n.kind === "dir" && n.path === dirPath,
-      );
-      if (!next) {
-        next = { kind: "dir", name: parts[i], path: dirPath, children: [] };
-        dir.children.push(next);
-      }
-      dir = next;
-    }
-    dir.children.push({ kind: "file", name: parts[parts.length - 1], file });
-  }
-  const sortNodes = (nodes: TreeNode[]) => {
-    nodes.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const n of nodes) if (n.kind === "dir") sortNodes(n.children);
-  };
-  sortNodes(root.children);
-  return root.children;
-}
-
-const statusBadge: Record<FileStatus, { label: string; className: string }> = {
-  added: { label: "A", className: "badge badge-added" },
-  modified: { label: "M", className: "badge badge-modified" },
-  deleted: { label: "D", className: "badge badge-deleted" },
-  renamed: { label: "R", className: "badge badge-renamed" },
-};
+// The changed-file sidebar is a @pierre/trees model: virtualized rows,
+// flattened empty directory chains, sticky folders, keyboard navigation,
+// type-to-search, and a git-status lane fed from the round's file
+// statuses. Revue adds the per-file viewed toggle as a row decoration
+// plus a context menu, and turns row activation into a diff jump.
+//
+// Paths reach the tree as data and the library renders them as text
+// nodes inside its shadow root; they are untrusted repo content and
+// must never be interpolated into HTML here either.
 
 export interface FileTreeProps {
   files: RoundFile[];
@@ -65,90 +32,200 @@ export interface FileTreeProps {
   selectedPath?: string;
 }
 
-export default function FileTree({
+const VIEWED_ICON = "revue-viewed";
+const UNVIEWED_ICON = "revue-unviewed";
+
+// Custom sprite for the viewed lane; the built-in sets have no check
+// mark. Zero size keeps it out of the host's flex layout, like the
+// library's own sprite; currentColor lets the CSS below pick colors.
+const SPRITE_SHEET = `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="0" height="0">
+<symbol id="${VIEWED_ICON}" viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="${UNVIEWED_ICON}" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>`;
+
+// Shadow-root styles the host CSS variables cannot express: the viewed
+// lane is a click target, and the check reads as "done".
+const UNSAFE_CSS = `
+[data-item-section="decoration"] > span { cursor: pointer; color: var(--trees-fg-muted); }
+[data-item-section="decoration"] > span:hover { color: var(--trees-fg); }
+[data-item-section="decoration"] [data-icon-name="${VIEWED_ICON}"] { color: var(--trees-git-added-color); }
+[data-item-section="git"] { opacity: 1; font-weight: var(--trees-font-weight-semibold); }
+`;
+
+const DECORATION_SELECTOR = '[data-item-section="decoration"] > span';
+
+function toGitStatus(files: RoundFile[]): GitStatusEntry[] {
+  return files.map((f) => ({ path: f.path, status: f.status }));
+}
+
+// The row button wraps the whole line, so a click anywhere in the tree
+// resolves to its row through the composed path of the shadow DOM.
+function rowFromEvent(event: Event): HTMLElement | null {
+  for (const node of event.composedPath()) {
+    if (node instanceof HTMLElement && node.dataset.type === "item") {
+      return node;
+    }
+  }
+  return null;
+}
+
+function isViewedDotTarget(event: Event): boolean {
+  const target = event.composedPath()[0];
+  return (
+    target instanceof Element && target.closest(DECORATION_SELECTOR) !== null
+  );
+}
+
+// Every ancestor directory of a path, shallowest first.
+function ancestorDirs(path: string): string[] {
+  const parts = path.split("/");
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
+function FileTree({
   files,
   viewed,
   onToggleViewed,
   onSelect,
   selectedPath,
 }: FileTreeProps) {
-  const tree = useMemo(() => buildTree(files), [files]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const viewedRef = useRef(viewed);
+  const initialFiles = useRef(files);
+
+  const { model } = useFileTree({
+    paths: files.map((f) => f.path),
+    gitStatus: toGitStatus(files),
+    initialExpansion: "open",
+    flattenEmptyDirectories: true,
+    stickyFolders: true,
+    search: true,
+    density: "compact",
+    icons: { set: "standard", spriteSheet: SPRITE_SHEET },
+    unsafeCSS: UNSAFE_CSS,
+    renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
+      if (item.kind !== "file") return null;
+      const isViewed = viewedRef.current.has(item.path);
+      return {
+        icon: {
+          name: isViewed ? VIEWED_ICON : UNVIEWED_ICON,
+          width: 14,
+          height: 14,
+        },
+        title: isViewed ? "Mark as not viewed" : "Mark as viewed",
+      };
+    },
+  });
+
+  // The model is created once; later rounds replace its paths in place.
+  useEffect(() => {
+    if (initialFiles.current === files) return;
+    model.resetPaths(files.map((f) => f.path));
+    model.setGitStatus(toGitStatus(files));
+  }, [model, files]);
+
+  // Decorations read the viewed set through a ref, so a toggle needs an
+  // explicit row re-render; resetting the composition is the model's
+  // public way to ask for one.
+  useEffect(() => {
+    viewedRef.current = viewed;
+    model.setComposition(model.getComposition());
+  }, [model, viewed]);
+
+  // Jumps that originate outside the tree (thread panel, anchors) mirror
+  // into the selection without bouncing back through onSelect.
+  useEffect(() => {
+    if (!selectedPath) return;
+    const item = model.getItem(selectedPath);
+    if (!item || item.isSelected()) return;
+    for (const dir of ancestorDirs(selectedPath)) {
+      const d = model.getItem(dir);
+      if (d && "expand" in d) d.expand();
+    }
+    item.select();
+    model.scrollToPath(selectedPath, { focus: false, offset: "nearest" });
+  }, [model, selectedPath, files]);
+
+  const viewedCount = useMemo(
+    () => files.reduce((n, f) => n + (viewed.has(f.path) ? 1 : 0), 0),
+    [files, viewed],
+  );
+
+  const header = useMemo(
+    () => (
+      <div className="tree-header">
+        <span>
+          {files.length} {files.length === 1 ? "file" : "files"}
+        </span>
+        <span className="tree-header-muted">{viewedCount} viewed</span>
+      </div>
+    ),
+    [files.length, viewedCount],
+  );
 
   if (files.length === 0) {
     return <div className="tree-empty">No changed files</div>;
   }
 
-  const toggleDir = (path: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
+  // Capture phase runs before the row's own click handler, so a click on
+  // the viewed dot toggles without selecting or jumping.
+  const onClickCapture = (e: ReactMouseEvent<HTMLElement>) => {
+    if (!isViewedDotTarget(e.nativeEvent)) return;
+    const path = rowFromEvent(e.nativeEvent)?.dataset.itemPath;
+    if (!path) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onToggleViewed(path);
   };
 
-  const renderNodes = (nodes: TreeNode[], depth: number) =>
-    nodes.map((node) => {
-      if (node.kind === "dir") {
-        const isCollapsed = collapsed.has(node.path);
-        return (
-          <div key={`dir:${node.path}`}>
-            <button
-              type="button"
-              className="tree-row tree-dir"
-              style={{ paddingLeft: depth * 14 + 6 }}
-              onClick={() => toggleDir(node.path)}
-              aria-expanded={!isCollapsed}
-            >
-              <span className="tree-caret">{isCollapsed ? "▸" : "▾"}</span>
-              <span className="tree-name">{node.name}</span>
-            </button>
-            {!isCollapsed && renderNodes(node.children, depth + 1)}
-          </div>
-        );
-      }
-      const { file } = node;
-      const badge = statusBadge[file.status];
-      return (
-        // The whole row is the click target (the viewed dot opts out),
-        // so the pointer affordance matches the hit area.
-        <div
-          key={`file:${file.path}`}
-          className={`tree-row tree-file${selectedPath === file.path ? " selected" : ""}`}
-          style={{ paddingLeft: depth * 14 + 6 }}
-          onClick={() => onSelect(file.path)}
-        >
-          <button
-            type="button"
-            className={`viewed-dot${viewed.has(file.path) ? " viewed" : ""}`}
-            title={
-              viewed.has(file.path) ? "Mark as not viewed" : "Mark as viewed"
-            }
-            aria-label={`Toggle viewed: ${file.path}`}
-            aria-pressed={viewed.has(file.path)}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleViewed(file.path);
-            }}
-          />
-          <button type="button" className="tree-name tree-link">
-            {file.status === "renamed" && file.oldPath ? (
-              <span className="tree-rename">
-                <span className="tree-old-path">{file.oldPath}</span>
-                {" → "}
-                {node.name}
-              </span>
-            ) : (
-              node.name
-            )}
-          </button>
-          <span className={badge.className} title={file.status}>
-            {badge.label}
-          </span>
-        </div>
-      );
-    });
+  // Mouse clicks and Enter/Space on a focused row both land here as a
+  // button click, so re-activating the selected file jumps again.
+  const onClick = (e: ReactMouseEvent<HTMLElement>) => {
+    const row = rowFromEvent(e.nativeEvent);
+    const path = row?.dataset.itemPath;
+    if (row?.dataset.itemType === "file" && path) onSelect(path);
+  };
 
-  return <nav className="file-tree">{renderNodes(tree, 0)}</nav>;
+  const renderContextMenu = (
+    item: ContextMenuItem,
+    context: ContextMenuOpenContext,
+  ) => (
+    <div className="tree-menu" role="menu" aria-label={item.name}>
+      {item.kind === "file" && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onToggleViewed(item.path);
+            context.close();
+          }}
+        >
+          {viewed.has(item.path) ? "Mark as not viewed" : "Mark as viewed"}
+        </button>
+      )}
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          void navigator.clipboard?.writeText(item.path);
+          context.close();
+        }}
+      >
+        Copy path
+      </button>
+    </div>
+  );
+
+  return (
+    <Tree
+      model={model}
+      className="file-tree"
+      aria-label="Changed files"
+      header={header}
+      renderContextMenu={renderContextMenu}
+      onClickCapture={onClickCapture}
+      onClick={onClick}
+    />
+  );
 }
+
+export default memo(FileTree);
