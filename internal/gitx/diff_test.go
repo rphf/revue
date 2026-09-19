@@ -340,3 +340,59 @@ func TestPathspecLimitsCapture(t *testing.T) {
 		t.Errorf("in-scope files missing: %+v", res.Files)
 	}
 }
+
+func symlink(t *testing.T, dir, target, path string) {
+	t.Helper()
+	if err := os.Symlink(target, filepath.Join(dir, path)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUntrackedSymlinksCaptureAsLinkTargets(t *testing.T) {
+	repo := initRepo(t)
+	write(t, repo, "dir/f.txt", "v1\n")
+	commitAll(t, repo, "c1")
+	symlink(t, repo, "dir/f.txt", "file-link")
+	symlink(t, repo, "dir", "dir-link")
+
+	res, err := Capture(repo, nil)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	for _, tc := range []struct{ path, target string }{
+		{"file-link", "dir/f.txt"},
+		{"dir-link", "dir"},
+	} {
+		f := fileByPath(res, tc.path)
+		if f == nil || f.Status != StatusAdded || f.IsBinary || string(f.NewContent) != tc.target {
+			t.Errorf("%s: got %+v, want added link to %q", tc.path, f, tc.target)
+			continue
+		}
+		header := "diff --git a/" + tc.path + " b/" + tc.path + "\nnew file mode 120000\n"
+		body := "\n+" + tc.target + "\n\\ No newline at end of file\n"
+		if !strings.Contains(res.Patch, header) || !strings.Contains(res.Patch, body) {
+			t.Errorf("%s: patch lacks the symlink entry:\n%s", tc.path, res.Patch)
+		}
+	}
+}
+
+func TestModifiedTrackedSymlinkReadsLinkTarget(t *testing.T) {
+	repo := initRepo(t)
+	write(t, repo, "a.txt", "a\n")
+	write(t, repo, "b.txt", "b\n")
+	symlink(t, repo, "a.txt", "link")
+	commitAll(t, repo, "c1")
+	if err := os.Remove(filepath.Join(repo, "link")); err != nil {
+		t.Fatal(err)
+	}
+	symlink(t, repo, "b.txt", "link")
+
+	res, err := Capture(repo, nil)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	f := fileByPath(res, "link")
+	if f == nil || f.Status != StatusModified || string(f.OldContent) != "a.txt" || string(f.NewContent) != "b.txt" {
+		t.Errorf("link: got %+v, want modified a.txt -> b.txt", f)
+	}
+}

@@ -72,9 +72,16 @@ var configOverrides = []string{
 }
 
 func git(repoRoot string, args ...string) ([]byte, error) {
+	return gitStdin(repoRoot, nil, args...)
+}
+
+func gitStdin(repoRoot string, stdin []byte, args ...string) ([]byte, error) {
 	full := append(append([]string{}, configOverrides...), args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = repoRoot
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -207,7 +214,24 @@ func newSideContent(repoRoot, oid, path string) ([]byte, error) {
 			return content, nil
 		}
 	}
-	return os.ReadFile(filepath.Join(repoRoot, path))
+	return readWorktree(filepath.Join(repoRoot, path))
+}
+
+// readWorktree reads a path the way git stores it: a symlink's blob is
+// its target, not the file it points to.
+func readWorktree(full string) ([]byte, error) {
+	info, err := os.Lstat(full)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(full)
+		if err != nil {
+			return nil, err
+		}
+		return []byte(target), nil
+	}
+	return os.ReadFile(full)
 }
 
 // isWorkingTreeCapture reports whether the diff's new side is the
@@ -245,6 +269,20 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 	var patch strings.Builder
 	for _, p := range strings.Split(string(out), "\x00") {
 		if p == "" {
+			continue
+		}
+		full := filepath.Join(repoRoot, p)
+		info, err := os.Lstat(full)
+		if err != nil {
+			return nil, "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			f, linkPatch, err := untrackedSymlink(repoRoot, p, full)
+			if err != nil {
+				return nil, "", err
+			}
+			patch.WriteString(linkPatch)
+			files = append(files, f)
 			continue
 		}
 		numstat, err := gitDiffExit1OK(repoRoot, "diff", "--no-index", "--no-ext-diff", "--numstat", "--", os.DevNull, p)
@@ -340,4 +378,23 @@ func parseNumstatBinaries(out []byte) map[string]bool {
 		}
 	}
 	return binaries
+}
+
+// untrackedSymlink builds the added-file entry git would print for a
+// new symlink: a mode 120000 blob whose content is the link target.
+// git diff --no-index cannot produce it when the link points at a
+// directory, so the patch is assembled from the target directly.
+func untrackedSymlink(repoRoot, path, full string) (File, string, error) {
+	target, err := os.Readlink(full)
+	if err != nil {
+		return File{}, "", err
+	}
+	oid, err := gitStdin(repoRoot, []byte(target), "hash-object", "--stdin")
+	if err != nil {
+		return File{}, "", err
+	}
+	hash := strings.TrimSpace(string(oid))
+	patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\nindex %s..%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1 @@\n+%s\n\\ No newline at end of file\n",
+		path, path, strings.Repeat("0", len(hash)), hash, path, target)
+	return File{Path: path, Status: StatusAdded, NewContent: []byte(target)}, patch, nil
 }
