@@ -8,7 +8,7 @@ PLATFORMS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 # the ambient environment.
 export GOFLAGS :=
 
-.PHONY: build release web-install web-build ui-dist test web-test lint fmt smoke e2e clean
+.PHONY: build release next-version web-install web-build ui-dist test web-test lint fmt smoke e2e clean
 
 build: web-build
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/revue ./cmd/revue
@@ -25,6 +25,11 @@ release: web-build
 	done
 	cd dist && shasum -a 256 *.tar.gz > checksums.txt
 	@ls -l dist
+
+# Next release tag from the commit types since the last tag
+# (docs/releasing.md); the Release workflow runs the same script.
+next-version:
+	@bash scripts/next-version.sh
 
 web-install:
 	cd web && npm install

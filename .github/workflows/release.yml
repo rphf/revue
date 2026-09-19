@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, for example v0.2.0. Created on the selected ref when it does not exist yet."
-        required: true
+        description: "Release tag such as v0.4.0. Leave empty to derive it from the commit types since the last tag (scripts/next-version.sh). Created on the selected ref."
+        required: false
         type: string
 
 permissions:
@@ -14,16 +14,34 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ inputs.tag }}
     steps:
-      - run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "tag must look like v1.2.3, got '$TAG'" >&2; exit 1; }
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Only picks and validates the name. Nothing is tagged or pushed
+      # here; the last step creates the tag on GitHub's side.
+      - name: Choose the tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="$(bash scripts/next-version.sh)"
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "tag must look like v1.2.3, got '$TAG'" >&2; exit 1; }
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag $TAG already exists; this workflow creates tags, it does not reuse them" >&2
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Releasing **$TAG** from \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: jdx/mise-action@v4
       - run: cd web && npm ci
       - run: make release VERSION="$TAG"
       - run: make test
+      # The tag does not exist yet, so GitHub creates it at GITHUB_SHA
+      # (the commit of the ref this run was started on) together with
+      # the release. No git tag or git push runs on the runner.
       - run: gh release create "$TAG" dist/*.tar.gz dist/checksums.txt --title "$TAG" --target "$GITHUB_SHA" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
