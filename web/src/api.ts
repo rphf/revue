@@ -60,6 +60,10 @@ export const api = {
       "GET",
       `/api/reviews/${id}/rounds/${seq}/file?path=${encodeURIComponent(path)}`,
     ),
+  // Image URL for the rich markdown view: the round's snapshot when the
+  // file changed in it, the checked-out file otherwise.
+  assetUrl: (id: number, seq: number, path: string) =>
+    `/api/reviews/${id}/rounds/${seq}/asset?path=${encodeURIComponent(path)}`,
   listThreads: (id: number) =>
     request<{ threads: Thread[] }>(
       "GET",

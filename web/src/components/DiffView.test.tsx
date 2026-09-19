@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { RoundFile } from "../types";
@@ -99,6 +99,53 @@ describe("DiffView", () => {
     expect(screen.getByTestId("diff-empty")).toHaveTextContent(
       "No changes in this diff",
     );
+  });
+});
+
+describe("DiffView rich markdown", () => {
+  it("offers the Source/Rich switch on markdown files only", () => {
+    render(
+      <DiffView
+        files={[meta("README.md"), meta("main.go")]}
+        roundFiles={[roundFile("README.md"), roundFile("main.go")]}
+        diffStyle="unified"
+        theme="light"
+        onToggleRich={() => {}}
+      />,
+    );
+    const readme = screen.getByTestId("filediff-README.md");
+    expect(
+      within(readme).getByRole("radio", { name: "Rich" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("filediff-main.go")).queryByRole("radio"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders a rich file as a captioned file item with the document annotation", () => {
+    const doc = {
+      rev: "r",
+      status: "ready" as const,
+      blocks: [{ change: "added" as const, html: "<p>Hello</p>" }],
+    };
+    render(
+      <DiffView
+        files={[meta("README.md")]}
+        roundFiles={[roundFile("README.md")]}
+        diffStyle="unified"
+        theme="light"
+        richByFile={new Map([["README.md", doc]])}
+        onToggleRich={() => {}}
+        renderAnnotation={(a) => <div>{a.metadata?.kind}</div>}
+      />,
+    );
+    const item = screen.getByTestId("fileitem-rich:README.md");
+    expect(item).toHaveTextContent("rich");
+    expect(within(item).getByRole("radio", { name: "Rich" })).toHaveAttribute(
+      "data-state",
+      "on",
+    );
+    expect(screen.queryByTestId("filediff-README.md")).not.toBeInTheDocument();
   });
 });
 

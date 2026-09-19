@@ -41,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}", s.handleGetRound)
 	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/patch", s.handleGetPatch)
 	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/file", s.handleGetFileVersions)
+	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/asset", s.handleRoundAsset)
 	mux.HandleFunc("GET /api/reviews/{id}/threads", s.handleListThreads)
 	mux.HandleFunc("POST /api/reviews/{id}/threads", s.handleCreateThread)
 	mux.HandleFunc("POST /api/reviews/{id}/submit", s.handleSubmit)

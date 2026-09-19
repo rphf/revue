@@ -8,6 +8,7 @@ import {
 import type {
   CodeViewItem,
   DiffLineAnnotation,
+  FileContents,
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
@@ -16,10 +17,17 @@ import {
   type CodeViewHandle,
   type CodeViewReactOptions,
 } from "@pierre/diffs/react";
-import { FileDiffIcon, UnfoldVerticalIcon } from "lucide-react";
+import {
+  BookOpenTextIcon,
+  CodeIcon,
+  FileDiffIcon,
+  UnfoldVerticalIcon,
+} from "lucide-react";
 import type { ReviewState, RoundFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
+import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { treePathCompare } from "./treePath";
 
 export type DiffStyle = "unified" | "split";
@@ -28,12 +36,13 @@ export type DiffStyle = "unified" | "split";
 // pending comment forms through it. rev fingerprints the thread's
 // visible content so item versions bump only when something changed.
 export interface AnnotationMeta {
-  kind: "thread" | "pending";
+  kind: "thread" | "pending" | "rich";
   threadId?: number;
   rev?: string;
   thread?: Thread;
   reviewState?: ReviewState;
   pending?: PendingComment;
+  rich?: RichDoc;
 }
 
 export interface PendingComment {
@@ -89,13 +98,33 @@ export interface DiffViewProps {
   ) => ReactNode;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
   onExpandContext?: (path: string) => void;
+  // Markdown files switched to the rendered view, with their documents.
+  richByFile?: ReadonlyMap<string, RichDoc>;
+  onToggleRich?: (path: string) => void;
 }
 
 interface ItemMemo {
   fileDiff: FileDiffMetadata;
   annotations?: DiffLineAnnotation<AnnotationMeta>[];
+  rich: boolean;
+  // The rich variant's file object, kept across renders: the virtualizer
+  // lays an item out from this object and refuses a different one later.
+  richFile?: FileContents;
   version: number;
 }
+
+// A markdown file in rich view is a one-line file item whose file-level
+// annotation carries the rendered document: the library renders that
+// annotation only above a line, so the line is a short caption.
+const RICH_CAPTION = "Switch to Source to comment on lines.";
+
+// The rich variant is a separate item: the virtualizer prepares a layout
+// per item id and refuses to render a file where it laid out a diff.
+const RICH_PREFIX = "rich:";
+const richItemId = (path: string) => RICH_PREFIX + path;
+const isRichItemId = (id: string) => id.startsWith(RICH_PREFIX);
+const pathFromItemId = (id: string) =>
+  isRichItemId(id) ? id.slice(RICH_PREFIX.length) : id;
 
 // GitHub's own Shiki themes for the code; the surrounding chrome is
 // the app palette. The -default variants are GitHub's current colors
@@ -133,17 +162,21 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     renderAnnotation,
     onLineSelect,
     onExpandContext,
+    richByFile,
+    onToggleRich,
   }: DiffViewProps,
   ref,
 ) {
   const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
+  const richRef = useRef(richByFile);
+  richRef.current = richByFile;
   useImperativeHandle(
     ref,
     () => ({
       scrollToFile: (path: string) => {
         codeView.current?.scrollTo({
           type: "item",
-          id: path,
+          id: richRef.current?.has(path) ? richItemId(path) : path,
           align: "start",
           behavior: "instant",
         });
@@ -184,16 +217,55 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           file: { name: path, contents: "" },
         } as CodeViewItem<AnnotationMeta>;
       }
-      const annotations = annotationsByFile?.get(path);
+      const richDoc = richByFile?.get(path);
+      const annotations = richDoc
+        ? [
+            {
+              side: "additions" as const,
+              lineNumber: 0,
+              metadata: {
+                kind: "rich" as const,
+                rev: richDoc.rev,
+                rich: richDoc,
+              },
+            },
+          ]
+        : annotationsByFile?.get(path);
       const prev = memoRef.current.get(path);
       let version = prev?.version ?? 0;
       if (
         prev &&
         (prev.fileDiff !== meta ||
+          prev.rich !== Boolean(richDoc) ||
           !annotationsEqual(prev.annotations, annotations))
       )
         version++;
-      memoRef.current.set(path, { fileDiff: meta, annotations, version });
+      const richFile = richDoc
+        ? (prev?.richFile ?? {
+            name: path,
+            contents: RICH_CAPTION,
+            lang: "text",
+          })
+        : undefined;
+      memoRef.current.set(path, {
+        fileDiff: meta,
+        annotations,
+        rich: Boolean(richDoc),
+        richFile,
+        version,
+      });
+      if (richDoc && richFile) {
+        return {
+          id: richItemId(path),
+          type: "file",
+          file: richFile,
+          annotations: annotations?.map(({ lineNumber, metadata }) => ({
+            lineNumber,
+            metadata,
+          })),
+          version,
+        } as CodeViewItem<AnnotationMeta>;
+      }
       return {
         id: path,
         type: "diff",
@@ -202,7 +274,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         version,
       } as CodeViewItem<AnnotationMeta>;
     });
-  }, [files, binaryByPath, annotationsByFile]);
+  }, [files, binaryByPath, annotationsByFile, richByFile]);
 
   // The options object is stable across renders that do not change it,
   // as the library asks; a new object would re-configure the viewer.
@@ -225,11 +297,15 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       enableGutterUtility: Boolean(onLineSelect),
       enableLineSelection: Boolean(onLineSelect),
       onGutterUtilityClick: onLineSelect
-        ? (range, context) => onLineSelect(context.item.id, range)
+        ? (range, context) => {
+            if (!isRichItemId(context.item.id))
+              onLineSelect(context.item.id, range);
+          }
         : undefined,
       onLineSelectionEnd: onLineSelect
         ? (range, context) => {
-            if (range) onLineSelect(context.item.id, range);
+            if (range && !isRichItemId(context.item.id))
+              onLineSelect(context.item.id, range);
           }
         : undefined,
       theme: THEMES,
@@ -261,42 +337,67 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           ? (annotation, item) =>
               renderAnnotation(
                 annotation as DiffLineAnnotation<AnnotationMeta>,
-                item.id,
+                pathFromItemId(item.id),
               )
           : undefined
       }
       renderHeaderMetadata={(item) => {
-        const binary = binaryByPath.get(item.id);
+        const path = pathFromItemId(item.id);
+        const binary = binaryByPath.get(path);
         if (binary) {
           return (
             <span
               className="font-sans text-xs text-muted-foreground"
-              data-testid={`binary-${item.id}`}
+              data-testid={`binary-${path}`}
             >
               Binary file ({binary.status}) — no diff shown
             </span>
           );
         }
-        if (
-          item.type === "diff" &&
-          item.fileDiff.isPartial &&
-          onExpandContext
-        ) {
-          return (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="font-sans text-muted-foreground hover:text-foreground"
-              title="Load full file contents from the round snapshot to expand hunk context"
-              onClick={() => onExpandContext(item.id)}
-            >
-              <UnfoldVerticalIcon />
-              Expand context
-            </Button>
-          );
-        }
-        return null;
+        const rich = richByFile?.has(path) ?? false;
+        return (
+          <span className="flex items-center gap-1 font-sans">
+            {isMarkdownPath(path) && onToggleRich && (
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                spacing={0}
+                value={rich ? "rich" : "source"}
+                onValueChange={(v) => {
+                  if (v && (v === "rich") !== rich) onToggleRich(path);
+                }}
+                aria-label="Markdown view"
+              >
+                <ToggleGroupItem
+                  value="source"
+                  aria-label="Source"
+                  title="Source"
+                >
+                  <CodeIcon />
+                </ToggleGroupItem>
+                <ToggleGroupItem value="rich" aria-label="Rich" title="Rich">
+                  <BookOpenTextIcon />
+                </ToggleGroupItem>
+              </ToggleGroup>
+            )}
+            {item.type === "diff" &&
+              item.fileDiff.isPartial &&
+              onExpandContext && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="text-muted-foreground hover:text-foreground"
+                  title="Load full file contents from the round snapshot to expand hunk context"
+                  onClick={() => onExpandContext(item.id)}
+                >
+                  <UnfoldVerticalIcon />
+                  Expand context
+                </Button>
+              )}
+          </span>
+        );
       }}
     />
   );

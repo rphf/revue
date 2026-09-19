@@ -982,3 +982,73 @@ func TestExportRendersMarkdownWithoutDrafts(t *testing.T) {
 		t.Errorf("draft leaked into the export:\n%s", md)
 	}
 }
+
+func TestRoundAssetServesSnapshotThenRepo(t *testing.T) {
+	repo := initRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svg := `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+	writeFile(t, repo, "docs/logo.svg", svg)
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0}
+	if err := os.WriteFile(filepath.Join(repo, "pic.png"), png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := startServer(t, repo, 0)
+	rv := ts.openReview(t)
+	get := func(p string) *http.Response {
+		return ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/1/asset?path=%s", rv.Review.ID, p), nil, nil)
+	}
+	read := func(resp *http.Response) []byte {
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+
+	resp := get("docs/logo.svg")
+	ts.mustStatus(t, resp, http.StatusOK)
+	for header, want := range map[string]string{
+		"Content-Type":            "image/svg+xml",
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": "default-src 'none'; sandbox",
+	} {
+		if got := resp.Header.Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+	if got := string(read(resp)); got != svg {
+		t.Errorf("svg body = %q, want the captured file", got)
+	}
+
+	// The round captured the SVG, so a later edit on disk does not show.
+	writeFile(t, repo, "docs/logo.svg", "<svg>changed</svg>")
+	resp = get("docs/logo.svg")
+	ts.mustStatus(t, resp, http.StatusOK)
+	if got := string(read(resp)); got != svg {
+		t.Errorf("after edit body = %q, want the snapshot", got)
+	}
+
+	// Binary content is never captured; it comes from the checkout.
+	resp = get("pic.png")
+	ts.mustStatus(t, resp, http.StatusOK)
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Errorf("png content type = %q", ct)
+	}
+	if got := read(resp); !bytes.Equal(got, png) {
+		t.Errorf("png body = %v, want %v", got, png)
+	}
+
+	for p, want := range map[string]int{
+		"../outside.svg":  http.StatusBadRequest,
+		"/etc/passwd.png": http.StatusBadRequest,
+		"a.txt":           http.StatusUnsupportedMediaType,
+		"missing.png":     http.StatusNotFound,
+	} {
+		resp = get(p)
+		ts.mustStatus(t, resp, want)
+		_ = resp.Body.Close()
+	}
+}

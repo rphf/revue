@@ -31,7 +31,7 @@ A review is a sequence of rounds. Each round freezes the diff that was reviewed.
 
 The reviewer resolves threads. The agent can reply but cannot resolve. After an approval, the review is read-only for the agent until the reviewer reopens it.
 
-Comment bodies are markdown. Links and images render, so an agent can point at a screenshot or a test report that it serves elsewhere.
+Comment bodies are markdown. Links and images render, so an agent can point at a screenshot or a test report that it serves elsewhere. A markdown file in the diff has a rich view, like GitHub's: the rendered document with the changed paragraphs marked.
 
 ## Documentation
 

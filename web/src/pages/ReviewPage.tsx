@@ -28,10 +28,12 @@ import DiffView, {
   type PendingComment,
 } from "../components/DiffView";
 import FileTree from "../components/FileTree";
+import RichMarkdown from "../components/RichMarkdown";
 import SubmitDialog from "../components/SubmitDialog";
 import Thread from "../components/Thread";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar, { Brand, TopBarShell } from "../components/TopBar";
+import { useRichDocs } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -103,6 +105,17 @@ export default function ReviewPage({
   useEffect(() => saveDiffStyle(diffStyle), [diffStyle]);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
+  // Markdown files shown rendered instead of as source (GitHub's rich
+  // diff); the choice is per path and survives round switches.
+  const [richPaths, setRichPaths] = useState<ReadonlySet<string>>(new Set());
+  const toggleRich = useCallback((path: string) => {
+    setRichPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
 
   // Pane widths survive reloads; the threads pane is conditional, so
   // the layout with and without it is stored separately.
@@ -213,6 +226,7 @@ export default function ReviewPage({
     patch,
   );
   const reviewState = detail?.review.state ?? "open";
+  const richByFile = useRichDocs(reviewId, effectiveSeq, richPaths);
 
   const draftCount = useMemo(
     () => threads.flatMap((t) => t.comments).filter((c) => c.draft).length,
@@ -299,6 +313,9 @@ export default function ReviewPage({
             />
           </div>
         );
+      }
+      if (meta?.kind === "rich" && meta.rich) {
+        return <RichMarkdown doc={meta.rich} />;
       }
       if (meta?.kind === "thread" && meta.thread) {
         return (
@@ -501,6 +518,8 @@ export default function ReviewPage({
                     : undefined
                 }
                 onExpandContext={requestUpgrade}
+                richByFile={richByFile}
+                onToggleRich={toggleRich}
               />
             )}
           </ResizablePanel>

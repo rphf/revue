@@ -254,4 +254,34 @@
   .markdown hr {
     @apply my-3;
   }
+
+  /* A whole markdown file rendered in the diff pane: document scale
+     on top of the comment styles, and the changed blocks marked. */
+  .markdown-doc {
+    @apply max-w-[80ch] px-6 py-4 font-sans text-sm text-foreground;
+  }
+  .markdown-doc h1 {
+    @apply mt-6 mb-3 border-b pb-2 text-2xl font-semibold tracking-tight;
+  }
+  .markdown-doc h2 {
+    @apply mt-6 mb-3 border-b pb-1.5 text-xl font-semibold tracking-tight;
+  }
+  .markdown-doc h3 {
+    @apply mt-5 mb-2 text-base font-semibold;
+  }
+  .markdown-doc h4 {
+    @apply mt-4 mb-2 text-sm font-semibold;
+  }
+  .markdown-doc > .rich-block:first-child > :first-child {
+    margin-top: 0;
+  }
+  .rich-block {
+    @apply -mx-3 rounded-md border-l-2 border-transparent px-3 py-0.5;
+  }
+  .rich-added {
+    @apply border-added bg-added/8;
+  }
+  .rich-removed {
+    @apply border-removed bg-removed/8 text-muted-foreground;
+  }
 }
