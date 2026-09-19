@@ -11,9 +11,15 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { CodeView, type CodeViewHandle } from "@pierre/diffs/react";
+import {
+  CodeView,
+  type CodeViewHandle,
+  type CodeViewReactOptions,
+} from "@pierre/diffs/react";
+import { FileDiffIcon, UnfoldVerticalIcon } from "lucide-react";
 import type { ReviewState, RoundFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
+import { Button } from "@/components/ui/button";
 import { treePathCompare } from "./treePath";
 
 export type DiffStyle = "unified" | "split";
@@ -90,6 +96,26 @@ interface ItemMemo {
   annotations?: DiffLineAnnotation<AnnotationMeta>[];
   version: number;
 }
+
+// GitHub's own Shiki themes for the code; the surrounding chrome is
+// the app palette. The -default variants are GitHub's current colors
+// and their backgrounds sit next to the neutral page without a seam.
+const THEMES = { light: "github-light-default", dark: "github-dark-default" };
+
+// Item spacing lives in the CodeView layout, not in CSS, so the
+// virtualizer's offsets and the painted gaps agree. The bottom padding
+// lets the last file scroll to the top of the pane.
+const LAYOUT = { paddingTop: 12, paddingBottom: 480, gap: 16 };
+
+// Each file renders in its own shadow root; this is the one way to give
+// it a card outline. The app's border token inherits through the
+// shadow boundary. No overflow clipping, or the sticky header stops
+// sticking.
+const UNSAFE_CSS = `
+:host { border: 1px solid var(--border); border-radius: var(--radius-lg); }
+[data-diffs-header] { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+[data-diff], [data-file] { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+`;
 
 // The whole diff pane is ONE CodeView (the diffs.com architecture):
 // every file is an item in a single virtualized list whose layout is
@@ -178,9 +204,47 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     });
   }, [files, binaryByPath, annotationsByFile]);
 
+  // The options object is stable across renders that do not change it,
+  // as the library asks; a new object would re-configure the viewer.
+  const options = useMemo<CodeViewReactOptions<AnnotationMeta, undefined>>(
+    () => ({
+      diffStyle,
+      stickyHeaders: true,
+      // Long lines soft-wrap inside their column instead of clipping
+      // behind a horizontal scrollbar; prose and 80-column docs read
+      // whole in split view.
+      overflow: "wrap",
+      expansionLineCount: 20,
+      layout: LAYOUT,
+      unsafeCSS: UNSAFE_CSS,
+      // The library's own gutter "+" carries the GitHub gesture: a click
+      // selects that line, a drag from it selects a range, and both land
+      // in onGutterUtilityClick; a custom-rendered button would lose the
+      // drag. Dragging line numbers also selects a range and lands in
+      // onLineSelectionEnd.
+      enableGutterUtility: Boolean(onLineSelect),
+      enableLineSelection: Boolean(onLineSelect),
+      onGutterUtilityClick: onLineSelect
+        ? (range, context) => onLineSelect(context.item.id, range)
+        : undefined,
+      onLineSelectionEnd: onLineSelect
+        ? (range, context) => {
+            if (range) onLineSelect(context.item.id, range);
+          }
+        : undefined,
+      theme: THEMES,
+      themeType: theme,
+    }),
+    [diffStyle, theme, onLineSelect],
+  );
+
   if (items.length === 0) {
     return (
-      <div className="diff-empty" data-testid="diff-empty">
+      <div
+        className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground"
+        data-testid="diff-empty"
+      >
+        <FileDiffIcon className="size-6 opacity-60" />
         <p>No changes in this diff</p>
       </div>
     );
@@ -191,28 +255,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       ref={codeView}
       className="diff-scroll"
       items={items}
-      options={{
-        diffStyle,
-        stickyHeaders: true,
-        expansionLineCount: 20,
-        // The library's own gutter "+" carries the GitHub gesture: a click
-        // selects that line, a drag from it selects a range, and both land
-        // in onGutterUtilityClick; a custom-rendered button would lose the
-        // drag. Dragging line numbers also selects a range and lands in
-        // onLineSelectionEnd.
-        enableGutterUtility: Boolean(onLineSelect),
-        enableLineSelection: Boolean(onLineSelect),
-        onGutterUtilityClick: onLineSelect
-          ? (range, context) => onLineSelect(context.item.id, range)
-          : undefined,
-        onLineSelectionEnd: onLineSelect
-          ? (range, context) => {
-              if (range) onLineSelect(context.item.id, range);
-            }
-          : undefined,
-        theme: { dark: "github-dark", light: "github-light" },
-        themeType: theme,
-      }}
+      options={options}
       renderAnnotation={
         renderAnnotation
           ? (annotation, item) =>
@@ -226,7 +269,10 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         const binary = binaryByPath.get(item.id);
         if (binary) {
           return (
-            <span className="binary-note" data-testid={`binary-${item.id}`}>
+            <span
+              className="font-sans text-xs text-muted-foreground"
+              data-testid={`binary-${item.id}`}
+            >
               Binary file ({binary.status}) — no diff shown
             </span>
           );
@@ -237,14 +283,17 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           onExpandContext
         ) {
           return (
-            <button
+            <Button
               type="button"
-              className="expand-context"
+              variant="ghost"
+              size="xs"
+              className="font-sans text-muted-foreground hover:text-foreground"
               title="Load full file contents from the round snapshot to expand hunk context"
               onClick={() => onExpandContext(item.id)}
             >
+              <UnfoldVerticalIcon />
               Expand context
-            </button>
+            </Button>
           );
         }
         return null;

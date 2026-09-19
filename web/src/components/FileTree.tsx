@@ -12,6 +12,7 @@ import type {
   GitStatusEntry,
 } from "@pierre/trees";
 import { FileTree as Tree, useFileTree } from "@pierre/trees/react";
+import { CopyIcon, EyeIcon, EyeOffIcon, InboxIcon } from "lucide-react";
 import type { RoundFile } from "../types";
 
 // The changed-file sidebar is a @pierre/trees model: virtualized rows,
@@ -44,15 +45,23 @@ const SPRITE_SHEET = `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
 </svg>`;
 
 // Shadow-root styles the host CSS variables cannot express: the viewed
-// lane is a click target, and the check reads as "done".
+// lane is a click target, and the check reads as "done". The library
+// lets the decoration absorb the row's free space and shrink to nothing
+// under a long, deeply nested name; here the name takes the ellipsis
+// and the viewed lane keeps its size.
 const UNSAFE_CSS = `
-[data-item-section="decoration"] > span { cursor: pointer; color: var(--trees-fg-muted); }
+[data-item-section="content"] { flex: 1 1 auto; }
+[data-item-section="decoration"] { flex: 0 0 auto; min-width: 22px; overflow: visible; }
+[data-item-section="decoration"] > span { cursor: pointer; color: var(--trees-fg-muted); overflow: visible; }
 [data-item-section="decoration"] > span:hover { color: var(--trees-fg); }
 [data-item-section="decoration"] [data-icon-name="${VIEWED_ICON}"] { color: var(--trees-git-added-color); }
 [data-item-section="git"] { opacity: 1; font-weight: var(--trees-font-weight-semibold); }
 `;
 
 const DECORATION_SELECTOR = '[data-item-section="decoration"] > span';
+
+const MENU_ITEM =
+  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground";
 
 function toGitStatus(files: RoundFile[]): GitStatusEntry[] {
   return files.map((f) => ({ path: f.path, status: f.status }));
@@ -152,18 +161,34 @@ function FileTree({
 
   const header = useMemo(
     () => (
-      <div className="tree-header">
-        <span>
+      <div className="tree-header flex items-center gap-2 px-3 pt-2.5 pb-1.5 text-xs">
+        <span className="font-medium">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
-        <span className="tree-header-muted">{viewedCount} viewed</span>
+        <span className="text-muted-foreground">{viewedCount} viewed</span>
+        <span
+          className="ml-auto h-1 w-14 overflow-hidden rounded-full bg-border"
+          aria-hidden="true"
+        >
+          <span
+            className="block h-full rounded-full bg-added transition-[width]"
+            style={{
+              width: `${files.length ? (viewedCount / files.length) * 100 : 0}%`,
+            }}
+          />
+        </span>
       </div>
     ),
     [files.length, viewedCount],
   );
 
   if (files.length === 0) {
-    return <div className="tree-empty">No changed files</div>;
+    return (
+      <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-sm text-muted-foreground">
+        <InboxIcon className="size-5 opacity-60" />
+        No changed files
+      </div>
+    );
   }
 
   // Capture phase runs before the row's own click handler, so a click on
@@ -189,27 +214,39 @@ function FileTree({
     item: ContextMenuItem,
     context: ContextMenuOpenContext,
   ) => (
-    <div className="tree-menu" role="menu" aria-label={item.name}>
+    <div
+      className="flex min-w-44 flex-col rounded-lg bg-popover p-1 text-sm text-popover-foreground shadow-md ring-1 ring-foreground/10"
+      role="menu"
+      aria-label={item.name}
+    >
       {item.kind === "file" && (
         <button
           type="button"
           role="menuitem"
+          className={MENU_ITEM}
           onClick={() => {
             onToggleViewed(item.path);
             context.close();
           }}
         >
+          {viewed.has(item.path) ? (
+            <EyeOffIcon className="size-4 text-muted-foreground" />
+          ) : (
+            <EyeIcon className="size-4 text-muted-foreground" />
+          )}
           {viewed.has(item.path) ? "Mark as not viewed" : "Mark as viewed"}
         </button>
       )}
       <button
         type="button"
         role="menuitem"
+        className={MENU_ITEM}
         onClick={() => {
           void navigator.clipboard?.writeText(item.path);
           context.close();
         }}
       >
+        <CopyIcon className="size-4 text-muted-foreground" />
         Copy path
       </button>
     </div>

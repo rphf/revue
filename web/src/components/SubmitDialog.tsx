@@ -1,5 +1,17 @@
 import { useState } from "react";
 import type { Verdict } from "../types";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 
 export interface SubmitDialogProps {
   draftCount: number;
@@ -49,66 +61,73 @@ export default function SubmitDialog({
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onClick={onClose}>
-      <div
-        className="dialog"
-        role="dialog"
-        aria-label="Submit review"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2>Submit review</h2>
-        <p className="muted">
-          {draftCount === 0
-            ? "No pending comments — a verdict-only submission."
-            : `Publishing ${draftCount} draft comment${draftCount === 1 ? "" : "s"}.`}
-        </p>
-        <div className="verdict-options">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Submit review</DialogTitle>
+          <DialogDescription>
+            {draftCount === 0
+              ? "No pending comments — a verdict-only submission."
+              : `Publishing ${draftCount} draft comment${draftCount === 1 ? "" : "s"}.`}
+          </DialogDescription>
+        </DialogHeader>
+        <RadioGroup
+          value={verdict}
+          onValueChange={(v) => setVerdict(v as Verdict)}
+          className="gap-1.5"
+        >
           {verdicts.map((v) => (
-            <label key={v.value} className="verdict-option">
-              <input
-                type="radio"
-                name="verdict"
+            <Label
+              key={v.value}
+              htmlFor={`verdict-${v.value}`}
+              className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal transition-colors hover:bg-muted/50 has-data-checked:border-foreground/30 has-data-checked:bg-muted/60"
+            >
+              <RadioGroupItem
                 value={v.value}
-                checked={verdict === v.value}
-                onChange={() => setVerdict(v.value)}
+                id={`verdict-${v.value}`}
+                className="mt-0.5"
               />
-              <span>
-                <strong>{v.label}</strong>
-                <span className="muted"> — {v.hint}</span>
+              <span className="grid gap-0.5">
+                <span className="font-medium">{v.label}</span>
+                <span className="text-xs text-muted-foreground">{v.hint}</span>
               </span>
-            </label>
+            </Label>
           ))}
-        </div>
-        <textarea
+        </RadioGroup>
+        <Textarea
           placeholder="Summary (optional)"
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
           rows={3}
         />
         {error && (
-          <p className="form-error" role="alert">
+          <p className="text-xs text-destructive" role="alert">
             {error}
           </p>
         )}
-        <div className="form-actions">
-          <button
+        <DialogFooter>
+          <Button
             type="button"
-            className="btn"
+            variant="outline"
             onClick={onClose}
             disabled={pending}
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="btn btn-primary"
             onClick={() => void submit()}
             disabled={pending}
           >
             {pending ? "Submitting…" : "Submit review"}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

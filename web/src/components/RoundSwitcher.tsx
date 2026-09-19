@@ -1,3 +1,12 @@
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { RoundSummary } from "../types";
 
 export interface RoundSwitcherProps {
@@ -17,43 +26,55 @@ export default function RoundSwitcher({
   onSelect,
 }: RoundSwitcherProps) {
   if (rounds.length <= 1) {
-    return <span className="round-label">round {current}</span>;
+    return (
+      <span className="text-xs text-muted-foreground tabular-nums">
+        round {current}
+      </span>
+    );
   }
   const first = rounds[0].seq;
   const last = rounds[rounds.length - 1].seq;
   return (
-    <span className="round-switcher" data-testid="round-switcher">
-      <button
-        type="button"
-        className="round-nav"
+    <div className="flex items-center" data-testid="round-switcher">
+      <Button
+        variant="ghost"
+        size="icon-xs"
         aria-label="Previous round"
         disabled={disabled || current <= first}
         onClick={() => onSelect(current - 1)}
       >
-        ‹
-      </button>
-      <select
-        aria-label="Round"
-        value={current}
+        <ChevronLeftIcon />
+      </Button>
+      <Select
+        value={String(current)}
         disabled={disabled}
-        onChange={(e) => onSelect(Number(e.target.value))}
+        onValueChange={(v) => onSelect(Number(v))}
       >
-        {rounds.map((r) => (
-          <option key={r.seq} value={r.seq}>
-            round {r.seq}
-            {r.seq === last ? " (latest)" : ""}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        className="round-nav"
+        <SelectTrigger
+          size="sm"
+          aria-label="Round"
+          className="h-7 gap-1 border-transparent bg-transparent px-1.5 text-xs shadow-none tabular-nums hover:bg-muted dark:bg-transparent dark:hover:bg-muted"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="start" position="popper">
+          {rounds.map((r) => (
+            <SelectItem key={r.seq} value={String(r.seq)}>
+              round {r.seq}
+              {r.seq === last ? " (latest)" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        variant="ghost"
+        size="icon-xs"
         aria-label="Next round"
         disabled={disabled || current >= last}
         onClick={() => onSelect(current + 1)}
       >
-        ›
-      </button>
-    </span>
+        <ChevronRightIcon />
+      </Button>
+    </div>
   );
 }

@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
+import { TerminalIcon } from "lucide-react";
 import { api } from "./api";
 import ReviewPage from "./pages/ReviewPage";
 import { loadTheme, saveTheme, type Theme } from "./theme";
 import type { Review } from "./types";
+import ThemeToggle from "./components/ThemeToggle";
+import { Brand, TopBarShell } from "./components/TopBar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+export interface NavigateOptions {
+  replace?: boolean;
+}
 
 function usePath() {
   const [path, setPath] = useState(window.location.pathname);
@@ -11,8 +20,9 @@ function usePath() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const navigate = useCallback((to: string) => {
-    window.history.pushState(null, "", to);
+  const navigate = useCallback((to: string, opts?: NavigateOptions) => {
+    if (opts?.replace) window.history.replaceState(null, "", to);
+    else window.history.pushState(null, "", to);
     setPath(to);
   }, []);
   return { path, navigate };
@@ -36,44 +46,18 @@ export default function App() {
       />
     );
   }
-  return (
-    <ReviewList
-      onNavigate={navigate}
-      theme={theme}
-      onToggleTheme={toggleTheme}
-    />
-  );
+  return <Home navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />;
 }
 
-export function ThemeToggle({
-  theme,
-  onToggle,
-}: {
-  theme: Theme;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="theme-toggle"
-      onClick={onToggle}
-      aria-label="Toggle theme"
-    >
-      {theme === "dark" ? "☀️" : "🌙"}
-    </button>
-  );
-}
-
-export function StateChip({ state }: { state: Review["state"] }) {
-  return <span className={`state-chip state-${state}`}>{state}</span>;
-}
-
-function ReviewList({
-  onNavigate,
+// There is no list page: the root sends the browser to the newest
+// review, where the switcher in the top bar lists all of them. Only an
+// empty database keeps the reader here.
+function Home({
+  navigate,
   theme,
   onToggleTheme,
 }: {
-  onNavigate: (to: string) => void;
+  navigate: (to: string, opts?: NavigateOptions) => void;
   theme: Theme;
   onToggleTheme: () => void;
 }) {
@@ -81,49 +65,64 @@ function ReviewList({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     api
       .listReviews()
-      .then((r) => setReviews(r.reviews))
-      .catch((e) => setError(String(e)));
+      .then((r) => {
+        if (!cancelled) setReviews(r.reviews);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  const newest = reviews?.reduce<Review | null>(
+    (best, r) => (best === null || r.id > best.id ? r : best),
+    null,
+  );
+  useEffect(() => {
+    if (newest) navigate(`/reviews/${newest.id}`, { replace: true });
+  }, [newest, navigate]);
+
   return (
-    <div className="page">
-      <header className="topbar">
-        <h1 className="brand">revue</h1>
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-      </header>
-      <main className="list-main">
-        {error && <p className="error">{error}</p>}
-        {reviews === null && !error && <p className="muted">Loading…</p>}
-        {reviews?.length === 0 && (
-          <p className="muted">
-            No reviews yet. Open one with <code>revue open</code>.
-          </p>
-        )}
-        {reviews && reviews.length > 0 && (
-          <ul className="review-list">
-            {reviews.map((r) => (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  className="review-item"
-                  onClick={() => onNavigate(`/reviews/${r.id}`)}
-                >
-                  <span className="review-id">#{r.id}</span>
-                  <span className="review-branch">
-                    {r.branch || "(no branch)"}
-                  </span>
-                  <span className="review-args">
-                    {r.sourceArgs.join(" ") || "working tree"}
-                  </span>
-                  <StateChip state={r.state} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </main>
-    </div>
+    <TooltipProvider>
+      <div className="flex h-full flex-col">
+        <TopBarShell>
+          <Brand />
+          <div className="ml-auto">
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          </div>
+        </TopBarShell>
+        <main className="grid flex-1 place-items-center p-6">
+          {error ? (
+            <p className="text-destructive" role="alert">
+              {error}
+            </p>
+          ) : reviews === null || newest ? (
+            <div className="w-full max-w-sm space-y-3" aria-busy="true">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-3/5" />
+            </div>
+          ) : (
+            <div className="w-full max-w-sm rounded-xl border bg-card p-6 text-center shadow-xs">
+              <div className="mx-auto mb-3 grid size-10 place-items-center rounded-lg bg-muted text-muted-foreground">
+                <TerminalIcon className="size-5" />
+              </div>
+              <h1 className="font-medium">No reviews yet</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Open one from a repository that has changes:
+              </p>
+              <pre className="mt-3 rounded-md bg-muted px-3 py-2 text-left font-mono text-xs">
+                revue open
+              </pre>
+            </div>
+          )}
+        </main>
+      </div>
+    </TooltipProvider>
   );
 }

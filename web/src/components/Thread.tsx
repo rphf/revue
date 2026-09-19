@@ -1,6 +1,18 @@
 import { useState } from "react";
+import {
+  BotIcon,
+  CheckIcon,
+  CircleCheckIcon,
+  HistoryIcon,
+  ReplyIcon,
+  UserIcon,
+} from "lucide-react";
 import { api } from "../api";
 import type { AnchorState, ReviewState, Thread as ThreadType } from "../types";
+import { formatDateTime, timeAgo } from "@/lib/time";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import CommentForm from "./CommentForm";
 import Markdown from "./Markdown";
 
@@ -41,130 +53,197 @@ export default function Thread({
     void run(api.deleteComment(id));
   };
 
+  const outdated = anchorState === "outdated";
+
   return (
     <div
-      className={`thread${thread.resolved ? " thread-resolved" : ""}`}
+      className={cn("annotation-card", thread.resolved && "opacity-75")}
       data-testid={`thread-${thread.id}`}
     >
-      <div className="thread-header">
-        {thread.resolved && (
-          <span className="chip chip-resolved">Resolved</span>
-        )}
-        {anchorState === "outdated" && (
-          <button
-            type="button"
-            className="chip chip-outdated"
-            title="The code this thread was anchored to changed; view it in its original round"
-            onClick={() => onJumpToOrigin?.(thread.originRoundSeq)}
-          >
-            Outdated · round {thread.originRoundSeq}
-          </button>
-        )}
-      </div>
-      <ul className="comment-list">
-        {thread.comments.map((c) => (
-          <li key={c.id} className="comment" data-testid={`comment-${c.id}`}>
-            <div className="comment-meta">
-              <span className={`role role-${c.authorRole}`}>
-                {c.authorRole}
-              </span>
-              {c.draft && <span className="chip chip-draft">Draft</span>}
-              {c.draft &&
-                c.authorRole === "reviewer" &&
-                (deletingId === c.id ? (
+      {(thread.resolved || outdated) && (
+        <div className="flex items-center gap-1.5 border-b px-3 py-1.5">
+          {thread.resolved && (
+            <Badge variant="outline" className="border-added/40 text-added">
+              <CheckIcon />
+              Resolved
+            </Badge>
+          )}
+          {outdated && (
+            <Badge
+              asChild
+              variant="outline"
+              className="border-renamed/40 text-renamed hover:bg-renamed/10"
+            >
+              <button
+                type="button"
+                title="The code this thread was anchored to changed; view it in its original round"
+                onClick={() => onJumpToOrigin?.(thread.originRoundSeq)}
+              >
+                <HistoryIcon />
+                Outdated · round {thread.originRoundSeq}
+              </button>
+            </Badge>
+          )}
+        </div>
+      )}
+      <ul className="divide-y">
+        {thread.comments.map((c) => {
+          const agent = c.authorRole === "agent";
+          return (
+            <li
+              key={c.id}
+              className="px-3 py-2.5"
+              data-testid={`comment-${c.id}`}
+            >
+              <div className="mb-1 flex min-h-6 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span
+                  className={cn(
+                    "grid size-5 shrink-0 place-items-center rounded-full",
+                    agent
+                      ? "bg-agent/15 text-agent"
+                      : "bg-muted text-foreground",
+                  )}
+                  aria-hidden="true"
+                >
+                  {agent ? (
+                    <BotIcon className="size-3" />
+                  ) : (
+                    <UserIcon className="size-3" />
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "font-medium capitalize",
+                    agent && "text-agent",
+                  )}
+                >
+                  {c.authorRole}
+                </span>
+                {c.createdAt && (
                   <span
-                    className="comment-actions confirm-inline"
-                    role="status"
+                    className="whitespace-nowrap text-muted-foreground"
+                    title={formatDateTime(c.createdAt)}
                   >
-                    Delete this draft?
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => setDeletingId(null)}
-                    >
-                      Keep
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn link-danger"
-                      onClick={() => deleteComment(c.id)}
-                    >
-                      Delete
-                    </button>
+                    {timeAgo(c.createdAt)}
                   </span>
-                ) : (
-                  <span className="comment-actions">
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => setEditingId(c.id)}
+                )}
+                {c.draft && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 border-renamed/40 px-1.5 text-[10px] text-renamed"
+                  >
+                    Draft
+                  </Badge>
+                )}
+                {c.draft &&
+                  c.authorRole === "reviewer" &&
+                  (deletingId === c.id ? (
+                    <span
+                      className="ml-auto inline-flex items-center gap-1 text-muted-foreground"
+                      role="status"
                     >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => setDeletingId(c.id)}
-                    >
-                      Delete
-                    </button>
-                  </span>
-                ))}
-            </div>
-            {editingId === c.id ? (
-              <CommentForm
-                initial={c.body}
-                submitLabel="Update"
-                onSubmit={async (body) => {
-                  await api.editComment(c.id, body);
-                  setEditingId(null);
-                  onChanged();
-                }}
-                onCancel={() => setEditingId(null)}
-              />
-            ) : (
-              <Markdown source={c.body} />
-            )}
-          </li>
-        ))}
+                      Delete this draft?
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setDeletingId(null)}
+                      >
+                        Keep
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="xs"
+                        onClick={() => deleteComment(c.id)}
+                      >
+                        Delete
+                      </Button>
+                    </span>
+                  ) : (
+                    <span className="ml-auto inline-flex items-center gap-0.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => setEditingId(c.id)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeletingId(c.id)}
+                      >
+                        Delete
+                      </Button>
+                    </span>
+                  ))}
+              </div>
+              {editingId === c.id ? (
+                <CommentForm
+                  initial={c.body}
+                  submitLabel="Update"
+                  onSubmit={async (body) => {
+                    await api.editComment(c.id, body);
+                    setEditingId(null);
+                    onChanged();
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <Markdown source={c.body} />
+              )}
+            </li>
+          );
+        })}
       </ul>
       {actionError && (
-        <p className="form-error" role="alert">
+        <p className="px-3 pb-2 text-xs text-destructive" role="alert">
           {actionError}
         </p>
       )}
-      <div className="thread-footer">
+      <div className="flex flex-wrap items-center gap-1 border-t bg-muted/30 px-2 py-1.5">
         {replying ? (
-          <CommentForm
-            placeholder="Reply"
-            submitLabel="Reply"
-            onSubmit={async (body) => {
-              await api.reply(thread.id, body);
-              setReplying(false);
-              onChanged();
-            }}
-            onCancel={() => setReplying(false)}
-          />
+          <div className="w-full p-1">
+            <CommentForm
+              placeholder="Reply"
+              submitLabel="Reply"
+              onSubmit={async (body) => {
+                await api.reply(thread.id, body);
+                setReplying(false);
+                onChanged();
+              }}
+              onCancel={() => setReplying(false)}
+            />
+          </div>
         ) : (
           <>
             {reviewState !== "closed" && (
-              <button
+              <Button
                 type="button"
-                className="btn"
+                variant="ghost"
+                size="xs"
                 onClick={() => setReplying(true)}
               >
+                <ReplyIcon />
                 Reply
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
-              className="btn"
+              variant="ghost"
+              size="xs"
               onClick={() =>
                 void run(api.resolveThread(thread.id, !thread.resolved))
               }
             >
+              <CircleCheckIcon />
               {thread.resolved ? "Unresolve" : "Resolve"}
-            </button>
+            </Button>
           </>
         )}
       </div>

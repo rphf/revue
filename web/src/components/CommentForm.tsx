@@ -1,4 +1,7 @@
 import { useState, type KeyboardEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { Textarea } from "@/components/ui/textarea";
 
 export interface CommentFormProps {
   initial?: string;
@@ -8,6 +11,10 @@ export interface CommentFormProps {
   onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
 }
+
+const isMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 // GitHub-parity comment form: Escape and Cancel dismiss; non-empty
 // content prompts confirm-discard first; submit-in-flight disables the
@@ -60,53 +67,71 @@ export default function CommentForm({
   };
 
   return (
-    <div className="comment-form">
-      <textarea
+    <div className="w-full font-sans">
+      <Textarea
         value={body}
         placeholder={placeholder}
         autoFocus={autoFocus}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={onKeyDown}
         rows={3}
+        className="min-h-18 bg-background text-sm"
       />
       {error && (
-        <p className="form-error" role="alert">
+        <p className="mt-1.5 text-xs text-destructive" role="alert">
           {error}
         </p>
       )}
-      <div className="form-actions">
+      <div className="mt-2 flex items-center justify-end gap-1.5">
+        <span className="mr-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
+          <KbdGroup>
+            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>↵</Kbd>
+          </KbdGroup>
+          to submit
+        </span>
         {confirmingDiscard ? (
-          <span className="confirm-inline" role="status">
+          <span
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+            role="status"
+          >
             Discard this comment?
-            <button
+            <Button
               type="button"
-              className="btn"
+              variant="ghost"
+              size="xs"
               onClick={() => setConfirmingDiscard(false)}
             >
               Keep
-            </button>
-            <button type="button" className="btn btn-danger" onClick={onCancel}>
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="xs"
+              onClick={onCancel}
+            >
               Discard
-            </button>
+            </Button>
           </span>
         ) : (
-          <button
+          <Button
             type="button"
-            className="btn"
+            variant="ghost"
+            size="sm"
             onClick={cancel}
             disabled={pending}
           >
             Cancel
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className="btn btn-primary"
+          size="sm"
           onClick={() => void submit()}
           disabled={pending || body.trim() === ""}
         >
           {pending ? "Saving…" : submitLabel}
-        </button>
+        </Button>
       </div>
     </div>
   );

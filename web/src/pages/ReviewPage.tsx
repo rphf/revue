@@ -16,7 +16,7 @@ import type {
   ThreadAnchor,
   Verdict,
 } from "../types";
-import { StateChip, ThemeToggle } from "../App";
+import { CircleAlertIcon } from "lucide-react";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import { useFullDiffs } from "../components/ContextExpand";
@@ -27,10 +27,13 @@ import DiffView, {
   type PendingComment,
 } from "../components/DiffView";
 import FileTree from "../components/FileTree";
-import RoundSwitcher from "../components/RoundSwitcher";
 import SubmitDialog from "../components/SubmitDialog";
 import Thread from "../components/Thread";
 import ThreadsPanel from "../components/ThreadsPanel";
+import TopBar, { Brand, TopBarShell } from "../components/TopBar";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export interface ReviewPageProps {
   reviewId: number;
@@ -254,7 +257,7 @@ export default function ReviewPage({
       if (meta?.kind === "pending" && meta.pending) {
         const p = meta.pending;
         return (
-          <div className="thread thread-new">
+          <div className="annotation-card p-2.5">
             <CommentForm
               placeholder={
                 p.startLine && p.startLine !== p.line
@@ -353,171 +356,141 @@ export default function ReviewPage({
 
   if (error) {
     return (
-      <div className="page">
-        <header className="topbar">
-          <button
-            type="button"
-            className="back-link"
-            onClick={() => onNavigate("/")}
-          >
-            ← reviews
-          </button>
-        </header>
-        <p className="error">{error}</p>
-      </div>
+      <TooltipProvider>
+        <div className="flex h-full flex-col">
+          <TopBarShell>
+            <Brand />
+          </TopBarShell>
+          <main className="grid flex-1 place-items-center p-6">
+            <div className="flex max-w-md flex-col items-center gap-3 text-center">
+              <CircleAlertIcon className="size-6 text-destructive" />
+              <p className="text-destructive">{error}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onNavigate("/")}
+              >
+                Back to reviews
+              </Button>
+            </div>
+          </main>
+        </div>
+      </TooltipProvider>
     );
   }
 
   return (
-    <div className="page review-page">
-      <ConnectionBanner state={connection} />
-      <header className="topbar">
-        <button
-          type="button"
-          className="back-link"
-          onClick={() => onNavigate("/")}
-        >
-          ← reviews
-        </button>
-        {detail && (
-          <>
-            <span className="review-title">
-              #{detail.review.id}{" "}
-              {detail.review.branch ||
-                detail.review.sourceArgs.join(" ") ||
-                "working tree"}
-            </span>
-            <StateChip state={detail.review.state} />
-            {effectiveSeq !== null && (
-              <RoundSwitcher
-                rounds={detail.rounds}
-                current={effectiveSeq}
-                disabled={roundDetail === null && roundError === null}
-                onSelect={(seq) => setRoundSeq(seq === latestSeq ? null : seq)}
-              />
-            )}
-            {effectiveSeq !== null && !viewingLatest && (
-              <span className="chip chip-outdated">viewing a past round</span>
-            )}
-          </>
+    <TooltipProvider>
+      <div className="flex h-full flex-col">
+        <ConnectionBanner state={connection} />
+        <TopBar
+          review={detail?.review}
+          rounds={detail?.rounds ?? []}
+          currentSeq={effectiveSeq}
+          latestSeq={latestSeq}
+          roundBusy={roundDetail === null && roundError === null}
+          onSelectRound={(seq) => setRoundSeq(seq === latestSeq ? null : seq)}
+          threadCount={threads.length}
+          panelOpen={showPanel}
+          onTogglePanel={() => setShowPanel((v) => !v)}
+          draftCount={draftCount}
+          onSubmit={() => setShowSubmit(true)}
+          onClose={() => lifecycleAction("close")}
+          onReopen={() => lifecycleAction("reopen")}
+          diffStyle={diffStyle}
+          onDiffStyleChange={setDiffStyle}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          onNavigate={onNavigate}
+        />
+        {notice && (
+          <p
+            className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
+            role="alert"
+          >
+            <CircleAlertIcon className="size-3.5" />
+            {notice}
+          </p>
         )}
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="style-toggle"
-            onClick={() => setShowPanel((v) => !v)}
-          >
-            threads{threads.length > 0 ? ` (${threads.length})` : ""}
-          </button>
-          {reviewState === "open" ? (
-            <>
-              <button
-                type="button"
-                className="btn btn-primary"
-                data-testid="open-submit"
-                onClick={() => setShowSubmit(true)}
-              >
-                Submit review{draftCount > 0 ? ` (${draftCount})` : ""}
-              </button>
-              <button
-                type="button"
-                className="style-toggle"
-                onClick={() => lifecycleAction("close")}
-              >
-                Close
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="style-toggle"
-              onClick={() => lifecycleAction("reopen")}
-            >
-              Reopen
-            </button>
-          )}
-          <button
-            type="button"
-            className="style-toggle"
-            onClick={() =>
-              setDiffStyle((s) => (s === "unified" ? "split" : "unified"))
-            }
-          >
-            {diffStyle === "unified" ? "split view" : "unified view"}
-          </button>
-          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
-        </div>
-      </header>
-      {notice && (
-        <p className="form-error" role="alert">
-          {notice}
-        </p>
-      )}
-      <div className="review-body">
-        <aside className="sidebar">
-          <FileTree
-            files={roundFiles}
-            viewed={viewed}
-            onToggleViewed={toggleViewed}
-            onSelect={scrollToFile}
-            selectedPath={selectedPath}
-          />
-        </aside>
-        <main className="diff-pane">
-          {roundError !== null ? (
-            <div className="diff-error" data-testid="diff-error">
-              <p className="error">{roundError}</p>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setRoundFetchNonce((n) => n + 1)}
-              >
-                Retry
-              </button>
-            </div>
-          ) : displayFiles === null ? (
-            <div
-              className="diff-loading diff-skeleton"
-              data-testid="diff-loading"
-            >
-              Loading diff…
-            </div>
-          ) : (
-            <DiffView
-              ref={diffViewRef}
-              files={displayFiles}
-              roundFiles={roundFiles}
-              diffStyle={diffStyle}
-              theme={theme}
-              annotationsByFile={annotationsByFile}
-              renderAnnotation={renderAnnotation}
-              onLineSelect={
-                reviewState !== "closed" && viewingLatest
-                  ? onLineSelect
-                  : undefined
-              }
-              onExpandContext={requestUpgrade}
-            />
-          )}
-        </main>
-        {showPanel && (
-          <aside className="panel-sidebar">
-            <ThreadsPanel
-              threads={threads}
-              currentRoundId={currentRoundId}
-              onJump={jumpToThread}
-              onClose={() => setShowPanel(false)}
+        <div className="flex min-h-0 flex-1">
+          <aside className="flex w-[272px] shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
+            <FileTree
+              files={roundFiles}
+              viewed={viewed}
+              onToggleViewed={toggleViewed}
+              onSelect={scrollToFile}
+              selectedPath={selectedPath}
             />
           </aside>
+          <main className="flex min-w-0 flex-1 flex-col">
+            {roundError !== null ? (
+              <div
+                className="flex flex-1 flex-col items-center justify-center gap-3"
+                data-testid="diff-error"
+              >
+                <CircleAlertIcon className="size-6 text-destructive" />
+                <p className="text-destructive">{roundError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRoundFetchNonce((n) => n + 1)}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : displayFiles === null ? (
+              <div
+                className="flex-1 space-y-3 p-4"
+                data-testid="diff-loading"
+                aria-busy="true"
+              >
+                <span className="sr-only">Loading diff…</span>
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-4 w-4/5" />
+                <Skeleton className="mt-6 h-9 w-full" />
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-4 w-3/5" />
+              </div>
+            ) : (
+              <DiffView
+                ref={diffViewRef}
+                files={displayFiles}
+                roundFiles={roundFiles}
+                diffStyle={diffStyle}
+                theme={theme}
+                annotationsByFile={annotationsByFile}
+                renderAnnotation={renderAnnotation}
+                onLineSelect={
+                  reviewState !== "closed" && viewingLatest
+                    ? onLineSelect
+                    : undefined
+                }
+                onExpandContext={requestUpgrade}
+              />
+            )}
+          </main>
+          {showPanel && (
+            <aside className="w-[360px] shrink-0 overflow-hidden border-l bg-sidebar text-sidebar-foreground">
+              <ThreadsPanel
+                threads={threads}
+                currentRoundId={currentRoundId}
+                onJump={jumpToThread}
+                onClose={() => setShowPanel(false)}
+              />
+            </aside>
+          )}
+        </div>
+        {showSubmit && (
+          <SubmitDialog
+            draftCount={draftCount}
+            onSubmit={submitReview}
+            onClose={() => setShowSubmit(false)}
+          />
         )}
       </div>
-      {showSubmit && (
-        <SubmitDialog
-          draftCount={draftCount}
-          onSubmit={submitReview}
-          onClose={() => setShowSubmit(false)}
-        />
-      )}
-    </div>
+    </TooltipProvider>
   );
 }

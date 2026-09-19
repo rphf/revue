@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ThreadsPanel from "./ThreadsPanel";
 import type { Thread, ThreadAnchor } from "../types";
@@ -74,7 +75,10 @@ describe("ThreadsPanel", () => {
     }),
   ];
 
-  it("partitions threads across live/outdated/resolved filters", () => {
+  // The filter tabs activate on pointer down, as Radix tabs do, so the
+  // test drives them with a full pointer sequence.
+  it("partitions threads across live/outdated/resolved filters", async () => {
+    const user = userEvent.setup();
     render(
       <ThreadsPanel
         threads={threads}
@@ -87,18 +91,18 @@ describe("ThreadsPanel", () => {
     // All by default.
     expect(screen.getAllByTestId(/panel-thread-/)).toHaveLength(4);
 
-    fireEvent.click(screen.getByRole("tab", { name: /live/ }));
+    await user.click(screen.getByRole("tab", { name: /live/ }));
     let rows = screen.getAllByTestId(/panel-thread-/);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveTextContent("thread 1 body");
 
-    fireEvent.click(screen.getByRole("tab", { name: /outdated/ }));
+    await user.click(screen.getByRole("tab", { name: /outdated/ }));
     rows = screen.getAllByTestId(/panel-thread-/);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("thread 2 body");
     expect(rows[1]).toHaveTextContent("thread 4 body");
 
-    fireEvent.click(screen.getByRole("tab", { name: /resolved/ }));
+    await user.click(screen.getByRole("tab", { name: /resolved/ }));
     rows = screen.getAllByTestId(/panel-thread-/);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveTextContent("thread 3 body");
