@@ -2,23 +2,16 @@
 
 # revue
 
-Local code review for diffs that a coding agent wrote. The reviewer gets a
-GitHub-style browser UI over anything `git diff` can express. The agent gets a
-CLI to read the feedback and to reply in threads. Everything stays on one
-machine: no remote, no accounts.
+Local code review for diffs that a coding agent wrote. The reviewer gets a GitHub-style browser UI over anything `git diff` can express. The agent gets a CLI to read the feedback and to reply in threads. Everything stays on one machine: no remote, no accounts.
 
 ## Install
 
-Binaries for Linux and macOS, amd64 and arm64, are on the
-[releases page](https://github.com/rphf/revue/releases). See
-[docs/install.md](docs/install.md) for download one-liners and building from
-source.
+Binaries for Linux and macOS, amd64 and arm64, are on the [releases page](https://github.com/rphf/revue/releases). See [docs/install.md](docs/install.md) for download one-liners and building from source.
 
 ## Quick start
 
 1. Go to a git repository that has changes.
-2. Run `revue open`. The command captures the working-tree diff and opens the
-   review in your browser.
+2. Run `revue open`. The command captures the working-tree diff and opens the review in your browser.
 3. Comment on lines. Comments stay drafts until you submit.
 4. Submit the review with a verdict: comment, request changes, or approve.
 
@@ -34,19 +27,11 @@ revue open abc123 def456      # two commits
 
 ## How a review works
 
-A review is a sequence of rounds. Each round freezes the diff that was
-reviewed. When the agent changes the code and signals a new round, revue
-captures the same diff arguments again. Threads on hunks that did not change
-stay live at their new position. Threads on hunks that changed are marked
-outdated, and their history stays readable. A rebase that only moves the base
-does not outdate a thread.
+A review is a sequence of rounds. Each round freezes the diff that was reviewed. When the agent changes the code and signals a new round, revue captures the same diff arguments again. Threads on hunks that did not change stay live at their new position. Threads on hunks that changed are marked outdated, and their history stays readable. A rebase that only moves the base does not outdate a thread.
 
-The reviewer resolves threads. The agent can reply but cannot resolve. After
-an approval, the review is read-only for the agent until the reviewer reopens
-it.
+The reviewer resolves threads. The agent can reply but cannot resolve. After an approval, the review is read-only for the agent until the reviewer reopens it.
 
-Comment bodies are markdown. Links and images render, so an agent can point at
-a screenshot or a test report that it serves elsewhere.
+Comment bodies are markdown. Links and images render, so an agent can point at a screenshot or a test report that it serves elsewhere.
 
 ## Documentation
 
