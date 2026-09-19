@@ -47,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/reviews/{id}/close", s.handleClose)
 	mux.HandleFunc("POST /api/reviews/{id}/reopen", s.handleReopen)
 	mux.HandleFunc("GET /api/reviews/{id}/feedback", s.handleFeedback)
+	mux.HandleFunc("GET /api/reviews/{id}/export", s.handleExport)
 	mux.HandleFunc("GET /api/reviews/{id}/events", s.handleEvents)
 	mux.HandleFunc("GET /api/reviews/{id}/wait", s.handleWait)
 

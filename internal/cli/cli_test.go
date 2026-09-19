@@ -628,3 +628,18 @@ func TestOpenKeepsPathspecSeparator(t *testing.T) {
 		t.Errorf("open --reuse with the same pathspec: exit %d: %s", code, out)
 	}
 }
+
+func TestExportPrintsMarkdown(t *testing.T) {
+	h := newHarness(t)
+	id, _ := h.openReview()
+	h.reviewerDraft(id, 4, "prefer fmt.Println here")
+	h.reviewerSubmit(id, "comment", "")
+
+	code, out := h.run(h.cmdExport)
+	if code != ExitOK {
+		t.Fatalf("export: exit %d: %s", code, out)
+	}
+	if !strings.HasPrefix(out, "# Review #") || !strings.Contains(out, "prefer fmt.Println here") {
+		t.Errorf("export output is not the review markdown:\n%s", out)
+	}
+}

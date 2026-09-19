@@ -270,8 +270,7 @@ func (e *env) cmdReply(args []string) int {
 	return e.printJSON(out)
 }
 
-// cmdExport renders the review as markdown (R14); implemented with
-// the export engine (U11).
+// cmdExport prints the server's markdown rendering of the review (R14).
 func (e *env) cmdExport(args []string) int {
 	fs := newFlagSet("export")
 	review := fs.Int64("review", 0, "review id (default: single open review for this branch)")

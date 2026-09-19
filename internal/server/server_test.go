@@ -935,3 +935,50 @@ func TestHealthReportsBuildAndProbeReadsIt(t *testing.T) {
 		t.Error("Healthy should still hold for a live server of any build")
 	}
 }
+
+// --- export (R14) ---
+
+func TestExportRendersMarkdownWithoutDrafts(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	rv := ts.openReview(t)
+	ts.draftThread(t, rv.Review.ID, 2, "submitted comment")
+	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{
+		"verdict": "request_changes", "summary": "fix line two",
+	}, nil)
+	fb := ts.feedback(t, rv.Review.ID, 0)
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", fb.Threads[0].ID), map[string]any{
+		"role": "agent", "body": "agent reply",
+	}, nil)
+	ts.draftThread(t, rv.Review.ID, 3, "unsubmitted draft")
+
+	resp := ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/export", rv.Review.ID), nil, nil)
+	ts.mustStatus(t, resp, http.StatusOK)
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("content type = %q, want text/markdown", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := string(body)
+	for _, want := range []string{
+		"# Review #",
+		"- Round 1: request changes: fix line two",
+		"## a.txt",
+		"### Thread ",
+		"`a.txt:2` (additions, round 1)",
+		"line two CHANGED",
+		"**reviewer**",
+		"submitted comment",
+		"**agent**",
+		"agent reply",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "unsubmitted draft") {
+		t.Errorf("draft leaked into the export:\n%s", md)
+	}
+}

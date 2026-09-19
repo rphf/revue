@@ -93,7 +93,7 @@ Agent commands print JSON on stdout:
 | `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent. |
 | `revue round [--review N]` | Signal that a new round is ready. An identical diff is a no-op with a notice. |
 | `revue wait [--review N] [--since C] [--timeout D]` | Block until the reviewer submits or closes. |
-| `revue export [--review N]` | Not implemented yet. |
+| `revue export [--review N]` | Print the review as markdown: source, verdicts by round, then threads grouped by file with quoted code and replies. Drafts are excluded. |
 
 Without `--review`, a command targets the single open review of the current
 branch. When there is none, or more than one, the command says so and exits
