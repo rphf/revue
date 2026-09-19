@@ -51,6 +51,7 @@ make build         # builds the web UI, embeds it, writes bin/revue
 
 ```sh
 revue open                    # working tree, untracked files included
+revue open -- web docs        # the same, limited to paths under web/ and docs/
 revue open --staged           # index
 revue open main...HEAD        # this branch against its merge base with main
 revue open abc123 def456      # two commits

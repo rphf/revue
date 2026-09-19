@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -574,5 +575,56 @@ func TestOpenReuseAddsRoundInsteadOfNewReview(t *testing.T) {
 	_, out = h.run(h.cmdReviews)
 	if strings.Count(out, `"sourceArgs"`) != 2 {
 		t.Errorf("want two reviews after a plain open: %s", out)
+	}
+}
+
+func TestOpenKeepsPathspecSeparator(t *testing.T) {
+	h := newHarness(t)
+	h.modify("package main\n\nfunc main() {\n\tprintln(\"v2\")\n}\n")
+	if err := os.MkdirAll(filepath.Join(h.repo, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, h.repo, "notes/todo.txt", "untracked, in scope\n")
+	writeFile(t, h.repo, "stray.txt", "untracked, out of scope\n")
+
+	code, out := h.run(h.cmdOpen, "--no-browser", "--", "notes", "main.go")
+	if code != ExitOK {
+		t.Fatalf("open -- notes main.go: exit %d: %s", code, out)
+	}
+	var created struct {
+		Review struct {
+			ID         int64    `json:"id"`
+			SourceArgs []string `json:"sourceArgs"`
+		} `json:"review"`
+	}
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"--", "notes", "main.go"}; !slices.Equal(created.Review.SourceArgs, want) {
+		t.Errorf("sourceArgs = %q, want %q", created.Review.SourceArgs, want)
+	}
+
+	// The separator keeps this a working-tree capture, so untracked
+	// files inside the pathspec are in and everything outside is out.
+	var round struct {
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := h.client.do("GET", fmt.Sprintf("/api/reviews/%d/rounds/1", created.Review.ID), nil, &round); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range round.Files {
+		paths = append(paths, f.Path)
+	}
+	slices.Sort(paths)
+	if want := []string{"main.go", "notes/todo.txt"}; !slices.Equal(paths, want) {
+		t.Errorf("round files = %q, want %q", paths, want)
+	}
+
+	code, out = h.run(h.cmdOpen, "--no-browser", "--reuse", "--", "notes", "main.go")
+	if code != ExitOK || !strings.Contains(out, `"reused": true`) {
+		t.Errorf("open --reuse with the same pathspec: exit %d: %s", code, out)
 	}
 }

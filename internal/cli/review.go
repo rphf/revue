@@ -40,10 +40,13 @@ func (e *env) cmdOpen(args []string) int {
 	fs := newFlagSet("open")
 	noBrowser := fs.Bool("no-browser", false, "print the URL without launching a browser")
 	reuse := fs.Bool("reuse", false, "add a round to this branch's open review with the same diff arguments instead of creating another review")
-	if err := fs.Parse(args); err != nil {
+	// The flag package eats a leading bare "--", the marker git needs
+	// to read what follows as pathspecs; parse flags only up to it.
+	flagArgs, pathArgs := splitAtDoubleDash(args)
+	if err := fs.Parse(flagArgs); err != nil {
 		return e.failValidation(err.Error())
 	}
-	diffArgs := fs.Args()
+	diffArgs := append(append([]string{}, fs.Args()...), pathArgs...)
 	if *reuse {
 		if code, done := e.reuseReview(diffArgs, *noBrowser); done {
 			return code
@@ -74,6 +77,17 @@ func (e *env) cmdOpen(args []string) int {
 		}
 	}
 	return ExitOK
+}
+
+// splitAtDoubleDash separates the arguments before the first bare "--"
+// from the "--" itself and everything after it.
+func splitAtDoubleDash(args []string) (before, rest []string) {
+	for i, a := range args {
+		if a == "--" {
+			return args[:i], args[i:]
+		}
+	}
+	return args, nil
 }
 
 // reuseReview finds this branch's open review with the same diff
