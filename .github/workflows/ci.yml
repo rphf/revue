@@ -7,7 +7,7 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       # Full history, not the default single commit: the check below
       # needs the last tag. It validates the commit subjects since that
@@ -22,7 +22,7 @@ jobs:
       - run: make lint
 
   go:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -31,7 +31,7 @@ jobs:
       - run: make test
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -39,7 +39,7 @@ jobs:
       - run: make web-test
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
