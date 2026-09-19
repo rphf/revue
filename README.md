@@ -1,3 +1,5 @@
+<img src="docs/logo.svg" alt="" width="56" height="56">
+
 # revue
 
 Local code review for diffs that a coding agent wrote. The reviewer gets a

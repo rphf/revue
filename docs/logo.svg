@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- The revue mark: three lines of a hunk, the last one signed off with a check. Follows the system color scheme. -->
+  <style>
+    .tile { fill: #0a0a0a; }
+    .glyph { fill: none; stroke: #fafafa; stroke-linecap: round; stroke-linejoin: round; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #fafafa; }
+      .glyph { stroke: #0a0a0a; }
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="8" />
+  <path class="glyph" stroke-width="3" d="M9 10h14M9 16h9M9 22h6" />
+  <path class="glyph" stroke-width="3" d="M17.5 21.5l2.6 2.6 5.4-5.6" />
+</svg>
