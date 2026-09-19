@@ -21,7 +21,7 @@ import (
 	"github.com/rphf/revue/internal/server"
 )
 
-// Exit codes (KTD7). Stable across releases; documented in README.
+// Exit codes (KTD7). Stable across releases; documented in docs/cli.md.
 const (
 	ExitOK           = 0
 	ExitError        = 1 // unexpected failure
@@ -43,7 +43,7 @@ Human commands:
   url [--review N]       print the browser URL of a review (default: this branch's open review)
   serve                  run the per-repo server in the foreground
 
-Agent commands (JSON output, exit-code contract in README):
+Agent commands (JSON output, exit-code contract in docs/cli.md):
   reviews                          list this repo's reviews
   feedback [--review N] [--since C]  read threads, comments, verdicts
   reply --thread N -m TEXT         reply in a thread
@@ -54,7 +54,7 @@ Agent commands (JSON output, exit-code contract in README):
 Exit codes: 0 ok, 1 error, 2 validation, 3 no open review,
             4 wait timeout, 5 review closed, 6 review approved (read-only)
 
-Environment (read when a server starts; see README "Configuration"):
+Environment (read when a server starts; see docs/configuration.md):
   REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR
 `
 
