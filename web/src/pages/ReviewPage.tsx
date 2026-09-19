@@ -17,6 +17,7 @@ import type {
   Verdict,
 } from "../types";
 import { CircleAlertIcon } from "lucide-react";
+import { useDefaultLayout } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import { useFullDiffs } from "../components/ContextExpand";
@@ -32,6 +33,11 @@ import Thread from "../components/Thread";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar, { Brand, TopBarShell } from "../components/TopBar";
 import { Button } from "@/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -97,6 +103,15 @@ export default function ReviewPage({
   useEffect(() => saveDiffStyle(diffStyle), [diffStyle]);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
+
+  // Pane widths survive reloads; the threads pane is conditional, so
+  // the layout with and without it is stored separately.
+  const paneLayout = useDefaultLayout({
+    id: "revue-review-panes",
+    storage: localStorage,
+    onlySaveAfterUserInteractions: true,
+    panelIds: showPanel ? ["tree", "diff", "threads"] : ["tree", "diff"],
+  });
 
   const loadReview = useCallback(() => {
     api
@@ -412,8 +427,20 @@ export default function ReviewPage({
             {notice}
           </p>
         )}
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-[272px] shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          id="review-panes"
+          className="min-h-0 flex-1"
+          defaultLayout={paneLayout.defaultLayout}
+          onLayoutChanged={paneLayout.onLayoutChanged}
+        >
+          <ResizablePanel
+            id="tree"
+            defaultSize={272}
+            minSize={200}
+            maxSize="40"
+            className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+          >
             <FileTree
               files={roundFiles}
               viewed={viewed}
@@ -421,8 +448,13 @@ export default function ReviewPage({
               onSelect={scrollToFile}
               selectedPath={selectedPath}
             />
-          </aside>
-          <main className="flex min-w-0 flex-1 flex-col">
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel
+            id="diff"
+            minSize={360}
+            className="flex min-w-0 flex-col"
+          >
             {roundError !== null ? (
               <div
                 className="flex flex-1 flex-col items-center justify-center gap-3"
@@ -471,18 +503,27 @@ export default function ReviewPage({
                 onExpandContext={requestUpgrade}
               />
             )}
-          </main>
+          </ResizablePanel>
           {showPanel && (
-            <aside className="w-[360px] shrink-0 overflow-hidden border-l bg-sidebar text-sidebar-foreground">
-              <ThreadsPanel
-                threads={threads}
-                currentRoundId={currentRoundId}
-                onJump={jumpToThread}
-                onClose={() => setShowPanel(false)}
-              />
-            </aside>
+            <>
+              <ResizableHandle />
+              <ResizablePanel
+                id="threads"
+                defaultSize={360}
+                minSize={280}
+                maxSize="45"
+                className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+              >
+                <ThreadsPanel
+                  threads={threads}
+                  currentRoundId={currentRoundId}
+                  onJump={jumpToThread}
+                  onClose={() => setShowPanel(false)}
+                />
+              </ResizablePanel>
+            </>
           )}
-        </div>
+        </ResizablePanelGroup>
         {showSubmit && (
           <SubmitDialog
             draftCount={draftCount}
