@@ -35,6 +35,14 @@ jobs:
           fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "Releasing **$TAG** from \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+      # Notes come from the commit subjects since the last tag, grouped
+      # by type (scripts/release-notes.sh). GitHub's own generated notes
+      # list merged pull requests only, which leaves a repo that pushes
+      # to main with an empty body.
+      - name: Write the release notes
+        run: |
+          bash scripts/release-notes.sh "$TAG" > release-notes.md
+          { echo; cat release-notes.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: jdx/mise-action@v4
       - run: cd web && npm ci
       - run: make release VERSION="$TAG"
@@ -42,6 +50,6 @@ jobs:
       # The tag does not exist yet, so GitHub creates it at GITHUB_SHA
       # (the commit of the ref this run was started on) together with
       # the release. No git tag or git push runs on the runner.
-      - run: gh release create "$TAG" dist/*.tar.gz dist/checksums.txt --title "$TAG" --target "$GITHUB_SHA" --generate-notes
+      - run: gh release create "$TAG" dist/*.tar.gz dist/checksums.txt --title "$TAG" --target "$GITHUB_SHA" --notes-file release-notes.md
         env:
           GH_TOKEN: ${{ github.token }}

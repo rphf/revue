@@ -8,7 +8,7 @@ PLATFORMS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64
 # the ambient environment.
 export GOFLAGS :=
 
-.PHONY: build release next-version web-install web-build ui-dist test web-test lint fmt smoke e2e clean
+.PHONY: build release next-version release-notes web-install web-build ui-dist test web-test lint fmt smoke e2e clean
 
 build: web-build
 	$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/revue ./cmd/revue
@@ -30,6 +30,10 @@ release: web-build
 # (docs/releasing.md); the Release workflow runs the same script.
 next-version:
 	@bash scripts/next-version.sh
+
+# The release notes that tag would get, grouped by commit type.
+release-notes:
+	@bash scripts/release-notes.sh
 
 web-install:
 	cd web && npm install
