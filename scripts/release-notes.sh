@@ -88,7 +88,8 @@ while IFS= read -r line; do
   bang="${BASH_REMATCH[3]}"
   summary="${BASH_REMATCH[4]}"
   item="- $summary ($(link "$hash"))"
-  footer="$(git log -1 --format=%B "$hash" | sed -n 's/^BREAKING CHANGE: *//p' | head -1)"
+  # The footer runs to the end of its paragraph; its lines join into one.
+  footer="$(git log -1 --format=%B "$hash" | awk '/^BREAKING CHANGE:/ { on = 1; sub(/^BREAKING CHANGE: */, "") } on && /^[[:space:]]*$/ { exit } on { printf "%s%s", (n++ ? " " : ""), $0 }')"
   # A breaking change is listed once, under its own heading, with the
   # footer's explanation when the commit has one.
   if [ -n "$bang" ] || [ -n "$footer" ]; then
