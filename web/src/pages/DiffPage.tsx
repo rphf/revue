@@ -9,18 +9,16 @@ import { api } from "../api";
 import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
 import type {
-  ReviewDetail,
-  RoundDetail,
+  DiffResponse,
   Side,
   Thread as ThreadType,
-  ThreadAnchor,
-  Verdict,
+  ThreadPosition,
 } from "../types";
-import { CircleAlertIcon } from "lucide-react";
+import { CircleAlertIcon, XIcon } from "lucide-react";
 import { useDefaultLayout } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
-import { useFullDiffs } from "../components/ContextExpand";
+import { splitPatch, useFullDiffs } from "../components/ContextExpand";
 import DiffView, {
   type AnnotationMeta,
   type DiffStyle,
@@ -29,11 +27,13 @@ import DiffView, {
 } from "../components/DiffView";
 import FileTree from "../components/FileTree";
 import RichMarkdown from "../components/RichMarkdown";
-import SubmitDialog from "../components/SubmitDialog";
+import SendDialog from "../components/SendDialog";
+import SnapshotDialog from "../components/SnapshotDialog";
 import Thread from "../components/Thread";
 import ThreadsPanel from "../components/ThreadsPanel";
-import TopBar, { Brand, TopBarShell } from "../components/TopBar";
+import TopBar from "../components/TopBar";
 import { useRichDocs } from "@/lib/richDiff";
+import { threadRev } from "@/lib/threads";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -43,19 +43,20 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-export interface ReviewPageProps {
-  reviewId: number;
+export interface DiffPageProps {
+  args: string[];
   theme: Theme;
   onToggleTheme: () => void;
   onNavigate: (to: string) => void;
 }
 
-// One fetch of a round, tagged with the key it was requested under, so
-// a stale result is ignored by derivation instead of reset in an effect.
-interface RoundLoad {
-  key: string;
-  detail: RoundDetail | null;
-  patch: string | null;
+// One fetch of the diff, tagged with the arguments it was requested
+// for, so a page that switched diffs shows a skeleton rather than the
+// previous diff, while a refresh of the same diff keeps the old one on
+// screen until the new one lands.
+interface DiffLoad {
+  argsKey: string;
+  diff: DiffResponse | null;
   files: FileDiffMetadata[] | null;
   error: string | null;
 }
@@ -79,34 +80,47 @@ function saveDiffStyle(style: DiffStyle): void {
   }
 }
 
-// threadRev fingerprints a thread's visible content so annotation
-// equality can tell "same anchor, changed conversation" apart.
-function threadRev(t: ThreadType): string {
-  return `${t.resolved ? 1 : 0}|${t.comments.map((c) => `${c.id}#${c.draft ? 1 : 0}#${c.body}`).join("\u0000")}`;
+// parseFiles parses the patch and hands back the previous metadata
+// object for every file whose section did not change, so a refresh
+// re-renders only the files that moved.
+function parseFiles(
+  patch: string,
+  prev: { patch: string; files: FileDiffMetadata[] } | null,
+): FileDiffMetadata[] {
+  if (patch.trim() === "") return [];
+  const parsed = parsePatchFiles(patch).flatMap((p) => p.files);
+  if (prev === null) return parsed;
+  const before = splitPatch(prev.patch);
+  const after = splitPatch(patch);
+  const byName = new Map(prev.files.map((f) => [f.name, f]));
+  return parsed.map((f) => {
+    const old = byName.get(f.name);
+    return old && before.get(f.name) === after.get(f.name) ? old : f;
+  });
 }
 
-export default function ReviewPage({
-  reviewId,
+export default function DiffPage({
+  args,
   theme,
   onToggleTheme,
   onNavigate,
-}: ReviewPageProps) {
-  const [detail, setDetail] = useState<ReviewDetail | null>(null);
-  // null tracks the latest round; a number pins a frozen prior round.
-  const [roundSeq, setRoundSeq] = useState<number | null>(null);
-  const [roundLoad, setRoundLoad] = useState<RoundLoad | null>(null);
+}: DiffPageProps) {
+  const argsKey = useMemo(() => JSON.stringify(args), [args]);
+  const [load, setLoad] = useState<DiffLoad | null>(null);
+  const [fetchNonce, setFetchNonce] = useState(0);
   const [threads, setThreads] = useState<ThreadType[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
-  const [showSubmit, setShowSubmit] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [showSend, setShowSend] = useState(false);
+  const [snapshotId, setSnapshotId] = useState<number | null>(null);
+  const [threadsError, setThreadsError] = useState<string | null>(null);
+  const [pulse, setPulse] = useState(0);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(loadDiffStyle);
   useEffect(() => saveDiffStyle(diffStyle), [diffStyle]);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
   // Markdown files shown rendered instead of as source (GitHub's rich
-  // diff); the choice is per path and survives round switches.
+  // diff); the choice is per path and survives refreshes.
   const [richPaths, setRichPaths] = useState<ReadonlySet<string>>(new Set());
   const toggleRich = useCallback((path: string) => {
     setRichPaths((prev) => {
@@ -126,76 +140,62 @@ export default function ReviewPage({
     panelIds: showPanel ? ["tree", "diff", "threads"] : ["tree", "diff"],
   });
 
-  const loadReview = useCallback(() => {
-    api
-      .getReview(reviewId)
-      .then(setDetail)
-      .catch((e) => setError(String(e)));
-  }, [reviewId]);
-
   const loadThreads = useCallback(() => {
     api
-      .listThreads(reviewId)
-      .then((r) => setThreads(r.threads))
-      .catch((e) => setError(String(e)));
-  }, [reviewId]);
-
-  useEffect(loadReview, [loadReview]);
+      .listThreads()
+      .then((r) => {
+        setThreads(r.threads);
+        setThreadsError(null);
+      })
+      .catch((e) => setThreadsError(String(e)));
+  }, []);
   useEffect(loadThreads, [loadThreads]);
 
-  const latestSeq = detail?.rounds.length
-    ? detail.rounds[detail.rounds.length - 1].seq
-    : null;
-  const effectiveSeq = roundSeq ?? latestSeq;
-
-  const [roundFetchNonce, setRoundFetchNonce] = useState(0);
-  const roundKey = `${reviewId}:${effectiveSeq}:${roundFetchNonce}`;
+  // The diff on screen, refetched whenever the server says it moved.
+  const shown = load?.argsKey === argsKey ? load : null;
   useEffect(() => {
-    if (effectiveSeq === null) return;
     let cancelled = false;
-    Promise.all([
-      api.getRound(reviewId, effectiveSeq),
-      api.getPatch(reviewId, effectiveSeq),
-    ])
-      .then(([round, patchText]) => {
+    api
+      .getDiff(args)
+      .then((diff) => {
         if (cancelled) return;
-        const files =
-          patchText.trim() === ""
-            ? []
-            : parsePatchFiles(patchText).flatMap((p) => p.files);
-        setRoundLoad({
-          key: roundKey,
-          detail: round,
-          patch: patchText,
-          files,
-          error: null,
+        setLoad((prev) => {
+          const same = prev?.argsKey === argsKey ? prev : null;
+          const files = parseFiles(
+            diff.patch,
+            same?.diff && same.files
+              ? { patch: same.diff.patch, files: same.files }
+              : null,
+          );
+          return { argsKey, diff, files, error: null };
         });
       })
       .catch((e) => {
         if (!cancelled)
-          setRoundLoad({
-            key: roundKey,
-            detail: null,
-            patch: null,
-            files: null,
-            error: String(e),
-          });
+          setLoad({ argsKey, diff: null, files: null, error: String(e) });
       });
     return () => {
       cancelled = true;
     };
-  }, [reviewId, effectiveSeq, roundFetchNonce, roundKey]);
-  const loaded = roundLoad?.key === roundKey ? roundLoad : null;
-  const roundDetail = loaded?.detail ?? null;
-  const patch = loaded?.patch ?? null;
-  const parsedFiles = loaded?.files ?? null;
-  const roundError = loaded?.error ?? null;
+  }, [args, argsKey, fetchNonce]);
+  const diff = shown?.diff ?? null;
+  const parsedFiles = shown?.files ?? null;
+  const diffError = shown?.error ?? null;
+  const version = diff?.version ?? null;
 
-  // Live updates (R7): agent replies and new rounds appear without
-  // reload. Draft edits are local-only, so refetching on every event
-  // is cheap and safe.
-  const connection = useEvents(reviewId, () => {
-    loadReview();
+  // Live updates: thread events refetch the threads; a diff.changed
+  // notice with a version other than the one on screen refetches the
+  // diff. The notice also opens every stream, so a reconnect catches
+  // up on anything missed.
+  const connection = useEvents(args, (e) => {
+    if (e.type === "diff.changed") {
+      const next = (e.payload as { version?: number } | null)?.version;
+      if (next === undefined || next !== version) {
+        setFetchNonce((n) => n + 1);
+        setPulse((p) => p + 1);
+      }
+      return;
+    }
     loadThreads();
   });
 
@@ -214,30 +214,53 @@ export default function ReviewPage({
     diffViewRef.current?.scrollToFile(path);
   }, []);
 
-  const roundFiles = useMemo(() => roundDetail?.files ?? [], [roundDetail]);
-  const currentRoundId = roundDetail?.round.id ?? 0;
-  const viewingLatest = effectiveSeq !== null && effectiveSeq === latestSeq;
-  // R25: expansion content comes from the frozen snapshot.
+  const diffFiles = useMemo(() => diff?.files ?? [], [diff]);
+  // Positions come with the diff. A thread the diff does not know yet
+  // was started after that fetch, against this very diff, so it sits at
+  // its origin until the next fetch says otherwise.
+  const positions = useMemo(() => {
+    const map = new Map<number, ThreadPosition>(
+      (diff?.anchors ?? []).map((a) => [a.threadId, a]),
+    );
+    for (const t of threads) {
+      if (!map.has(t.id)) {
+        map.set(t.id, {
+          threadId: t.id,
+          path: t.path,
+          side: t.side,
+          line: t.line,
+          startLine: t.startLine,
+          state: "live",
+        });
+      }
+    }
+    return map;
+  }, [diff, threads]);
+  // Expansion and the rich view read the current capture.
   const { files: displayFiles, requestUpgrade } = useFullDiffs(
-    reviewId,
-    effectiveSeq,
+    args,
+    version,
     parsedFiles,
-    roundFiles,
-    patch,
+    diffFiles,
+    diff?.patch ?? null,
   );
-  const reviewState = detail?.review.state ?? "open";
-  const richByFile = useRichDocs(reviewId, effectiveSeq, richPaths);
+  const richByFile = useRichDocs(args, version, richPaths);
 
   const draftCount = useMemo(
     () => threads.flatMap((t) => t.comments).filter((c) => c.draft).length,
     [threads],
   );
 
-  // Inline annotations: every thread with a live anchor in the shown
-  // round, plus the single pending comment form. Each annotation's
-  // metadata carries what rendering it needs, and DiffView compares
-  // annotation content per file, so a thread reload (every SSE event)
-  // re-renders only the file diffs whose annotations actually changed.
+  // The text of the pending comment lives outside React state, so a
+  // diff refresh that remounts its file restores it without a page
+  // re-render per keystroke.
+  const pendingBody = useRef("");
+
+  // Inline annotations: every thread live in this diff, plus the single
+  // pending comment form. Each annotation's metadata carries what
+  // rendering it needs, and DiffView compares annotation content per
+  // file, so a thread reload re-renders only the files whose
+  // annotations actually changed.
   const annotationsByFile = useMemo(() => {
     const next = new Map<string, DiffLineAnnotation<AnnotationMeta>[]>();
     const push = (path: string, a: DiffLineAnnotation<AnnotationMeta>) => {
@@ -246,25 +269,18 @@ export default function ReviewPage({
       next.set(path, list);
     };
     for (const t of threads) {
-      const anchor = t.anchors.find(
-        (a) => a.roundId === currentRoundId && a.state === "live",
-      );
-      if (anchor) {
-        push(anchor.path, {
-          side: anchor.side,
-          lineNumber: anchor.line,
-          // rev captures the thread's visible content: any reply,
-          // edit, resolve, or review state change re-renders just
-          // that file.
-          metadata: {
-            kind: "thread",
-            threadId: t.id,
-            rev: `${reviewState}|${threadRev(t)}`,
-            thread: t,
-            reviewState,
-          },
-        });
-      }
+      const pos = positions.get(t.id);
+      if (pos?.state !== "live") continue;
+      push(pos.path, {
+        side: pos.side,
+        lineNumber: pos.line,
+        metadata: {
+          kind: "thread",
+          threadId: t.id,
+          rev: threadRev(t),
+          thread: t,
+        },
+      });
     }
     if (pending) {
       push(pending.path, {
@@ -278,7 +294,7 @@ export default function ReviewPage({
       });
     }
     return next;
-  }, [threads, currentRoundId, pending, reviewState]);
+  }, [threads, positions, pending]);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<AnnotationMeta>) => {
@@ -288,6 +304,10 @@ export default function ReviewPage({
         return (
           <div className="annotation-card p-2.5">
             <CommentForm
+              initial={pendingBody.current}
+              onChange={(body) => {
+                pendingBody.current = body;
+              }}
               placeholder={
                 p.startLine && p.startLine !== p.line
                   ? `Comment on lines ${p.startLine}–${p.line}`
@@ -295,18 +315,22 @@ export default function ReviewPage({
               }
               submitLabel="Start thread"
               onSubmit={async (body) => {
-                await api.createThread(reviewId, {
+                await api.createThread({
+                  args,
                   path: p.path,
                   side: p.side,
                   line: p.line,
                   startLine: p.startLine,
                   body,
                 });
+                pendingBody.current = "";
                 setPending(null);
                 diffViewRef.current?.clearSelection();
                 loadThreads();
+                setFetchNonce((n) => n + 1);
               }}
               onCancel={() => {
+                pendingBody.current = "";
                 setPending(null);
                 diffViewRef.current?.clearSelection();
               }}
@@ -318,25 +342,18 @@ export default function ReviewPage({
         return <RichMarkdown doc={meta.rich} />;
       }
       if (meta?.kind === "thread" && meta.thread) {
-        return (
-          <Thread
-            thread={meta.thread}
-            anchorState="live"
-            reviewState={meta.reviewState ?? "open"}
-            onChanged={loadThreads}
-            onJumpToOrigin={(seq) => setRoundSeq(seq)}
-          />
-        );
+        return <Thread thread={meta.thread} onChanged={loadThreads} />;
       }
       return null;
     },
-    [reviewId, loadThreads],
+    [args, loadThreads],
   );
 
   const onLineSelect = useCallback((path: string, range: SelectedLineRange) => {
     const side = (range.endSide ?? range.side ?? "additions") as Side;
     const start = Math.min(range.start, range.end);
     const end = Math.max(range.start, range.end);
+    pendingBody.current = "";
     setPending({
       path,
       side,
@@ -345,103 +362,93 @@ export default function ReviewPage({
     });
   }, []);
 
-  // R22: a live thread scrolls to its anchor; an outdated or orphaned
-  // one jumps to its originating round snapshot.
+  // A pending form stays where it was started; when its file leaves
+  // the diff it waits, text and all, for the file to come back.
+  const pendingHidden =
+    pending !== null &&
+    parsedFiles !== null &&
+    !parsedFiles.some((f) => f.name === pending.path);
+
+  // A live thread scrolls to its line; an outdated one opens on the
+  // file as it was when the thread started.
   const jumpToThread = useCallback(
-    (thread: ThreadType, anchor: ThreadAnchor | undefined) => {
-      if (anchor && anchor.state === "live") {
-        scrollToFile(anchor.path);
+    (thread: ThreadType, position: ThreadPosition | undefined) => {
+      if (position?.state === "live") {
+        scrollToFile(position.path);
       } else {
-        setRoundSeq(thread.originRoundSeq);
-        const origin = thread.anchors.find(
-          (a) => a.roundId === thread.originRoundId,
-        );
-        if (origin) setSelectedPath(origin.path);
+        setSnapshotId(thread.id);
       }
-      setShowPanel(false);
     },
     [scrollToFile],
   );
+  const snapshotThread = useMemo(
+    () => threads.find((t) => t.id === snapshotId) ?? null,
+    [threads, snapshotId],
+  );
 
-  const submitReview = useCallback(
-    async (verdict: Verdict, summary: string) => {
-      await api.submit(reviewId, verdict, summary);
-      setShowSubmit(false);
-      loadReview();
+  const sendComments = useCallback(
+    async (note: string) => {
+      await api.send(note);
+      setShowSend(false);
       loadThreads();
     },
-    [reviewId, loadReview, loadThreads],
+    [loadThreads],
   );
-
-  const lifecycleAction = useCallback(
-    (action: "close" | "reopen") => {
-      const call = action === "close" ? api.close : api.reopen;
-      call(reviewId)
-        .then(() => {
-          setNotice(null);
-          loadReview();
-        })
-        .catch((e) => setNotice(e instanceof Error ? e.message : String(e)));
-    },
-    [reviewId, loadReview],
-  );
-
-  if (error) {
-    return (
-      <TooltipProvider>
-        <div className="flex h-full flex-col">
-          <TopBarShell>
-            <Brand />
-          </TopBarShell>
-          <main className="grid flex-1 place-items-center p-6">
-            <div className="flex max-w-md flex-col items-center gap-3 text-center">
-              <CircleAlertIcon className="size-6 text-destructive" />
-              <p className="text-destructive">{error}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onNavigate("/")}
-              >
-                Back to reviews
-              </Button>
-            </div>
-          </main>
-        </div>
-      </TooltipProvider>
-    );
-  }
 
   return (
     <TooltipProvider>
       <div className="flex h-full flex-col">
         <ConnectionBanner state={connection} />
         <TopBar
-          review={detail?.review}
-          rounds={detail?.rounds ?? []}
-          currentSeq={effectiveSeq}
-          latestSeq={latestSeq}
-          roundBusy={roundDetail === null && roundError === null}
-          onSelectRound={(seq) => setRoundSeq(seq === latestSeq ? null : seq)}
+          branch={diff?.branch}
+          args={args}
+          onNavigate={onNavigate}
+          pulse={pulse}
           threadCount={threads.length}
           panelOpen={showPanel}
           onTogglePanel={() => setShowPanel((v) => !v)}
           draftCount={draftCount}
-          onSubmit={() => setShowSubmit(true)}
-          onClose={() => lifecycleAction("close")}
-          onReopen={() => lifecycleAction("reopen")}
+          onSend={() => setShowSend(true)}
           diffStyle={diffStyle}
           onDiffStyleChange={setDiffStyle}
           theme={theme}
           onToggleTheme={onToggleTheme}
-          onNavigate={onNavigate}
         />
-        {notice && (
+        {threadsError && (
           <p
             className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
             role="alert"
           >
             <CircleAlertIcon className="size-3.5" />
-            {notice}
+            {threadsError}
+          </p>
+        )}
+        {pendingHidden && pending && (
+          <p
+            className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
+            role="status"
+          >
+            <CircleAlertIcon className="size-3.5" />
+            <span>
+              Your unsent comment on{" "}
+              <span className="font-mono">
+                {pending.path}:{pending.line}
+              </span>{" "}
+              is kept until that file is back in the diff.
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="ml-auto"
+              onClick={() => {
+                pendingBody.current = "";
+                setPending(null);
+              }}
+            >
+              <XIcon />
+              Discard
+            </Button>
           </p>
         )}
         <ResizablePanelGroup
@@ -459,7 +466,7 @@ export default function ReviewPage({
             className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
           >
             <FileTree
-              files={roundFiles}
+              files={diffFiles}
               viewed={viewed}
               onToggleViewed={toggleViewed}
               onSelect={scrollToFile}
@@ -472,18 +479,18 @@ export default function ReviewPage({
             minSize={360}
             className="flex min-w-0 flex-col"
           >
-            {roundError !== null ? (
+            {diffError !== null ? (
               <div
-                className="flex flex-1 flex-col items-center justify-center gap-3"
+                className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
                 data-testid="diff-error"
               >
                 <CircleAlertIcon className="size-6 text-destructive" />
-                <p className="text-destructive">{roundError}</p>
+                <p className="max-w-lg text-destructive">{diffError}</p>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setRoundFetchNonce((n) => n + 1)}
+                  onClick={() => setFetchNonce((n) => n + 1)}
                 >
                   Retry
                 </Button>
@@ -507,16 +514,12 @@ export default function ReviewPage({
               <DiffView
                 ref={diffViewRef}
                 files={displayFiles}
-                roundFiles={roundFiles}
+                diffFiles={diffFiles}
                 diffStyle={diffStyle}
                 theme={theme}
                 annotationsByFile={annotationsByFile}
                 renderAnnotation={renderAnnotation}
-                onLineSelect={
-                  reviewState !== "closed" && viewingLatest
-                    ? onLineSelect
-                    : undefined
-                }
+                onLineSelect={onLineSelect}
                 onExpandContext={requestUpgrade}
                 richByFile={richByFile}
                 onToggleRich={toggleRich}
@@ -535,7 +538,7 @@ export default function ReviewPage({
               >
                 <ThreadsPanel
                   threads={threads}
-                  currentRoundId={currentRoundId}
+                  positions={positions}
                   onJump={jumpToThread}
                   onClose={() => setShowPanel(false)}
                 />
@@ -543,11 +546,20 @@ export default function ReviewPage({
             </>
           )}
         </ResizablePanelGroup>
-        {showSubmit && (
-          <SubmitDialog
+        {showSend && (
+          <SendDialog
             draftCount={draftCount}
-            onSubmit={submitReview}
-            onClose={() => setShowSubmit(false)}
+            onSend={sendComments}
+            onClose={() => setShowSend(false)}
+          />
+        )}
+        {snapshotThread && (
+          <SnapshotDialog
+            thread={snapshotThread}
+            diffStyle={diffStyle}
+            theme={theme}
+            onChanged={loadThreads}
+            onClose={() => setSnapshotId(null)}
           />
         )}
       </div>

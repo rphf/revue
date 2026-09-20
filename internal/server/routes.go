@@ -5,26 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/rphf/revue/internal/anchor"
 	"github.com/rphf/revue/internal/gitx"
 	"github.com/rphf/revue/internal/server/ui"
 	"github.com/rphf/revue/internal/store"
 )
 
-// Event types (KTD6). Draft mutations are deliberately absent: drafts
-// never reach the event log, so no agent-facing read can see them
-// before submission (R5, AE3).
+// Event types. Draft mutations are deliberately absent: drafts never
+// reach the event log, so no agent-facing read can see them before the
+// reviewer sends. diff.changed is a notice on the stream only, never
+// stored.
 const (
-	eventReviewCreated = "review.created"
-	eventRoundCreated  = "round.created"
-	eventSubmitted     = "review.submitted"
-	eventClosed        = "review.closed"
-	eventReopened      = "review.reopened"
-	eventReplied       = "thread.replied"
-	eventResolved      = "thread.resolved"
-	eventUnresolved    = "thread.unresolved"
+	eventSent        = "sent"
+	eventReplied     = "thread.replied"
+	eventResolved    = "thread.resolved"
+	eventUnresolved  = "thread.unresolved"
+	eventDiffChanged = "diff.changed"
 )
 
 // Handler builds the full middleware + route stack.
@@ -33,39 +33,31 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 
-	mux.HandleFunc("POST /api/reviews", s.handleCreateReview)
-	mux.HandleFunc("GET /api/reviews", s.handleListReviews)
-	mux.HandleFunc("GET /api/reviews/{id}", s.handleGetReview)
-	mux.HandleFunc("POST /api/reviews/{id}/rounds", s.handleCreateRound)
-	mux.HandleFunc("GET /api/reviews/{id}/rounds", s.handleListRounds)
-	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}", s.handleGetRound)
-	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/patch", s.handleGetPatch)
-	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/file", s.handleGetFileVersions)
-	mux.HandleFunc("GET /api/reviews/{id}/rounds/{seq}/asset", s.handleRoundAsset)
-	mux.HandleFunc("GET /api/reviews/{id}/threads", s.handleListThreads)
-	mux.HandleFunc("POST /api/reviews/{id}/threads", s.handleCreateThread)
-	mux.HandleFunc("POST /api/reviews/{id}/submit", s.handleSubmit)
-	mux.HandleFunc("POST /api/reviews/{id}/close", s.handleClose)
-	mux.HandleFunc("POST /api/reviews/{id}/reopen", s.handleReopen)
-	mux.HandleFunc("GET /api/reviews/{id}/feedback", s.handleFeedback)
-	mux.HandleFunc("GET /api/reviews/{id}/export", s.handleExport)
-	mux.HandleFunc("GET /api/reviews/{id}/events", s.handleEvents)
-	mux.HandleFunc("GET /api/reviews/{id}/wait", s.handleWait)
-
+	mux.HandleFunc("GET /api/diff", s.handleDiff)
+	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
+	mux.HandleFunc("GET /api/asset", s.handleAsset)
+	mux.HandleFunc("GET /api/threads", s.handleListThreads)
+	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
+	mux.HandleFunc("GET /api/threads/{id}/snapshot", s.handleSnapshot)
 	mux.HandleFunc("POST /api/threads/{id}/comments", s.handleReply)
 	mux.HandleFunc("POST /api/threads/{id}/resolve", s.handleResolve(true))
 	mux.HandleFunc("POST /api/threads/{id}/unresolve", s.handleResolve(false))
 	mux.HandleFunc("PATCH /api/comments/{id}", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/comments/{id}", s.handleDeleteComment)
+	mux.HandleFunc("POST /api/send", s.handleSend)
+	mux.HandleFunc("GET /api/feedback", s.handleFeedback)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/wait", s.handleWait)
+	mux.HandleFunc("GET /api/export", s.handleExport)
 
 	mux.Handle("/", ui.Handler())
 
 	return s.secure(mux)
 }
 
-// secure applies R23 to every request: same-origin, then auth (header
-// token for the CLI, cookie for the browser); /auth performs the
-// one-time token-for-cookie exchange.
+// secure applies the localhost security model to every request:
+// same-origin, then auth (header token for the CLI, cookie for the
+// browser); /auth performs the one-time token-for-cookie exchange.
 func (s *Server) secure(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.sameOrigin(r) {
@@ -116,328 +108,114 @@ func parseInt64(s string) int64 {
 	return n
 }
 
-func (s *Server) reviewFromPath(w http.ResponseWriter, r *http.Request) (*store.Review, bool) {
+func internalError(w http.ResponseWriter, err error) {
+	httpError(w, http.StatusInternalServerError, "internal", err.Error())
+}
+
+// captureFromQuery resolves the diff named by the request's `arg`
+// parameters and brings it up to date. Bad arguments and refs git
+// rejects are the caller's mistake, so both answer 400.
+func (s *Server) captureFromQuery(w http.ResponseWriter, args []string) (*capture, bool) {
+	v, err := s.views.get(args)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "validation", err.Error())
+		return nil, false
+	}
+	c, err := v.load(s.repoRoot)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "validation", err.Error())
+		return nil, false
+	}
+	return c, true
+}
+
+func queryArgs(r *http.Request) []string {
+	args := r.URL.Query()["arg"]
+	if args == nil {
+		args = []string{}
+	}
+	return args
+}
+
+func (s *Server) threadFromPath(w http.ResponseWriter, r *http.Request) (*store.Thread, bool) {
 	id := parseInt64(r.PathValue("id"))
-	review, err := s.store.GetReview(id)
+	thread, err := s.store.GetThread(id)
 	if errors.Is(err, store.ErrNotFound) {
-		httpError(w, http.StatusNotFound, "not_found", fmt.Sprintf("review %d not found", id))
+		httpError(w, http.StatusNotFound, "not_found", fmt.Sprintf("thread %d not found", id))
 		return nil, false
 	}
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return nil, false
 	}
-	return review, true
-}
-
-// stateError maps a non-open review to the KTD7-distinct error codes.
-func stateError(w http.ResponseWriter, review *store.Review) {
-	switch review.State {
-	case store.StateApproved:
-		httpError(w, http.StatusConflict, "review_approved", "review is approved and read-only until reopened")
-	case store.StateClosed:
-		httpError(w, http.StatusConflict, "review_closed", "review is closed")
-	default:
-		httpError(w, http.StatusConflict, "review_not_open", "review is not open")
-	}
+	return thread, true
 }
 
 // --- health ---
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "repoRoot": s.repoRoot, "build": s.build})
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "build": s.build})
 }
 
-// --- reviews ---
+// --- diff ---
 
-type createReviewRequest struct {
-	Args   []string `json:"args"`
-	Branch string   `json:"branch"`
-}
-
-func (s *Server) handleCreateReview(w http.ResponseWriter, r *http.Request) {
-	var req createReviewRequest
-	if !readJSON(w, r, &req) {
-		return
-	}
-	capture, err := gitx.Capture(s.repoRoot, req.Args)
-	if errors.Is(err, gitx.ErrInvalidArg) {
-		httpError(w, http.StatusBadRequest, "validation", err.Error())
-		return
-	}
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "validation", err.Error())
-		return
-	}
-	if capture.Empty() {
-		// KTD12: opening a review on an empty diff refuses with a notice.
-		httpError(w, http.StatusUnprocessableEntity, "empty_diff", "the diff is empty; nothing to review")
-		return
-	}
-	var review *store.Review
-	var round *store.Round
-	var evt *store.Event
-	err = s.store.WithTx(func(tx *store.Store) error {
-		var err error
-		review, err = tx.CreateReview(s.repoRoot, req.Branch, req.Args)
-		if err != nil {
-			return err
-		}
-		round, err = tx.CreateRound(review.ID, capture.Patch, roundFiles(capture))
-		if err != nil {
-			return err
-		}
-		evt, err = tx.AppendEvent(review.ID, eventReviewCreated, map[string]any{"review": review, "round": round.Seq})
-		return err
-	})
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.bus.notify(review.ID)
-	// cursor: reads from here see only what happens after creation.
-	writeJSON(w, http.StatusCreated, map[string]any{"review": review, "round": round, "cursor": evt.ID})
-}
-
-func roundFiles(c *gitx.Result) []store.NewRoundFile {
-	files := make([]store.NewRoundFile, 0, len(c.Files))
-	for _, f := range c.Files {
-		status := map[string]string{
-			gitx.StatusAdded:    store.FileAdded,
-			gitx.StatusModified: store.FileModified,
-			gitx.StatusDeleted:  store.FileDeleted,
-			gitx.StatusRenamed:  store.FileRenamed,
-		}[f.Status]
-		files = append(files, store.NewRoundFile{
-			Path: f.Path, OldPath: f.OldPath, Status: status, IsBinary: f.IsBinary,
-			OldContent: f.OldContent, NewContent: f.NewContent,
-		})
-	}
-	return files
-}
-
-func (s *Server) handleListReviews(w http.ResponseWriter, r *http.Request) {
-	reviews, err := s.store.ListReviews(s.repoRoot)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if branch := r.URL.Query().Get("branch"); branch != "" {
-		filtered := reviews[:0]
-		for _, rv := range reviews {
-			if rv.Branch == branch {
-				filtered = append(filtered, rv)
-			}
-		}
-		reviews = filtered
-	}
-	if reviews == nil {
-		reviews = []*store.Review{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"reviews": reviews})
-}
-
-func (s *Server) handleGetReview(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
+// handleDiff serves the current diff for the requested arguments: the
+// raw patch the UI parses, the file list, and where every thread sits
+// in it.
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	args := queryArgs(r)
+	c, ok := s.captureFromQuery(w, args)
 	if !ok {
 		return
 	}
-	rounds, err := s.store.ListRounds(review.ID)
+	threads, err := s.store.ListThreads(true)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
-	}
-	summaries := make([]map[string]any, len(rounds))
-	for i, rd := range rounds {
-		summaries[i] = map[string]any{"seq": rd.Seq, "createdAt": rd.CreatedAt}
-	}
-	subs, err := s.store.SubmissionsForReview(review.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if subs == nil {
-		subs = []*store.Submission{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"review": review, "rounds": summaries, "submissions": subs,
+		"args":    args,
+		"branch":  c.branch,
+		"repo":    filepath.Base(s.repoRoot),
+		"version": c.version,
+		"patch":   c.result.Patch,
+		"files":   c.fileViews(),
+		"anchors": c.positions(threads),
 	})
 }
 
-// --- rounds ---
-
-func (s *Server) handleCreateRound(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	if review.State != store.StateOpen {
-		stateError(w, review)
-		return
-	}
-	capture, err := gitx.Capture(s.repoRoot, review.SourceArgs)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "validation", err.Error())
-		return
-	}
-	latest, err := s.store.LatestRound(review.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	// KTD12: identical diffs never produce duplicate rounds — restack
-	// noise and double-signals are no-ops with a notice. An empty diff
-	// IS a valid round (everything reverted).
-	if capture.Patch == latest.Patch {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"round": latest, "deduped": true,
-			"notice": "diff is identical to the current round; no new round created",
-		})
-		return
-	}
-	var round *store.Round
-	var evt *store.Event
-	err = s.store.WithTx(func(tx *store.Store) error {
-		var err error
-		round, err = tx.CreateRound(review.ID, capture.Patch, roundFiles(capture))
-		if err != nil {
-			return err
-		}
-		if err := s.anchor.Recompute(tx, review.ID, latest.ID, round.ID); err != nil {
-			return err
-		}
-		evt, err = tx.AppendEvent(review.ID, eventRoundCreated, map[string]any{"round": round})
-		return err
-	})
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.bus.notify(review.ID)
-	writeJSON(w, http.StatusCreated, map[string]any{"round": round, "deduped": false, "cursor": evt.ID})
-}
-
-func (s *Server) handleListRounds(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	rounds, err := s.store.ListRounds(review.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"rounds": rounds})
-}
-
-func (s *Server) roundFromPath(w http.ResponseWriter, r *http.Request, review *store.Review) (*store.Round, bool) {
-	seq, err := strconv.Atoi(r.PathValue("seq"))
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "validation", "invalid round number")
-		return nil, false
-	}
-	round, err := s.store.GetRound(review.ID, seq)
-	if errors.Is(err, store.ErrNotFound) {
-		httpError(w, http.StatusNotFound, "not_found", fmt.Sprintf("round %d not found", seq))
-		return nil, false
-	}
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return nil, false
-	}
-	return round, true
-}
-
-func (s *Server) handleGetRound(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	round, ok := s.roundFromPath(w, r, review)
-	if !ok {
-		return
-	}
-	files, err := s.store.FilesForRound(round.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if files == nil {
-		files = []*store.RoundFile{}
-	}
-	anchors, err := s.store.AnchorsForRound(round.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	if anchors == nil {
-		anchors = []*store.ThreadAnchor{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"round": round, "files": files, "anchors": anchors})
-}
-
-func (s *Server) handleGetPatch(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	round, ok := s.roundFromPath(w, r, review)
-	if !ok {
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte(round.Patch))
-}
-
-// handleGetFileVersions serves full old/new contents from the round's
-// frozen snapshot — never the live tree (R25, KTD1).
-func (s *Server) handleGetFileVersions(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	round, ok := s.roundFromPath(w, r, review)
-	if !ok {
-		return
-	}
+// handleDiffFile serves both full contents of one file in the current
+// capture, for context expansion and the rich markdown view.
+func (s *Server) handleDiffFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		httpError(w, http.StatusBadRequest, "validation", "path query parameter required")
 		return
 	}
-	files, err := s.store.FilesForRound(round.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+	c, ok := s.captureFromQuery(w, queryArgs(r))
+	if !ok {
 		return
 	}
-	for _, f := range files {
-		if f.Path != path {
-			continue
-		}
-		resp := map[string]any{
-			"path": f.Path, "oldPath": f.OldPath, "status": f.Status, "isBinary": f.IsBinary,
-			"oldContent": nil, "newContent": nil,
-		}
-		if f.OldBlob != "" {
-			content, err := s.store.Blob(f.OldBlob)
-			if err != nil {
-				httpError(w, http.StatusInternalServerError, "internal", err.Error())
-				return
-			}
-			resp["oldContent"] = string(content)
-		}
-		if f.NewBlob != "" {
-			content, err := s.store.Blob(f.NewBlob)
-			if err != nil {
-				httpError(w, http.StatusInternalServerError, "internal", err.Error())
-				return
-			}
-			resp["newContent"] = string(content)
-		}
-		writeJSON(w, http.StatusOK, resp)
+	f := c.files[path]
+	if f == nil {
+		httpError(w, http.StatusNotFound, "not_found", fmt.Sprintf("file %q is not in this diff", path))
 		return
 	}
-	httpError(w, http.StatusNotFound, "not_found", fmt.Sprintf("file %q not in round %d", path, round.Seq))
+	writeJSON(w, http.StatusOK, fileVersions(f))
+}
+
+func fileVersions(f *gitx.File) map[string]any {
+	resp := map[string]any{
+		"path": f.Path, "oldPath": f.OldPath, "status": f.Status, "isBinary": f.IsBinary,
+		"oldContent": nil, "newContent": nil,
+	}
+	if f.OldContent != nil {
+		resp["oldContent"] = string(f.OldContent)
+	}
+	if f.NewContent != nil {
+		resp["newContent"] = string(f.NewContent)
+	}
+	return resp
 }
 
 // --- threads and comments ---
@@ -445,61 +223,39 @@ func (s *Server) handleGetFileVersions(w http.ResponseWriter, r *http.Request) {
 // threadView is a thread with everything a client needs to render it.
 type threadView struct {
 	*store.Thread
-	OriginRoundSeq int                   `json:"originRoundSeq"`
-	Anchors        []*store.ThreadAnchor `json:"anchors"`
-	Comments       []*store.Comment      `json:"comments"`
-	Quote          *quote                `json:"quote,omitempty"`
+	Comments []*store.Comment `json:"comments"`
+	Quote    *quote           `json:"quote,omitempty"`
 }
 
-// quote is snapshot context for agent feedback (R10): where the thread
-// points and the quoted lines from the frozen blobs.
+// quote is snapshot context for agent feedback: where the thread
+// points and the quoted lines from the file as it was.
 type quote struct {
 	Path      string   `json:"path"`
 	Side      string   `json:"side"`
 	StartLine int      `json:"startLine"`
 	Line      int      `json:"line"`
 	Lines     []string `json:"lines"`
-	RoundSeq  int      `json:"roundSeq"`
 }
 
-func threadViews(st *store.Store, review *store.Review, includeDrafts, withQuotes bool) ([]*threadView, error) {
-	threads, err := st.ThreadsForReview(review.ID, includeDrafts)
+func threadViews(st *store.Store, includeDrafts, withQuotes, unresolvedOnly bool) ([]*threadView, error) {
+	threads, err := st.ListThreads(includeDrafts)
 	if err != nil {
 		return nil, err
-	}
-	roundSeq := map[int64]int{}
-	rounds, err := st.ListRounds(review.ID)
-	if err != nil {
-		return nil, err
-	}
-	for _, rd := range rounds {
-		roundSeq[rd.ID] = rd.Seq
 	}
 	views := make([]*threadView, 0, len(threads))
 	for _, t := range threads {
-		anchors, err := st.AnchorsForThread(t.ID)
-		if err != nil {
-			return nil, err
+		if unresolvedOnly && t.Resolved {
+			continue
 		}
 		comments, err := st.CommentsForThread(t.ID, includeDrafts)
 		if err != nil {
 			return nil, err
 		}
-		v := &threadView{
-			Thread: t, Anchors: anchors, Comments: comments,
-			OriginRoundSeq: roundSeq[t.OriginRoundID],
-		}
-		if withQuotes && len(anchors) > 0 {
-			// Quote from the origin-round anchor: that snapshot is what
-			// the comment was written against.
-			for _, a := range anchors {
-				if a.RoundID == t.OriginRoundID {
-					q, err := quoteFor(st, a, roundSeq[a.RoundID])
-					if err == nil && q != nil {
-						v.Quote = q
-					}
-					break
-				}
+		v := &threadView{Thread: t, Comments: comments}
+		if withQuotes {
+			q, err := quoteFor(st, t)
+			if err == nil && q != nil {
+				v.Quote = q
 			}
 		}
 		views = append(views, v)
@@ -507,81 +263,56 @@ func threadViews(st *store.Store, review *store.Review, includeDrafts, withQuote
 	return views, nil
 }
 
-// quoteFor slices the anchored line range out of the round's frozen
-// blob (new side for additions, old side for deletions).
-func quoteFor(st *store.Store, a *store.ThreadAnchor, roundSeq int) (*quote, error) {
-	files, err := st.FilesForRound(a.RoundID)
-	if err != nil {
-		return nil, err
+// quoteFor slices the anchored line range out of the thread's snapshot
+// (new side for additions, old side for deletions).
+func quoteFor(st *store.Store, t *store.Thread) (*quote, error) {
+	hash := t.NewBlob
+	if t.Side == store.SideDeletions {
+		hash = t.OldBlob
 	}
-	var blobHash string
-	for _, f := range files {
-		if f.Path != a.Path {
-			continue
-		}
-		if a.Side == store.SideAdditions {
-			blobHash = f.NewBlob
-		} else {
-			blobHash = f.OldBlob
-		}
-		break
-	}
-	if blobHash == "" {
+	if hash == "" {
 		return nil, nil
 	}
-	content, err := st.Blob(blobHash)
+	content, err := st.Blob(hash)
 	if err != nil {
 		return nil, err
 	}
 	lines := strings.Split(string(content), "\n")
-	start := a.Line
-	if a.StartLine != nil {
-		start = *a.StartLine
+	start := t.Line
+	if t.StartLine != nil {
+		start = *t.StartLine
 	}
-	if start < 1 || a.Line > len(lines) || start > a.Line {
+	if start < 1 || t.Line > len(lines) || start > t.Line {
 		return nil, nil
 	}
-	return &quote{
-		Path: a.Path, Side: a.Side, StartLine: start, Line: a.Line,
-		Lines: lines[start-1 : a.Line], RoundSeq: roundSeq,
-	}, nil
+	return &quote{Path: t.Path, Side: t.Side, StartLine: start, Line: t.Line, Lines: lines[start-1 : t.Line]}, nil
 }
 
 func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
 	includeDrafts := r.URL.Query().Get("drafts") == "1"
 	withQuotes := r.URL.Query().Get("quote") == "1"
-	views, err := threadViews(s.store, review, includeDrafts, withQuotes)
+	views, err := threadViews(s.store, includeDrafts, withQuotes, false)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"threads": views})
 }
 
 type createThreadRequest struct {
-	RoundSeq  int    `json:"roundSeq"` // 0 means latest
-	Path      string `json:"path"`
-	Side      string `json:"side"`
-	StartLine *int   `json:"startLine,omitempty"`
-	Line      int    `json:"line"`
-	Body      string `json:"body"`
+	Args      []string `json:"args"`
+	Path      string   `json:"path"`
+	Side      string   `json:"side"`
+	StartLine *int     `json:"startLine,omitempty"`
+	Line      int      `json:"line"`
+	Body      string   `json:"body"`
 }
 
-// handleCreateThread starts a reviewer draft thread (R4, R5). Drafts
-// emit no events: they are invisible until submission.
+// handleCreateThread starts a reviewer draft thread anchored in the
+// capture the reviewer is looking at, freezing that file's contents as
+// the thread's snapshot. Drafts emit no events: they are invisible
+// until sent.
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	if review.State == store.StateClosed {
-		stateError(w, review)
-		return
-	}
 	var req createThreadRequest
 	if !readJSON(w, r, &req) {
 		return
@@ -591,30 +322,64 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "validation", "path, side (additions|deletions), line >= 1, and body are required")
 		return
 	}
-	var round *store.Round
-	var err error
-	if req.RoundSeq == 0 {
-		round, err = s.store.LatestRound(review.ID)
-	} else {
-		round, err = s.store.GetRound(review.ID, req.RoundSeq)
-	}
-	if err != nil {
-		httpError(w, http.StatusNotFound, "not_found", "round not found")
+	c, ok := s.captureFromQuery(w, req.Args)
+	if !ok {
 		return
 	}
-	anchor := store.Anchor{Path: req.Path, Side: req.Side, StartLine: req.StartLine, Line: req.Line}
+	f := c.files[req.Path]
+	if f == nil {
+		httpError(w, http.StatusConflict, "stale_diff", fmt.Sprintf("%s is not in this diff any more; the page will refresh", req.Path))
+		return
+	}
+	if f.IsBinary {
+		httpError(w, http.StatusBadRequest, "validation", "binary files take no line comments")
+		return
+	}
+	nt := store.NewThread{
+		Path: f.Path, OldPath: f.OldPath, Status: f.Status, Side: req.Side,
+		StartLine: req.StartLine, Line: req.Line,
+		OldContent: f.OldContent, NewContent: f.NewContent,
+	}
+	if h := anchor.Find(c.hunks, req.Path, req.Side, req.Line); h != nil {
+		nt.HunkHash, nt.HunkStart = h.Hash, h.Start(req.Side)
+	}
 	var thread *store.Thread
 	var comment *store.Comment
-	err = s.store.WithTx(func(tx *store.Store) error {
+	err := s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		thread, comment, err = tx.CreateThread(review.ID, round.ID, anchor, store.RoleReviewer, req.Body, true)
+		thread, comment, err = tx.CreateThread(nt, store.RoleReviewer, req.Body, true)
 		return err
 	})
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"thread": thread, "comment": comment})
+}
+
+// handleSnapshot serves the file as it was when the thread started, so
+// an outdated thread can be read against the code it was written on.
+func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	t, ok := s.threadFromPath(w, r)
+	if !ok {
+		return
+	}
+	resp := map[string]any{
+		"path": t.Path, "oldPath": t.OldPath, "status": t.Status,
+		"oldContent": nil, "newContent": nil, "createdAt": t.CreatedAt,
+	}
+	for hash, key := range map[string]string{t.OldBlob: "oldContent", t.NewBlob: "newContent"} {
+		if hash == "" {
+			continue
+		}
+		content, err := s.store.Blob(hash)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		resp[key] = string(content)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type replyRequest struct {
@@ -623,22 +388,10 @@ type replyRequest struct {
 }
 
 // handleReply adds a comment to a thread. Reviewer replies are drafts
-// until submit; agent replies are immediate and evented (R6, R7).
-// Agents are rejected on approved (AE9/R20) and closed reviews.
+// until sent; agent replies are immediate and evented.
 func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
-	threadID := parseInt64(r.PathValue("id"))
-	thread, err := s.store.GetThread(threadID)
-	if errors.Is(err, store.ErrNotFound) {
-		httpError(w, http.StatusNotFound, "not_found", "thread not found")
-		return
-	}
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	review, err := s.store.GetReview(thread.ReviewID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+	thread, ok := s.threadFromPath(w, r)
+	if !ok {
 		return
 	}
 	var req replyRequest
@@ -649,69 +402,57 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "validation", "role (reviewer|agent) and body are required")
 		return
 	}
-	if req.Role == store.RoleAgent && review.State != store.StateOpen {
-		stateError(w, review)
-		return
-	}
-	if req.Role == store.RoleReviewer && review.State == store.StateClosed {
-		stateError(w, review)
-		return
-	}
 	draft := req.Role == store.RoleReviewer
 	var comment *store.Comment
 	var evt *store.Event
-	err = s.store.WithTx(func(tx *store.Store) error {
+	err := s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		comment, err = tx.AddComment(threadID, req.Role, req.Body, draft)
+		comment, err = tx.AddComment(thread.ID, req.Role, req.Body, draft)
 		if err != nil {
 			return err
 		}
 		if !draft {
-			evt, err = tx.AppendEvent(review.ID, eventReplied, map[string]any{"thread": thread, "comment": comment})
+			evt, err = tx.AppendEvent(eventReplied, map[string]any{"thread": thread, "comment": comment})
 		}
 		return err
 	})
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	resp := map[string]any{"comment": comment}
 	if !draft {
-		s.bus.notify(review.ID)
+		s.bus.notify()
 		resp["cursor"] = evt.ID
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// handleResolve flips a thread's resolution. Only the reviewer's UI
+// calls it; the CLI has no resolve command.
 func (s *Server) handleResolve(resolved bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		threadID := parseInt64(r.PathValue("id"))
-		thread, err := s.store.GetThread(threadID)
-		if errors.Is(err, store.ErrNotFound) {
-			httpError(w, http.StatusNotFound, "not_found", "thread not found")
-			return
-		}
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		thread, ok := s.threadFromPath(w, r)
+		if !ok {
 			return
 		}
 		evt := eventResolved
 		if !resolved {
 			evt = eventUnresolved
 		}
-		err = s.store.WithTx(func(tx *store.Store) error {
-			if err := tx.SetThreadResolved(threadID, resolved); err != nil {
+		err := s.store.WithTx(func(tx *store.Store) error {
+			if err := tx.SetThreadResolved(thread.ID, resolved); err != nil {
 				return err
 			}
-			_, err := tx.AppendEvent(thread.ReviewID, evt, map[string]any{"threadId": threadID})
+			_, err := tx.AppendEvent(evt, map[string]any{"threadId": thread.ID})
 			return err
 		})
 		if err != nil {
-			httpError(w, http.StatusInternalServerError, "internal", err.Error())
+			internalError(w, err)
 			return
 		}
-		s.bus.notify(thread.ReviewID)
-		writeJSON(w, http.StatusOK, map[string]any{"threadId": threadID, "resolved": resolved})
+		s.bus.notify()
+		writeJSON(w, http.StatusOK, map[string]any{"threadId": thread.ID, "resolved": resolved})
 	}
 }
 
@@ -735,16 +476,16 @@ func (s *Server) handleEditComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, store.ErrNotDraft) {
-		httpError(w, http.StatusConflict, "not_draft", "submitted comments are immutable")
+		httpError(w, http.StatusConflict, "not_draft", "sent comments are immutable")
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	comment, err := s.store.GetComment(id)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"comment": comment})
@@ -760,147 +501,74 @@ func (s *Server) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, store.ErrNotDraft) {
-		httpError(w, http.StatusConflict, "not_draft", "submitted comments cannot be deleted")
+		httpError(w, http.StatusConflict, "not_draft", "sent comments cannot be deleted")
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- submit and lifecycle ---
+// --- send and feedback ---
 
-type submitRequest struct {
-	Verdict string `json:"verdict"`
-	Summary string `json:"summary"`
+type sendRequest struct {
+	Note string `json:"note"`
 }
 
-// handleSubmit publishes all reviewer drafts with a verdict in one
+// handleSend publishes every reviewer draft with a note in one
 // transaction and one event, so the agent receives everything at once
-// and nothing before (R5, AE3). Zero-comment submissions are legal.
-func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	if review.State != store.StateOpen {
-		stateError(w, review)
-		return
-	}
-	var req submitRequest
+// and nothing before. A note with zero drafts is legal; nothing at all
+// is not.
+func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+	var req sendRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Verdict != store.VerdictComment && req.Verdict != store.VerdictRequestChanges && req.Verdict != store.VerdictApprove {
-		httpError(w, http.StatusBadRequest, "validation", "verdict must be comment, request_changes, or approve")
-		return
-	}
-	round, err := s.store.LatestRound(review.ID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	var submission *store.Submission
-	err = s.store.WithTx(func(tx *store.Store) error {
+	var send *store.Send
+	published := []*threadView{}
+	err := s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		submission, err = tx.Submit(review.ID, round.ID, req.Verdict, req.Summary)
+		send, err = tx.Send(req.Note)
 		if err != nil {
 			return err
 		}
-		if req.Verdict == store.VerdictApprove {
-			if err := tx.SetReviewState(review.ID, store.StateApproved); err != nil {
-				return err
+		views, err := threadViews(tx, false, false, false)
+		if err != nil {
+			return err
+		}
+		for _, v := range views {
+			for _, c := range v.Comments {
+				if c.SendID != nil && *c.SendID == send.ID {
+					published = append(published, v)
+					break
+				}
 			}
 		}
-		current, err := tx.GetReview(review.ID)
-		if err != nil {
-			return err
-		}
-		// The submitted event carries the full delivery: submission,
-		// verdict, and every thread it published.
-		threads, err := threadViews(tx, current, false, false)
-		if err != nil {
-			return err
-		}
-		_, err = tx.AppendEvent(review.ID, eventSubmitted, map[string]any{
-			"submission": submission, "review": current, "threads": threads,
-		})
+		_, err = tx.AppendEvent(eventSent, map[string]any{"send": send, "threads": published})
 		return err
 	})
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.bus.notify(review.ID)
-	writeJSON(w, http.StatusCreated, map[string]any{"submission": submission})
-}
-
-func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	err := s.store.WithTx(func(tx *store.Store) error {
-		if err := tx.SetReviewState(review.ID, store.StateClosed); err != nil {
-			return err
-		}
-		_, err := tx.AppendEvent(review.ID, eventClosed, map[string]any{"reviewId": review.ID})
-		return err
-	})
-	if errors.Is(err, store.ErrIllegalTransition) {
-		httpError(w, http.StatusConflict, "illegal_transition", err.Error())
+	if errors.Is(err, store.ErrNothingToSend) {
+		httpError(w, http.StatusBadRequest, "validation", "nothing to send: no draft comments and no note")
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
-	s.bus.notify(review.ID)
-	current, _ := s.store.GetReview(review.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"review": current})
+	s.bus.notify()
+	writeJSON(w, http.StatusCreated, map[string]any{"send": send, "threads": published})
 }
-
-func (s *Server) handleReopen(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	err := s.store.WithTx(func(tx *store.Store) error {
-		if err := tx.SetReviewState(review.ID, store.StateOpen); err != nil {
-			return err
-		}
-		_, err := tx.AppendEvent(review.ID, eventReopened, map[string]any{"reviewId": review.ID})
-		return err
-	})
-	if errors.Is(err, store.ErrIllegalTransition) {
-		httpError(w, http.StatusConflict, "illegal_transition", err.Error())
-		return
-	}
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	s.bus.notify(review.ID)
-	current, _ := s.store.GetReview(review.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"review": current})
-}
-
-// --- feedback (agent read surface, R10/R13) ---
 
 // handleFeedback is the agent's cursor read: events since the cursor
-// (drafts are never in the log) plus the full visible thread state
-// with quoted snapshot context and the latest verdict.
+// (drafts are never in the log), every unresolved thread with its sent
+// comments and quoted snapshot, and the most recent send with its note.
 func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
 	since := parseInt64(r.URL.Query().Get("since"))
-	events, err := s.store.EventsSince(review.ID, since)
+	events, err := s.store.EventsSince(since)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	if events == nil {
@@ -910,28 +578,20 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	if len(events) > 0 {
 		cursor = events[len(events)-1].ID
 	}
-	views, err := threadViews(s.store, review, false, true)
+	views, err := threadViews(s.store, false, true, true)
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
-	subs, err := s.store.SubmissionsForReview(review.ID)
+	last, err := s.store.LastSend()
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
-	}
-	var verdict string
-	var lastSubmission *store.Submission
-	if len(subs) > 0 {
-		lastSubmission = subs[len(subs)-1]
-		verdict = lastSubmission.Verdict
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"review":         review,
-		"cursor":         cursor,
-		"events":         events,
-		"threads":        views,
-		"verdict":        verdict,
-		"lastSubmission": lastSubmission,
+		"cursor":   cursor,
+		"events":   events,
+		"threads":  views,
+		"lastSend": last,
 	})
 }

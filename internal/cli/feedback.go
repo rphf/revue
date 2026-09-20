@@ -1,26 +1,26 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 )
 
-// cmdFeedback is the agent's cursor read (R10, R13): everything since
-// --since — events, visible threads with quoted snapshot context, and
-// the verdict, so the agent can tell "answer the comments" from
-// "implement the changes" from "done". Drafts are never present.
+func unmarshalAPIError(data []byte, apiErr *APIError) {
+	_ = json.Unmarshal(data, apiErr)
+}
+
+// cmdFeedback is the agent's cursor read: everything since --since
+// (events; drafts never appear), every unresolved thread with its sent
+// comments and quoted snapshot, and the reviewer's last send with its
+// note, so the agent can tell "answer this" from "change that".
 func (e *env) cmdFeedback(args []string) int {
 	fs := newFlagSet("feedback")
-	review := fs.Int64("review", 0, "review id (default: single open review for this branch)")
 	since := fs.Int64("since", 0, "cursor: return events after this id")
 	if err := fs.Parse(args); err != nil {
 		return e.failValidation(err.Error())
 	}
-	id, code := e.resolveReview(*review)
-	if code != ExitOK {
-		return code
-	}
 	var out map[string]any
-	if err := e.client.do("GET", fmt.Sprintf("/api/reviews/%d/feedback?since=%d", id, *since), nil, &out); err != nil {
+	if err := e.client.do("GET", fmt.Sprintf("/api/feedback?since=%d", *since), nil, &out); err != nil {
 		return e.fail(err)
 	}
 	return e.printJSON(out)

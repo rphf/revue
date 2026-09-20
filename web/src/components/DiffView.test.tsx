@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { RoundFile } from "../types";
+import type { DiffFile } from "../types";
 
 // The real @pierre/diffs renderer needs Shadow DOM + workers; mock the
 // react entry so tests exercise revue's wiring, not the library. The
@@ -47,11 +47,8 @@ function meta(name: string): FileDiffMetadata {
   return { name } as FileDiffMetadata;
 }
 
-let nextId = 1;
-function roundFile(path: string, extra: Partial<RoundFile> = {}): RoundFile {
+function diffFile(path: string, extra: Partial<DiffFile> = {}): DiffFile {
   return {
-    id: nextId++,
-    roundId: 1,
     path,
     status: "modified",
     isBinary: false,
@@ -64,7 +61,7 @@ describe("DiffView", () => {
     render(
       <DiffView
         files={[meta("a.go"), meta("b.go")]}
-        roundFiles={[roundFile("a.go"), roundFile("b.go")]}
+        diffFiles={[diffFile("a.go"), diffFile("b.go")]}
         diffStyle="unified"
         theme="light"
       />,
@@ -77,9 +74,9 @@ describe("DiffView", () => {
     render(
       <DiffView
         files={[meta("img.png"), meta("code.go")]}
-        roundFiles={[
-          roundFile("img.png", { isBinary: true, status: "added" }),
-          roundFile("code.go"),
+        diffFiles={[
+          diffFile("img.png", { isBinary: true, status: "added" }),
+          diffFile("code.go"),
         ]}
         diffStyle="unified"
         theme="light"
@@ -94,7 +91,7 @@ describe("DiffView", () => {
 
   it("renders the empty state for an empty diff", () => {
     render(
-      <DiffView files={[]} roundFiles={[]} diffStyle="unified" theme="light" />,
+      <DiffView files={[]} diffFiles={[]} diffStyle="unified" theme="light" />,
     );
     expect(screen.getByTestId("diff-empty")).toHaveTextContent(
       "No changes in this diff",
@@ -107,7 +104,7 @@ describe("DiffView rich markdown", () => {
     render(
       <DiffView
         files={[meta("README.md"), meta("main.go")]}
-        roundFiles={[roundFile("README.md"), roundFile("main.go")]}
+        diffFiles={[diffFile("README.md"), diffFile("main.go")]}
         diffStyle="unified"
         theme="light"
         onToggleRich={() => {}}
@@ -131,7 +128,7 @@ describe("DiffView rich markdown", () => {
     render(
       <DiffView
         files={[meta("README.md")]}
-        roundFiles={[roundFile("README.md")]}
+        diffFiles={[diffFile("README.md")]}
         diffStyle="unified"
         theme="light"
         richByFile={new Map([["README.md", doc]])}
@@ -154,10 +151,10 @@ describe("DiffView ordering", () => {
     render(
       <DiffView
         files={[meta("zz.go"), meta("src/a.go")]}
-        roundFiles={[
-          roundFile("zz.go"),
-          roundFile("src/a.go"),
-          roundFile("src/img.png", { isBinary: true, status: "added" }),
+        diffFiles={[
+          diffFile("zz.go"),
+          diffFile("src/a.go"),
+          diffFile("src/img.png", { isBinary: true, status: "added" }),
         ]}
         diffStyle="unified"
         theme="light"

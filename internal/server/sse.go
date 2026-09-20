@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -10,37 +11,34 @@ import (
 	"github.com/rphf/revue/internal/store"
 )
 
-// bus wakes subscribers when a review gains events. Subscribers then
+// bus wakes subscribers when the event log grows. Subscribers then
 // re-query the persistent log from their cursor, so nothing can be
-// missed between replay and subscribe (KTD6).
+// missed between replay and subscribe.
 type bus struct {
 	mu   sync.Mutex
-	subs map[int64]map[chan struct{}]bool
+	subs map[chan struct{}]bool
 }
 
 func newBus() *bus {
-	return &bus{subs: map[int64]map[chan struct{}]bool{}}
+	return &bus{subs: map[chan struct{}]bool{}}
 }
 
-func (b *bus) subscribe(reviewID int64) (<-chan struct{}, func()) {
+func (b *bus) subscribe() (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	b.mu.Lock()
-	if b.subs[reviewID] == nil {
-		b.subs[reviewID] = map[chan struct{}]bool{}
-	}
-	b.subs[reviewID][ch] = true
+	b.subs[ch] = true
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
-		delete(b.subs[reviewID], ch)
+		delete(b.subs, ch)
 		b.mu.Unlock()
 	}
 }
 
-func (b *bus) notify(reviewID int64) {
+func (b *bus) notify() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch := range b.subs[reviewID] {
+	for ch := range b.subs {
 		select {
 		case ch <- struct{}{}:
 		default: // already pending; subscriber will re-query anyway
@@ -48,16 +46,22 @@ func (b *bus) notify(reviewID int64) {
 	}
 }
 
-// handleEvents streams a review's event log over SSE: replay from
-// ?since= first, then live (R7). Open streams block idle shutdown.
+// diffPollInterval is how often an open event stream checks whether
+// its diff moved.
+const diffPollInterval = time.Second
+
+// handleEvents streams the event log over SSE, replaying from ?since=
+// first, and tells the page when the diff for its `arg` parameters
+// changed. Open streams block idle shutdown.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		httpError(w, http.StatusInternalServerError, "internal", "streaming unsupported")
+		return
+	}
+	v, err := s.views.get(queryArgs(r))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "validation", err.Error())
 		return
 	}
 	since := parseInt64(r.URL.Query().Get("since"))
@@ -65,7 +69,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.activity.connOpen()
 	defer s.activity.connClose()
 
-	wake, cancel := s.bus.subscribe(review.ID)
+	wake, cancel := s.bus.subscribe()
 	defer cancel()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -74,13 +78,23 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// The first notice carries the current version, so a page that
+	// connected after the diff moved refetches without waiting a tick.
+	if c, err := v.load(s.repoRoot); err == nil && c != nil {
+		if err := writeDiffChanged(w, c.version); err != nil {
+			return
+		}
+	}
+
 	cursor := since
+	poll := time.NewTicker(diffPollInterval)
+	defer poll.Stop()
 	// Keep-alive comments let proxies and clients detect dead streams.
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
 
 	for {
-		events, err := s.store.EventsSince(review.ID, cursor)
+		events, err := s.store.EventsSince(cursor)
 		if err != nil {
 			return
 		}
@@ -105,6 +119,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-wake:
+		case <-poll.C:
+			changed, err := v.refresh(s.repoRoot, false)
+			if err != nil || !changed {
+				continue
+			}
+			if c := v.current(); c != nil {
+				if err := writeDiffChanged(w, c.version); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
 		case <-keepalive.C:
 			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
@@ -114,23 +139,29 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// waitOutcome is the long-poll result for the CLI's `revue wait`.
-type waitOutcome struct {
-	Outcome    string            `json:"outcome"` // submitted | closed | timeout
-	Cursor     int64             `json:"cursor"`
-	Review     *store.Review     `json:"review"`
-	Submission *store.Submission `json:"submission,omitempty"`
+func writeDiffChanged(w io.Writer, version int64) error {
+	data, err := json.Marshal(map[string]any{
+		"type":    eventDiffChanged,
+		"payload": map[string]any{"version": version},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+	return err
 }
 
-// handleWait long-polls the event log until a submission or close
-// lands after the cursor (KTD6). Because the log is persistent, a
-// submission that landed while no wait was active is delivered by the
-// next call (AE6).
+// waitOutcome is the long-poll result for the CLI's `revue wait`.
+type waitOutcome struct {
+	Outcome string      `json:"outcome"` // sent | timeout
+	Cursor  int64       `json:"cursor"`
+	Send    *store.Send `json:"send,omitempty"`
+}
+
+// handleWait long-polls the event log until a send lands after the
+// cursor. Because the log is persistent, a send that landed while no
+// wait was active is delivered by the next call.
 func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
 	since := parseInt64(r.URL.Query().Get("since"))
 	timeout := 30 * time.Second
 	if t := r.URL.Query().Get("timeout"); t != "" {
@@ -145,7 +176,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 	s.activity.connOpen()
 	defer s.activity.connClose()
 
-	wake, cancel := s.bus.subscribe(review.ID)
+	wake, cancel := s.bus.subscribe()
 	defer cancel()
 
 	deadline := time.NewTimer(timeout)
@@ -153,29 +184,22 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 
 	cursor := since
 	for {
-		events, err := s.store.EventsSince(review.ID, cursor)
+		events, err := s.store.EventsSince(cursor)
 		if err != nil {
-			httpError(w, http.StatusInternalServerError, "internal", err.Error())
+			internalError(w, err)
 			return
 		}
 		for _, e := range events {
 			cursor = e.ID
-			switch e.Type {
-			case eventSubmitted:
-				var payload struct {
-					Submission *store.Submission `json:"submission"`
-				}
-				_ = json.Unmarshal(e.Payload, &payload)
-				current, _ := s.store.GetReview(review.ID)
-				writeJSON(w, http.StatusOK, waitOutcome{
-					Outcome: "submitted", Cursor: cursor, Review: current, Submission: payload.Submission,
-				})
-				return
-			case eventClosed:
-				current, _ := s.store.GetReview(review.ID)
-				writeJSON(w, http.StatusOK, waitOutcome{Outcome: "closed", Cursor: cursor, Review: current})
-				return
+			if e.Type != eventSent {
+				continue
 			}
+			var payload struct {
+				Send *store.Send `json:"send"`
+			}
+			_ = json.Unmarshal(e.Payload, &payload)
+			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "sent", Cursor: cursor, Send: payload.Send})
+			return
 		}
 
 		select {
@@ -184,8 +208,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-deadline.C:
-			current, _ := s.store.GetReview(review.ID)
-			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "timeout", Cursor: cursor, Review: current})
+			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "timeout", Cursor: cursor})
 			return
 		case <-wake:
 		}

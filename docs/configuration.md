@@ -47,7 +47,7 @@ repository path. Nothing is written inside the repository.
 
 | Path | Contents |
 | --- | --- |
-| `~/.local/share/revue/<key>/revue.db` | Reviews, rounds, snapshots, threads, comments |
+| `~/.local/share/revue/<key>/revue.db` | Threads with their snapshots, comments, sends, and the event log |
 | `~/.local/state/revue/<key>/state.json` | Port, token, and PID of the running server (mode 0600) |
 | `~/.local/state/revue/<key>/server.log` | Server log |
 

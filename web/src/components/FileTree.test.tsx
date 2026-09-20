@@ -1,15 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import FileTree from "./FileTree";
-import type { RoundFile } from "../types";
+import type { DiffFile } from "../types";
 
-let nextId = 1;
 function file(
   path: string,
-  status: RoundFile["status"] = "modified",
-  extra: Partial<RoundFile> = {},
-): RoundFile {
-  return { id: nextId++, roundId: 1, path, status, isBinary: false, ...extra };
+  status: DiffFile["status"] = "modified",
+  extra: Partial<DiffFile> = {},
+): DiffFile {
+  return { path, status, isBinary: false, ...extra };
 }
 
 const noop = () => {};

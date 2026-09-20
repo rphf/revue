@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { MessageSquareIcon, MessageSquareTextIcon, XIcon } from "lucide-react";
-import type { Thread, ThreadAnchor } from "../types";
+import type { Thread, ThreadPosition } from "../types";
 import { excerpt } from "@/lib/text";
 import { timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -20,19 +20,21 @@ const stateDot: Record<Exclude<PanelFilter, "all">, string> = {
 
 export interface ThreadsPanelProps {
   threads: Thread[];
-  currentRoundId: number;
-  onJump: (thread: Thread, anchor: ThreadAnchor | undefined) => void;
+  // Where each thread sits in the diff on screen; a thread without a
+  // live position is outdated for this diff.
+  positions: ReadonlyMap<number, ThreadPosition>;
+  onJump: (thread: Thread, position: ThreadPosition | undefined) => void;
   onClose: () => void;
 }
 
-// Review-level threads panel (R22): every thread with
-// live/outdated/resolved filters. A thread whose file or hunk is gone
-// from the current round stays reachable here and links back to its
-// originating round. Rows lead with the opening comment, which is what
-// a reviewer remembers a thread by; the file position is secondary.
+// Every thread with live/outdated/resolved filters relative to the
+// shown diff. A thread whose code is gone stays reachable here and
+// opens on the file as it was. Rows lead with the opening comment,
+// which is what a reviewer remembers a thread by; the file position is
+// secondary.
 export default function ThreadsPanel({
   threads,
-  currentRoundId,
+  positions,
   onJump,
   onClose,
 }: ThreadsPanelProps) {
@@ -41,15 +43,15 @@ export default function ThreadsPanel({
   const classified = useMemo(
     () =>
       threads.map((t) => {
-        const anchor = t.anchors.find((a) => a.roundId === currentRoundId);
+        const position = positions.get(t.id);
         const state: Exclude<PanelFilter, "all"> = t.resolved
           ? "resolved"
-          : anchor?.state === "live"
+          : position?.state === "live"
             ? "live"
             : "outdated";
-        return { thread: t, anchor, state };
+        return { thread: t, position, state };
       }),
-    [threads, currentRoundId],
+    [threads, positions],
   );
 
   const visible = classified.filter(
@@ -108,11 +110,11 @@ export default function ThreadsPanel({
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <ul className="divide-y">
-            {visible.map(({ thread, anchor, state }) => {
-              const origin = thread.anchors.find(
-                (a) => a.roundId === thread.originRoundId,
-              );
-              const shown = anchor ?? origin;
+            {visible.map(({ thread, position, state }) => {
+              const shown =
+                position?.state === "live"
+                  ? { path: position.path, line: position.line }
+                  : { path: thread.path, line: thread.line };
               const first = thread.comments[0];
               const last = thread.comments[thread.comments.length - 1];
               const replies = Math.max(0, thread.comments.length - 1);
@@ -126,16 +128,14 @@ export default function ThreadsPanel({
                       state === "resolved" && "opacity-70",
                     )}
                     data-testid={`panel-thread-${thread.id}`}
-                    onClick={() => onJump(thread, anchor)}
+                    onClick={() => onJump(thread, position)}
                   >
                     <span className="flex w-full items-center gap-1.5 text-xs text-muted-foreground">
                       <span
                         className={cn("size-1.5 rounded-full", stateDot[state])}
                       />
                       <span className="capitalize">{state}</span>
-                      {state === "outdated" && (
-                        <span>· round {thread.originRoundSeq}</span>
-                      )}
+                      {state === "outdated" && <span>· not in this diff</span>}
                       {drafts > 0 && (
                         <span className="text-renamed">
                           · {drafts === 1 ? "draft" : `${drafts} drafts`}
@@ -152,7 +152,7 @@ export default function ThreadsPanel({
                     </span>
                     <span className="flex w-full items-center gap-2 text-xs text-muted-foreground">
                       <span className="truncate font-mono">
-                        {shown ? `${shown.path}:${shown.line}` : "(unanchored)"}
+                        {shown.path}:{shown.line}
                       </span>
                       {replies > 0 && (
                         <span className="ml-auto inline-flex shrink-0 items-center gap-1 tabular-nums">

@@ -1,6 +1,6 @@
-// Package server is the per-repo revue server: domain HTTP API, SSE
-// event stream, localhost security (R23), and on-demand process
-// lifecycle (KTD5).
+// Package server is the per-repo revue server: the live diff and its
+// threads over HTTP, an SSE event stream, localhost security, and
+// on-demand process lifecycle.
 package server
 
 import (
@@ -20,22 +20,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rphf/revue/internal/anchor"
 	"github.com/rphf/revue/internal/store"
 )
-
-// Anchor is the carry-over seam (KTD3): round creation calls it to map
-// every thread's and draft's anchor from the previous round into the
-// new one. The real engine lives in the anchor package.
-type Anchor interface {
-	Recompute(tx *store.Store, reviewID, prevRoundID, newRoundID int64) error
-}
 
 type Config struct {
 	RepoRoot    string
 	DataDir     string        // when set, db AND state live under this one dir (tests, scripts)
 	IdleTimeout time.Duration // 0 disables idle shutdown
-	Anchor      Anchor        // nil selects the real anchor engine
 	Bind        string
 	Port        int
 	PublicURL   string
@@ -90,7 +81,7 @@ type Server struct {
 	token     string
 	build     string
 	publicURL string
-	anchor    Anchor
+	views     *views
 	bus       *bus
 	activity  *activity
 
@@ -129,7 +120,7 @@ func xdgDir(envVar, fallback string) (string, error) {
 	return filepath.Join(home, fallback), nil
 }
 
-// DataDir holds durable per-repo data (the reviews database):
+// DataDir holds durable per-repo data (the threads database):
 // $XDG_DATA_HOME/revue/<key>, default ~/.local/share/revue/<key>.
 func DataDir(repoRoot string) (string, error) {
 	if base := os.Getenv("REVUE_DATA_DIR"); base != "" {
@@ -256,18 +247,13 @@ func Start(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	anchorEngine := cfg.Anchor
-	if anchorEngine == nil {
-		anchorEngine = anchor.New()
-	}
-
 	s := &Server{
 		store:     st,
 		repoRoot:  cfg.RepoRoot,
 		token:     token,
 		build:     cfg.BuildStamp,
 		publicURL: publicURL,
-		anchor:    anchorEngine,
+		views:     newViews(),
 		bus:       newBus(),
 		activity:  newActivity(),
 		closing:   make(chan struct{}),

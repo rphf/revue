@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,8 +20,29 @@ import (
 	"github.com/rphf/revue/internal/store"
 )
 
+// Tests re-read the repository on every request instead of once per
+// interval, so a change on disk is visible to the next call.
+func init() { refreshInterval = 0 }
+
 // --- fixtures ---
 
+const fixtureLines = 20
+
+func fixtureContent(changed map[int]string) string {
+	var b strings.Builder
+	for i := 1; i <= fixtureLines; i++ {
+		if line, ok := changed[i]; ok {
+			b.WriteString(line)
+		} else {
+			fmt.Fprintf(&b, "line %d", i)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// The committed file has twenty lines, so an edit near the end and an
+// edit at the top fall in different hunks.
 func initRepo(t *testing.T) string {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -29,7 +51,7 @@ func initRepo(t *testing.T) string {
 	mustGit(t, dir, "init", "-q", "-b", "main")
 	mustGit(t, dir, "config", "user.email", "test@test")
 	mustGit(t, dir, "config", "user.name", "test")
-	writeFile(t, dir, "a.txt", "line one\nline two\nline three\nline four\n")
+	writeFile(t, dir, "a.txt", fixtureContent(nil))
 	mustGit(t, dir, "add", "-A")
 	mustGit(t, dir, "commit", "-q", "-m", "c1")
 	return dir
@@ -112,55 +134,102 @@ func (ts *testServer) mustStatus(t *testing.T, resp *http.Response, want int) {
 	}
 }
 
-type reviewResponse struct {
-	Review *store.Review `json:"review"`
-	Round  *store.Round  `json:"round"`
+// The edit every test starts from: line 15 changed in the worktree.
+const changedLine = "line 15 CHANGED"
+
+func (ts *testServer) modify(t *testing.T) {
+	t.Helper()
+	writeFile(t, ts.repo, "a.txt", fixtureContent(map[int]string{15: changedLine}))
 }
 
-// openReview modifies the worktree and opens a working-tree review.
-func (ts *testServer) openReview(t *testing.T) *reviewResponse {
+type diffResponse struct {
+	Args    []string       `json:"args"`
+	Branch  string         `json:"branch"`
+	Repo    string         `json:"repo"`
+	Version int64          `json:"version"`
+	Patch   string         `json:"patch"`
+	Files   []fileView     `json:"files"`
+	Anchors []positionView `json:"anchors"`
+}
+
+func argsQuery(args ...string) string {
+	q := url.Values{}
+	for _, a := range args {
+		q.Add("arg", a)
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
+}
+
+func (ts *testServer) getDiff(t *testing.T, args ...string) *diffResponse {
 	t.Helper()
-	writeFile(t, ts.repo, "a.txt", "line one\nline two CHANGED\nline three\nline four\n")
-	var out reviewResponse
-	resp := ts.do(t, "POST", "/api/reviews", map[string]any{"args": []string{}, "branch": "main"}, &out)
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create review status = %d", resp.StatusCode)
+	var out diffResponse
+	resp := ts.do(t, "GET", "/api/diff"+argsQuery(args...), nil, &out)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/diff status = %d", resp.StatusCode)
 	}
 	return &out
 }
 
-func (ts *testServer) draftThread(t *testing.T, reviewID int64, line int, body string) map[string]json.RawMessage {
+func (ts *testServer) anchorOf(t *testing.T, threadID int64, args ...string) positionView {
 	t.Helper()
-	var out map[string]json.RawMessage
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/threads", reviewID), map[string]any{
-		"path": "a.txt", "side": "additions", "line": line, "body": body,
+	for _, a := range ts.getDiff(t, args...).Anchors {
+		if a.ThreadID == threadID {
+			return a
+		}
+	}
+	t.Fatalf("thread %d has no anchor in the diff", threadID)
+	return positionView{}
+}
+
+// draft starts a reviewer draft thread on a.txt in the default diff.
+func (ts *testServer) draft(t *testing.T, line int, body string) int64 {
+	t.Helper()
+	var out struct {
+		Thread *store.Thread `json:"thread"`
+	}
+	resp := ts.do(t, "POST", "/api/threads", map[string]any{
+		"args": []string{}, "path": "a.txt", "side": "additions", "line": line, "body": body,
 	}, &out)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("draft thread status = %d", resp.StatusCode)
 	}
-	return out
+	return out.Thread.ID
+}
+
+func (ts *testServer) send(t *testing.T, note string) *store.Send {
+	t.Helper()
+	var out struct {
+		Send *store.Send `json:"send"`
+	}
+	resp := ts.do(t, "POST", "/api/send", map[string]any{"note": note}, &out)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("send status = %d", resp.StatusCode)
+	}
+	return out.Send
 }
 
 type feedback struct {
-	Review  *store.Review `json:"review"`
-	Cursor  int64         `json:"cursor"`
-	Events  []*store.Event
-	Threads []*threadView `json:"threads"`
-	Verdict string        `json:"verdict"`
+	Cursor   int64          `json:"cursor"`
+	Events   []*store.Event `json:"events"`
+	Threads  []*threadView  `json:"threads"`
+	LastSend *store.Send    `json:"lastSend"`
 }
 
-func (ts *testServer) feedback(t *testing.T, reviewID, since int64) *feedback {
+func (ts *testServer) feedback(t *testing.T, since int64) *feedback {
 	t.Helper()
-	var fb feedback
-	ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/feedback?since=%d", reviewID, since), nil, &fb)
-	return &fb
+	var out feedback
+	ts.do(t, "GET", fmt.Sprintf("/api/feedback?since=%d", since), nil, &out)
+	return &out
 }
 
-// --- security (R23) ---
+// --- security ---
 
 func TestRequestWithoutTokenRejected(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	resp, err := http.Get(ts.URL() + "/api/reviews")
+	resp, err := http.Get(ts.URL() + "/api/threads")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +250,7 @@ func TestRequestWithoutTokenRejected(t *testing.T) {
 
 func TestCrossOriginMutationRejected(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	req, _ := http.NewRequest("POST", ts.URL()+"/api/reviews", strings.NewReader("{}"))
+	req, _ := http.NewRequest("POST", ts.URL()+"/api/send", strings.NewReader(`{"note":"x"}`))
 	req.Header.Set("Authorization", "Bearer "+ts.Token())
 	req.Header.Set("Origin", "http://evil.example")
 	resp, err := http.DefaultClient.Do(req)
@@ -194,8 +263,7 @@ func TestCrossOriginMutationRejected(t *testing.T) {
 	}
 
 	// Same-origin passes.
-	ts.openReview(t)
-	req2, _ := http.NewRequest("GET", ts.URL()+"/api/reviews", nil)
+	req2, _ := http.NewRequest("GET", ts.URL()+"/api/threads", nil)
 	req2.Header.Set("Authorization", "Bearer "+ts.Token())
 	req2.Header.Set("Origin", ts.URL())
 	resp2, err := http.DefaultClient.Do(req2)
@@ -213,7 +281,8 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	resp, err := client.Get(ts.URL() + "/auth?token=" + ts.Token() + "&next=/reviews/1")
+	next := url.QueryEscape("/?arg=main")
+	resp, err := client.Get(ts.URL() + "/auth?token=" + ts.Token() + "&next=" + next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,8 +290,8 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("auth status = %d, want 303", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/reviews/1" {
-		t.Errorf("redirect location = %q, want token-free /reviews/1", loc)
+	if loc := resp.Header.Get("Location"); loc != "/?arg=main" {
+		t.Errorf("redirect location = %q, want token-free /?arg=main", loc)
 	}
 	var cookie *http.Cookie
 	for _, c := range resp.Cookies() {
@@ -238,7 +307,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	}
 
 	// The cookie authenticates follow-up requests.
-	req, _ := http.NewRequest("GET", ts.URL()+"/api/reviews", nil)
+	req, _ := http.NewRequest("GET", ts.URL()+"/api/threads", nil)
 	req.AddCookie(cookie)
 	resp2, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -268,353 +337,422 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	}
 }
 
-// --- reviews and rounds ---
+// --- the live diff ---
 
-func TestCreateReviewRefusesEmptyDiff(t *testing.T) {
+func TestDiffValidatesArguments(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	var out apiError
-	resp := ts.do(t, "POST", "/api/reviews", map[string]any{"args": []string{}}, &out)
-	if resp.StatusCode != http.StatusUnprocessableEntity || out.Error != "empty_diff" {
-		t.Errorf("empty diff: status=%d error=%s", resp.StatusCode, out.Error)
+	for _, args := range [][]string{{"--ext-diff"}, {"nosuchref"}, {"--output=/tmp/x"}} {
+		var out apiError
+		resp := ts.do(t, "GET", "/api/diff"+argsQuery(args...), nil, &out)
+		if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
+			t.Errorf("args %v: status %d, error %q; want 400 validation", args, resp.StatusCode, out.Error)
+		}
 	}
 }
 
-func TestCreateReviewRejectsFlagArgs(t *testing.T) {
+func TestDiffFollowsTheWorkingTree(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	var out apiError
-	resp := ts.do(t, "POST", "/api/reviews", map[string]any{"args": []string{"--ext-diff"}}, &out)
-	if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
-		t.Errorf("flag arg: status=%d error=%s", resp.StatusCode, out.Error)
+
+	// A clean tree is an empty diff, not an error.
+	d := ts.getDiff(t)
+	if len(d.Files) != 0 || strings.TrimSpace(d.Patch) != "" {
+		t.Fatalf("clean tree: files = %v, patch = %q", d.Files, d.Patch)
+	}
+	if d.Branch != "main" || d.Repo != filepath.Base(ts.repo) || d.Version != 1 {
+		t.Errorf("branch/repo/version = %s/%s/%d", d.Branch, d.Repo, d.Version)
+	}
+	if len(d.Args) != 0 {
+		t.Errorf("args = %v, want empty", d.Args)
+	}
+
+	ts.modify(t)
+	d = ts.getDiff(t)
+	if len(d.Files) != 1 || d.Files[0].Path != "a.txt" || d.Files[0].Status != "modified" {
+		t.Fatalf("after edit: files = %+v", d.Files)
+	}
+	if !strings.Contains(d.Patch, "+"+changedLine) || d.Version != 2 {
+		t.Errorf("after edit: version %d, patch %q", d.Version, d.Patch)
+	}
+
+	// Untracked files join the default diff as added files.
+	writeFile(t, ts.repo, "b.txt", "new file\n")
+	d = ts.getDiff(t)
+	if len(d.Files) != 2 || d.Files[1].Path != "b.txt" || d.Files[1].Status != "added" {
+		t.Errorf("with untracked: files = %+v", d.Files)
+	}
+	if d.Version != 3 {
+		t.Errorf("version = %d, want 3", d.Version)
+	}
+
+	// Another argument list is another view with its own version.
+	staged := ts.getDiff(t, "--staged")
+	if len(staged.Files) != 0 || staged.Version != 1 || len(staged.Args) != 1 {
+		t.Errorf("staged view: %+v", staged)
+	}
+
+	// Nothing changed: the version holds.
+	if again := ts.getDiff(t); again.Version != 3 {
+		t.Errorf("unchanged tree bumped the version to %d", again.Version)
 	}
 }
 
-func TestReviewRoundPatchAndFileEndpoints(t *testing.T) {
+func TestDiffFileServesCurrentContents(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-
-	var list struct {
-		Reviews []*store.Review `json:"reviews"`
-	}
-	ts.do(t, "GET", "/api/reviews", nil, &list)
-	if len(list.Reviews) != 1 {
-		t.Fatalf("reviews = %d, want 1", len(list.Reviews))
-	}
-
-	resp := ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/1/patch", rv.Review.ID), nil, nil)
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if !strings.Contains(string(body), "+line two CHANGED") {
-		t.Errorf("patch endpoint content:\n%s", body)
-	}
-
-	var fv struct {
+	ts.modify(t)
+	var out struct {
+		Path       string  `json:"path"`
+		Status     string  `json:"status"`
 		OldContent *string `json:"oldContent"`
 		NewContent *string `json:"newContent"`
 	}
-	ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/1/file?path=a.txt", rv.Review.ID), nil, &fv)
-	if fv.OldContent == nil || !strings.Contains(*fv.OldContent, "line two\n") {
-		t.Errorf("old content = %v", fv.OldContent)
+	resp := ts.do(t, "GET", "/api/diff/file?path=a.txt", nil, &out)
+	ts.mustStatus(t, resp, http.StatusOK)
+	if out.OldContent == nil || !strings.Contains(*out.OldContent, "line 15\n") {
+		t.Errorf("oldContent = %v", out.OldContent)
 	}
-	if fv.NewContent == nil || !strings.Contains(*fv.NewContent, "line two CHANGED") {
-		t.Errorf("new content = %v", fv.NewContent)
+	if out.NewContent == nil || !strings.Contains(*out.NewContent, changedLine) {
+		t.Errorf("newContent = %v", out.NewContent)
 	}
-}
-
-func TestIdenticalDiffRoundCreateIsNoOpWithNotice(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-
-	var out struct {
-		Deduped bool         `json:"deduped"`
-		Notice  string       `json:"notice"`
-		Round   *store.Round `json:"round"`
-	}
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/rounds", rv.Review.ID), map[string]any{}, &out)
-	if resp.StatusCode != http.StatusOK || !out.Deduped || out.Notice == "" {
-		t.Errorf("dedupe: status=%d deduped=%v notice=%q", resp.StatusCode, out.Deduped, out.Notice)
-	}
-	if out.Round.Seq != 1 {
-		t.Errorf("deduped round seq = %d, want 1", out.Round.Seq)
-	}
-
-	// A real change produces round 2 with anchors carried forward by
-	// the Phase-1 stub.
-	ts.draftThread(t, rv.Review.ID, 2, "note")
-	writeFile(t, ts.repo, "a.txt", "line one\nline two CHANGED AGAIN\nline three\nline four\n")
-	resp2 := ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/rounds", rv.Review.ID), map[string]any{}, &out)
-	if resp2.StatusCode != http.StatusCreated || out.Deduped || out.Round.Seq != 2 {
-		t.Errorf("round 2: status=%d deduped=%v seq=%d", resp2.StatusCode, out.Deduped, out.Round.Seq)
-	}
-	var round struct {
-		Anchors []*store.ThreadAnchor `json:"anchors"`
-	}
-	ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/2", rv.Review.ID), nil, &round)
-	if len(round.Anchors) != 1 {
-		t.Errorf("carried anchors = %d, want 1", len(round.Anchors))
+	for path, want := range map[string]int{
+		"/api/diff/file?path=missing.txt": http.StatusNotFound,
+		"/api/diff/file":                  http.StatusBadRequest,
+	} {
+		resp := ts.do(t, "GET", path, nil, nil)
+		ts.mustStatus(t, resp, want)
+		_ = resp.Body.Close()
 	}
 }
 
-// --- AE3: draft isolation and atomic delivery ---
+// --- threads ---
 
-func TestAE3SubmitDeliversDraftsAndVerdictAtomically(t *testing.T) {
+func TestThreadFollowsItsHunkAcrossEdits(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
+	ts.modify(t)
+	id := ts.draft(t, 15, "on the changed line")
 
-	ts.draftThread(t, rv.Review.ID, 2, "first draft")
-	ts.draftThread(t, rv.Review.ID, 3, "second draft")
+	a := ts.anchorOf(t, id)
+	if a.State != "live" || a.Path != "a.txt" || a.Line != 15 {
+		t.Fatalf("fresh thread: %+v, want live at a.txt:15", a)
+	}
 
-	// Before submission the agent surface shows nothing: no threads in
-	// feedback, no draft events in the log.
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	if len(fb.Threads) != 0 {
-		t.Fatalf("drafts visible before submit: %d threads", len(fb.Threads))
+	// Lines added at the top shift the hunk without changing it.
+	writeFile(t, ts.repo, "a.txt", "new A\nnew B\nnew C\n"+fixtureContent(map[int]string{15: changedLine}))
+	if a = ts.anchorOf(t, id); a.State != "live" || a.Line != 18 {
+		t.Errorf("after shift: %+v, want live at 18", a)
 	}
-	for _, e := range fb.Events {
-		if strings.Contains(e.Type, "thread") || strings.Contains(e.Type, "comment") {
-			t.Fatalf("draft leaked into event log: %s", e.Type)
-		}
-	}
-	cursorBefore := fb.Cursor
 
-	var sub struct {
-		Submission *store.Submission `json:"submission"`
+	// Rewriting the commented line outdates the thread, at its origin.
+	writeFile(t, ts.repo, "a.txt", "new A\nnew B\nnew C\n"+fixtureContent(map[int]string{15: "line 15 REWRITTEN"}))
+	if a = ts.anchorOf(t, id); a.State != "outdated" || a.Line != 15 {
+		t.Errorf("after rewrite: %+v, want outdated at origin 15", a)
 	}
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{
-		"verdict": "request_changes", "summary": "please fix both",
-	}, &sub)
-	ts.mustStatus(t, resp, http.StatusCreated)
 
-	// After: exactly one new event carrying submission, verdict, and
-	// both threads at once.
-	fb = ts.feedback(t, rv.Review.ID, cursorBefore)
-	if len(fb.Events) != 1 || fb.Events[0].Type != eventSubmitted {
-		t.Fatalf("expected exactly one submitted event, got %+v", fb.Events)
+	// The content comes back: so does the thread.
+	ts.modify(t)
+	if a = ts.anchorOf(t, id); a.State != "live" || a.Line != 15 {
+		t.Errorf("after restore: %+v, want live at 15", a)
 	}
-	var payload struct {
-		Submission *store.Submission `json:"submission"`
-		Threads    []*threadView     `json:"threads"`
-	}
-	if err := json.Unmarshal(fb.Events[0].Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Submission.Verdict != "request_changes" || len(payload.Threads) != 2 {
-		t.Errorf("event payload: verdict=%s threads=%d", payload.Submission.Verdict, len(payload.Threads))
-	}
-	if fb.Verdict != "request_changes" || len(fb.Threads) != 2 {
-		t.Errorf("feedback after submit: verdict=%s threads=%d", fb.Verdict, len(fb.Threads))
-	}
-	// Quoted snapshot context present (R10).
-	if fb.Threads[0].Quote == nil || len(fb.Threads[0].Quote.Lines) == 0 {
-		t.Errorf("missing quote: %+v", fb.Threads[0])
-	} else if fb.Threads[0].Quote.Lines[0] != "line two CHANGED" {
-		t.Errorf("quote lines = %v", fb.Threads[0].Quote.Lines)
+
+	// A different diff of the same tree places the thread on its own
+	// terms: the staged diff has no hunk for it.
+	if a = ts.anchorOf(t, id, "--staged"); a.State != "outdated" {
+		t.Errorf("in the staged view: %+v, want outdated", a)
 	}
 }
 
-func TestSubmitWithZeroCommentsIsLegal(t *testing.T) {
+func TestCreateThreadValidatesAndDetectsStaleDiff(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	var sub struct {
-		Submission *store.Submission `json:"submission"`
-	}
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{
-		"verdict": "comment", "summary": "looks fine overall",
-	}, &sub)
-	ts.mustStatus(t, resp, http.StatusCreated)
-	if sub.Submission.Verdict != "comment" {
-		t.Errorf("verdict = %s", sub.Submission.Verdict)
-	}
-}
-
-// --- AE6: no submission lost between waits (server half) ---
-
-func TestAE6SinceReplayReturnsExactlyMissedEvents(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	cursor := fb.Cursor
-
-	// Submission lands while no wait is active.
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{"verdict": "comment"}, nil)
-
-	// A later wait picks it up immediately from the cursor.
-	var wo waitOutcome
-	resp := ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/wait?since=%d&timeout=5s", rv.Review.ID, cursor), nil, &wo)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("wait status = %d", resp.StatusCode)
-	}
-	if wo.Outcome != "submitted" || wo.Submission == nil {
-		t.Fatalf("wait outcome = %+v, want submitted", wo)
-	}
-
-	// And the replay returns exactly the one missed event.
-	fb = ts.feedback(t, rv.Review.ID, cursor)
-	if len(fb.Events) != 1 || fb.Events[0].Type != eventSubmitted {
-		t.Errorf("replay = %+v, want exactly the submitted event", fb.Events)
-	}
-	// Nothing beyond the new cursor.
-	fb = ts.feedback(t, rv.Review.ID, fb.Cursor)
-	if len(fb.Events) != 0 {
-		t.Errorf("replay past cursor returned %d events", len(fb.Events))
-	}
-}
-
-func TestWaitUnblocksOnSubmit(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	fb := ts.feedback(t, rv.Review.ID, 0)
-
-	done := make(chan waitOutcome, 1)
-	go func() {
-		var wo waitOutcome
-		ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/wait?since=%d&timeout=30s", rv.Review.ID, fb.Cursor), nil, &wo)
-		done <- wo
-	}()
-	time.Sleep(100 * time.Millisecond) // let the long-poll park
-
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{"verdict": "approve"}, nil)
-
-	select {
-	case wo := <-done:
-		if wo.Outcome != "submitted" || wo.Review.State != store.StateApproved {
-			t.Errorf("outcome = %+v", wo)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("wait did not unblock on submit")
-	}
-}
-
-func TestWaitTimesOutDistinctly(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	var wo waitOutcome
-	ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/wait?since=%d&timeout=100ms", rv.Review.ID, fb.Cursor), nil, &wo)
-	if wo.Outcome != "timeout" {
-		t.Errorf("outcome = %s, want timeout", wo.Outcome)
-	}
-}
-
-// --- AE8: close unblocks the waiter with a distinct outcome ---
-
-func TestAE8CloseEmitsDistinctEventAndUnblocksWaiter(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	fb := ts.feedback(t, rv.Review.ID, 0)
-
-	done := make(chan waitOutcome, 1)
-	go func() {
-		var wo waitOutcome
-		ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/wait?since=%d&timeout=30s", rv.Review.ID, fb.Cursor), nil, &wo)
-		done <- wo
-	}()
-	time.Sleep(100 * time.Millisecond)
-
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/close", rv.Review.ID), map[string]any{}, nil)
-
-	select {
-	case wo := <-done:
-		if wo.Outcome != "closed" {
-			t.Errorf("outcome = %s, want closed (distinct from submission)", wo.Outcome)
-		}
-		if wo.Review.State != store.StateClosed {
-			t.Errorf("review state = %s", wo.Review.State)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("wait did not unblock on close")
-	}
-
-	// The event log carries the distinct close event.
-	fb = ts.feedback(t, rv.Review.ID, fb.Cursor)
-	found := false
-	for _, e := range fb.Events {
-		if e.Type == eventClosed {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("no review.closed event in log")
-	}
-}
-
-// --- AE9: approved means read-only for the agent ---
-
-func TestAE9ReplyToApprovedReviewRejected(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	ts.draftThread(t, rv.Review.ID, 2, "nit")
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{"verdict": "approve"}, nil)
-
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	if len(fb.Threads) != 1 {
-		t.Fatalf("threads = %d", len(fb.Threads))
-	}
-	threadID := fb.Threads[0].ID
-	commentsBefore := len(fb.Threads[0].Comments)
+	ts.modify(t)
 
 	var out apiError
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", threadID), map[string]any{
-		"role": "agent", "body": "but actually...",
-	}, &out)
-	if resp.StatusCode != http.StatusConflict || out.Error != "review_approved" {
-		t.Errorf("agent reply on approved: status=%d error=%s, want 409 review_approved", resp.StatusCode, out.Error)
+	resp := ts.do(t, "POST", "/api/threads", map[string]any{"path": "a.txt", "side": "sideways", "line": 1, "body": "x"}, &out)
+	if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
+		t.Errorf("bad side: %d %s", resp.StatusCode, out.Error)
+	}
+	resp = ts.do(t, "POST", "/api/threads", map[string]any{"args": []string{"--ext-diff"}, "path": "a.txt", "side": "additions", "line": 1, "body": "x"}, &out)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad args: %d", resp.StatusCode)
 	}
 
-	// Review unchanged.
-	fb = ts.feedback(t, rv.Review.ID, 0)
-	if len(fb.Threads[0].Comments) != commentsBefore {
-		t.Error("rejected reply mutated the review")
+	// The file left the diff between the page load and the comment.
+	writeFile(t, ts.repo, "a.txt", fixtureContent(nil))
+	resp = ts.do(t, "POST", "/api/threads", map[string]any{"args": []string{}, "path": "a.txt", "side": "additions", "line": 15, "body": "late"}, &out)
+	if resp.StatusCode != http.StatusConflict || out.Error != "stale_diff" {
+		t.Errorf("stale: status %d, error %q; want 409 stale_diff", resp.StatusCode, out.Error)
 	}
-
-	// Reopen restores the agent's ability to reply (R20).
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/reopen", rv.Review.ID), map[string]any{}, nil)
-	resp2 := ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", threadID), map[string]any{
-		"role": "agent", "body": "fixed in latest round",
-	}, nil)
-	ts.mustStatus(t, resp2, http.StatusCreated)
 }
 
-// --- AE4 server half: agent reply is evented, resolution stays with reviewer ---
-
-func TestAE4AgentReplyEventedAndOnlyReviewerResolves(t *testing.T) {
+func TestSnapshotKeepsTheFileAsItWas(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	ts.draftThread(t, rv.Review.ID, 2, "why this?")
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{"verdict": "comment"}, nil)
+	ts.modify(t)
+	id := ts.draft(t, 15, "remember this")
+	writeFile(t, ts.repo, "a.txt", fixtureContent(map[int]string{15: "line 15 AGAIN"}))
 
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	threadID := fb.Threads[0].ID
-	cursor := fb.Cursor
+	var snap struct {
+		Path       string    `json:"path"`
+		Status     string    `json:"status"`
+		OldContent string    `json:"oldContent"`
+		NewContent string    `json:"newContent"`
+		CreatedAt  time.Time `json:"createdAt"`
+	}
+	resp := ts.do(t, "GET", fmt.Sprintf("/api/threads/%d/snapshot", id), nil, &snap)
+	ts.mustStatus(t, resp, http.StatusOK)
+	if snap.Path != "a.txt" || snap.Status != "modified" || snap.CreatedAt.IsZero() {
+		t.Errorf("snapshot meta = %+v", snap)
+	}
+	if snap.OldContent != fixtureContent(nil) {
+		t.Errorf("oldContent = %q", snap.OldContent)
+	}
+	if snap.NewContent != fixtureContent(map[int]string{15: changedLine}) {
+		t.Errorf("newContent = %q, want the file at thread creation", snap.NewContent)
+	}
+	resp = ts.do(t, "GET", "/api/threads/999/snapshot", nil, nil)
+	ts.mustStatus(t, resp, http.StatusNotFound)
+	_ = resp.Body.Close()
+}
 
-	resp := ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", threadID), map[string]any{
-		"role": "agent", "body": "because of X",
-	}, nil)
+// --- send and feedback ---
+
+func TestSendDeliversDraftsAtomically(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	id := ts.draft(t, 15, "fix this")
+
+	// Before the send: invisible to every agent-facing read.
+	var listed struct {
+		Threads []*threadView `json:"threads"`
+	}
+	ts.do(t, "GET", "/api/threads", nil, &listed)
+	if len(listed.Threads) != 0 {
+		t.Fatalf("draft visible in /api/threads: %d", len(listed.Threads))
+	}
+	fb := ts.feedback(t, 0)
+	if len(fb.Threads) != 0 || len(fb.Events) != 0 || fb.LastSend != nil {
+		t.Fatalf("draft leaked into feedback: %+v", fb)
+	}
+	// The reviewer's own UI sees it as a draft.
+	ts.do(t, "GET", "/api/threads?drafts=1", nil, &listed)
+	if len(listed.Threads) != 1 || !listed.Threads[0].Comments[0].Draft {
+		t.Fatalf("drafts=1 listing = %+v", listed.Threads)
+	}
+
+	var sent struct {
+		Send    *store.Send   `json:"send"`
+		Threads []*threadView `json:"threads"`
+	}
+	resp := ts.do(t, "POST", "/api/send", map[string]any{"note": "please"}, &sent)
 	ts.mustStatus(t, resp, http.StatusCreated)
+	if sent.Send.Note != "please" || len(sent.Threads) != 1 || sent.Threads[0].ID != id {
+		t.Errorf("send response = %+v", sent)
+	}
 
-	fb = ts.feedback(t, rv.Review.ID, cursor)
+	fb = ts.feedback(t, 0)
+	if len(fb.Threads) != 1 {
+		t.Fatalf("threads after send = %d", len(fb.Threads))
+	}
+	th := fb.Threads[0]
+	if th.Quote == nil || strings.Join(th.Quote.Lines, "\n") != changedLine || th.Quote.Path != "a.txt" || th.Quote.Line != 15 {
+		t.Errorf("quote = %+v", th.Quote)
+	}
+	if len(th.Comments) != 1 || th.Comments[0].Draft || th.Comments[0].SendID == nil || *th.Comments[0].SendID != sent.Send.ID {
+		t.Errorf("comments = %+v", th.Comments)
+	}
+	if fb.LastSend == nil || fb.LastSend.Note != "please" {
+		t.Errorf("lastSend = %+v", fb.LastSend)
+	}
+	if len(fb.Events) != 1 || fb.Events[0].Type != eventSent || fb.Cursor != fb.Events[0].ID {
+		t.Fatalf("events = %+v, cursor = %d", fb.Events, fb.Cursor)
+	}
+	var payload struct {
+		Send    *store.Send   `json:"send"`
+		Threads []*threadView `json:"threads"`
+	}
+	if err := json.Unmarshal(fb.Events[0].Payload, &payload); err != nil || payload.Send.ID != sent.Send.ID || len(payload.Threads) != 1 {
+		t.Errorf("sent payload = %s (%v)", fb.Events[0].Payload, err)
+	}
+}
+
+func TestSendWithNothingIsRefusedAndNoteAloneIsNot(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	var out apiError
+	resp := ts.do(t, "POST", "/api/send", map[string]any{"note": ""}, &out)
+	if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
+		t.Errorf("empty send: %d %s", resp.StatusCode, out.Error)
+	}
+	sd := ts.send(t, "LGTM")
+	fb := ts.feedback(t, 0)
+	if fb.LastSend == nil || fb.LastSend.ID != sd.ID || len(fb.Threads) != 0 {
+		t.Errorf("note-only send: %+v", fb)
+	}
+}
+
+func TestSinceReplayReturnsExactlyMissedEvents(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	id := ts.draft(t, 15, "first")
+	ts.send(t, "")
+	cursor := ts.feedback(t, 0).Cursor
+
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", id), map[string]any{"role": "agent", "body": "done"}, nil)
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/resolve", id), map[string]any{}, nil)
+
+	fb := ts.feedback(t, cursor)
+	if len(fb.Events) != 2 || fb.Events[0].Type != eventReplied || fb.Events[1].Type != eventResolved {
+		t.Fatalf("events since %d = %+v", cursor, fb.Events)
+	}
+	if fb.Cursor <= cursor {
+		t.Errorf("cursor did not advance: %d", fb.Cursor)
+	}
+	again := ts.feedback(t, fb.Cursor)
+	if len(again.Events) != 0 || again.Cursor != fb.Cursor {
+		t.Errorf("replay past the end: %+v", again)
+	}
+}
+
+func TestWaitUnblocksOnSendAndTimesOutDistinctly(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	ts.draft(t, 15, "pending")
+
+	var out waitOutcome
+	resp := ts.do(t, "GET", "/api/wait?timeout=100ms", nil, &out)
+	ts.mustStatus(t, resp, http.StatusOK)
+	if out.Outcome != "timeout" {
+		t.Fatalf("outcome = %s, want timeout", out.Outcome)
+	}
+
+	done := make(chan waitOutcome, 1)
+	go func() {
+		var got waitOutcome
+		ts.do(t, "GET", "/api/wait?timeout=5s", nil, &got)
+		done <- got
+	}()
+	time.Sleep(100 * time.Millisecond)
+	sd := ts.send(t, "go")
+	select {
+	case got := <-done:
+		if got.Outcome != "sent" || got.Send == nil || got.Send.ID != sd.ID || got.Send.Note != "go" {
+			t.Errorf("wait outcome = %+v", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("wait did not return after the send")
+	}
+
+	// A send that landed while nobody waited is delivered by the next wait.
+	ts.draft(t, 16, "another")
+	late := ts.send(t, "late")
+	var got waitOutcome
+	ts.do(t, "GET", fmt.Sprintf("/api/wait?since=%d&timeout=1s", out.Cursor), nil, &got)
+	if got.Outcome != "sent" || got.Send == nil || got.Send.ID != sd.ID {
+		t.Errorf("first missed send: %+v, want send %d", got, sd.ID)
+	}
+	ts.do(t, "GET", fmt.Sprintf("/api/wait?since=%d&timeout=1s", got.Cursor), nil, &got)
+	if got.Outcome != "sent" || got.Send == nil || got.Send.ID != late.ID {
+		t.Errorf("second missed send: %+v, want send %d", got, late.ID)
+	}
+}
+
+func TestAgentReplyIsEventedAndReviewerReplyIsADraft(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	id := ts.draft(t, 15, "question")
+	ts.send(t, "")
+	cursor := ts.feedback(t, 0).Cursor
+
+	var reviewer struct {
+		Comment *store.Comment `json:"comment"`
+		Cursor  *int64         `json:"cursor"`
+	}
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", id), map[string]any{"role": "reviewer", "body": "follow-up"}, &reviewer)
+	if !reviewer.Comment.Draft || reviewer.Cursor != nil {
+		t.Errorf("reviewer reply = %+v, want a draft with no cursor", reviewer)
+	}
+
+	var agent struct {
+		Comment *store.Comment `json:"comment"`
+		Cursor  int64          `json:"cursor"`
+	}
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", id), map[string]any{"role": "agent", "body": "answer"}, &agent)
+	if agent.Comment.Draft || agent.Cursor <= cursor {
+		t.Errorf("agent reply = %+v", agent)
+	}
+
+	fb := ts.feedback(t, cursor)
 	if len(fb.Events) != 1 || fb.Events[0].Type != eventReplied {
-		t.Fatalf("expected thread.replied event, got %+v", fb.Events)
+		t.Errorf("events = %+v", fb.Events)
 	}
-	// The agent's reply does not resolve the thread.
-	if fb.Threads[0].Resolved {
-		t.Error("agent reply resolved the thread")
+	bodies := []string{}
+	for _, c := range fb.Threads[0].Comments {
+		bodies = append(bodies, c.Body)
 	}
-	// The reviewer resolves it.
-	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/resolve", threadID), map[string]any{}, nil)
-	fb = ts.feedback(t, rv.Review.ID, 0)
-	if !fb.Threads[0].Resolved {
-		t.Error("resolve did not stick")
+	if strings.Join(bodies, ",") != "question,answer" {
+		t.Errorf("visible comments = %v; the reviewer's draft must stay hidden", bodies)
 	}
+
+	// Resolving takes the thread out of the agent's list; unresolving brings it back.
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/resolve", id), map[string]any{}, nil)
+	if fb := ts.feedback(t, 0); len(fb.Threads) != 0 {
+		t.Errorf("resolved thread still in feedback: %d", len(fb.Threads))
+	}
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/unresolve", id), map[string]any{}, nil)
+	fb = ts.feedback(t, 0)
+	if len(fb.Threads) != 1 {
+		t.Errorf("unresolved thread missing from feedback")
+	}
+	if n := len(fb.Events); n != 4 || fb.Events[3].Type != eventUnresolved {
+		t.Errorf("event log = %d events, last %q", n, fb.Events[n-1].Type)
+	}
+
+	resp := ts.do(t, "POST", "/api/threads/999/comments", map[string]any{"role": "agent", "body": "x"}, nil)
+	ts.mustStatus(t, resp, http.StatusNotFound)
+	_ = resp.Body.Close()
 }
 
 // --- SSE ---
 
-func TestSSEStreamsReplayAndLive(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
+type sseFrame struct {
+	ID      *int64          `json:"id"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
 
-	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/reviews/%d/events?since=0", ts.URL(), rv.Review.ID), nil)
+func readFrames(t *testing.T, body io.Reader) <-chan sseFrame {
+	t.Helper()
+	frames := make(chan sseFrame, 16)
+	go func() {
+		scanner := bufio.NewScanner(body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var f sseFrame
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &f); err == nil {
+				frames <- f
+			}
+		}
+	}()
+	return frames
+}
+
+func nextFrame(t *testing.T, frames <-chan sseFrame, wait time.Duration) sseFrame {
+	t.Helper()
+	select {
+	case f := <-frames:
+		return f
+	case <-time.After(wait):
+		t.Fatal("no SSE frame in time")
+		return sseFrame{}
+	}
+}
+
+func TestSSEStreamsDiffChangesReplayAndLiveEvents(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	id := ts.draft(t, 15, "hello")
+	ts.send(t, "")
+
+	req, _ := http.NewRequest("GET", ts.URL()+"/api/events?since=0", nil)
 	req.Header.Set("Authorization", "Bearer "+ts.Token())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -624,45 +762,43 @@ func TestSSEStreamsReplayAndLive(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("content-type = %s", ct)
 	}
+	frames := readFrames(t, resp.Body)
 
-	types := make(chan string, 16)
-	go func() {
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			var evt store.Event
-			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
-				types <- evt.Type
-			}
-		}
-	}()
-
-	// Replay: review.created arrives first.
-	select {
-	case typ := <-types:
-		if typ != eventReviewCreated {
-			t.Fatalf("first replayed event = %s", typ)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no replay event")
+	// The stream opens with the diff's current version, then replays.
+	first := nextFrame(t, frames, 3*time.Second)
+	if first.Type != eventDiffChanged || first.ID != nil {
+		t.Fatalf("first frame = %+v, want an id-less diff.changed", first)
+	}
+	var notice struct {
+		Version int64 `json:"version"`
+	}
+	_ = json.Unmarshal(first.Payload, &notice)
+	if notice.Version != ts.getDiff(t).Version {
+		t.Errorf("notice version = %d, diff version = %d", notice.Version, ts.getDiff(t).Version)
+	}
+	if replayed := nextFrame(t, frames, 3*time.Second); replayed.Type != eventSent || replayed.ID == nil {
+		t.Fatalf("replayed frame = %+v, want sent with an id", replayed)
 	}
 
-	// Live: a submission arrives without reconnecting.
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{"verdict": "comment"}, nil)
-	select {
-	case typ := <-types:
-		if typ != eventSubmitted {
-			t.Fatalf("live event = %s", typ)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no live event")
+	// Live: an agent reply arrives without reconnecting.
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", id), map[string]any{"role": "agent", "body": "hi"}, nil)
+	if live := nextFrame(t, frames, 3*time.Second); live.Type != eventReplied {
+		t.Fatalf("live frame = %+v, want thread.replied", live)
+	}
+
+	// The tree changes: the next poll tick notices.
+	writeFile(t, ts.repo, "a.txt", fixtureContent(map[int]string{15: "line 15 EDITED"}))
+	changed := nextFrame(t, frames, 4*time.Second)
+	if changed.Type != eventDiffChanged {
+		t.Fatalf("after edit frame = %+v, want diff.changed", changed)
+	}
+	_ = json.Unmarshal(changed.Payload, &notice)
+	if notice.Version != ts.getDiff(t).Version {
+		t.Errorf("changed version = %d, diff version = %d", notice.Version, ts.getDiff(t).Version)
 	}
 }
 
-// --- lifecycle (KTD5) ---
+// --- lifecycle ---
 
 func TestKillAndReviveRebindsRecordedPortAndToken(t *testing.T) {
 	repo := initRepo(t)
@@ -718,17 +854,9 @@ func TestIdleShutdownFiresWhenQuiet(t *testing.T) {
 }
 
 func TestIdleShutdownBlockedByOpenStreams(t *testing.T) {
-	for _, kind := range []string{"sse", "wait"} {
+	for kind, path := range map[string]string{"sse": "/api/events", "wait": "/api/wait?timeout=10s"} {
 		t.Run(kind, func(t *testing.T) {
 			ts := startServer(t, initRepo(t), 150*time.Millisecond)
-			rv := ts.openReview(t)
-
-			var path string
-			if kind == "sse" {
-				path = fmt.Sprintf("/api/reviews/%d/events", rv.Review.ID)
-			} else {
-				path = fmt.Sprintf("/api/reviews/%d/wait?timeout=10s", rv.Review.ID)
-			}
 			// Drive the request from a goroutine: a wait long-poll
 			// sends no headers until it resolves, so Do() blocks.
 			ctx, cancel := context.WithCancel(context.Background())
@@ -830,7 +958,7 @@ func TestPublicURLAllowsItsOriginAndIsRecorded(t *testing.T) {
 		"http://agent2.localhost:3191": http.StatusForbidden,
 		"http://agent1.localhost":      http.StatusForbidden,
 	} {
-		req, _ := http.NewRequest("GET", s.URL()+"/api/reviews", nil)
+		req, _ := http.NewRequest("GET", s.URL()+"/api/threads", nil)
 		req.Header.Set("Authorization", "Bearer "+s.Token())
 		req.Header.Set("Origin", origin)
 		resp, err := http.DefaultClient.Do(req)
@@ -850,7 +978,7 @@ func TestPublicURLAllowsItsOriginAndIsRecorded(t *testing.T) {
 	if st.PublicURL != "http://agent1.localhost:3191" {
 		t.Errorf("state publicUrl = %q", st.PublicURL)
 	}
-	if got := st.AuthURL("/reviews/1"); got != "http://agent1.localhost:3191/auth?token="+s.Token()+"&next=%2Freviews%2F1" {
+	if got := st.AuthURL("/?arg=main"); got != "http://agent1.localhost:3191/auth?token="+s.Token()+"&next=%2F%3Farg%3Dmain" {
 		t.Errorf("AuthURL = %q", got)
 	}
 	if st.BaseURL() != s.URL() {
@@ -936,22 +1064,17 @@ func TestHealthReportsBuildAndProbeReadsIt(t *testing.T) {
 	}
 }
 
-// --- export (R14) ---
+// --- export ---
 
 func TestExportRendersMarkdownWithoutDrafts(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
-	rv := ts.openReview(t)
-	ts.draftThread(t, rv.Review.ID, 2, "submitted comment")
-	ts.do(t, "POST", fmt.Sprintf("/api/reviews/%d/submit", rv.Review.ID), map[string]any{
-		"verdict": "request_changes", "summary": "fix line two",
-	}, nil)
-	fb := ts.feedback(t, rv.Review.ID, 0)
-	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", fb.Threads[0].ID), map[string]any{
-		"role": "agent", "body": "agent reply",
-	}, nil)
-	ts.draftThread(t, rv.Review.ID, 3, "unsubmitted draft")
+	ts.modify(t)
+	id := ts.draft(t, 15, "sent comment")
+	ts.send(t, "fix line fifteen")
+	ts.do(t, "POST", fmt.Sprintf("/api/threads/%d/comments", id), map[string]any{"role": "agent", "body": "agent reply"}, nil)
+	ts.draft(t, 16, "unsent draft")
 
-	resp := ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/export", rv.Review.ID), nil, nil)
+	resp := ts.do(t, "GET", "/api/export", nil, nil)
 	ts.mustStatus(t, resp, http.StatusOK)
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
 		t.Errorf("content type = %q, want text/markdown", ct)
@@ -963,14 +1086,14 @@ func TestExportRendersMarkdownWithoutDrafts(t *testing.T) {
 	}
 	md := string(body)
 	for _, want := range []string{
-		"# Review #",
-		"- Round 1: request changes: fix line two",
+		"# Threads in " + filepath.Base(ts.repo),
+		"- Threads: 1, 1 unresolved",
 		"## a.txt",
 		"### Thread ",
-		"`a.txt:2` (additions, round 1)",
-		"line two CHANGED",
+		"`a.txt:15` (additions, ",
+		changedLine,
 		"**reviewer**",
-		"submitted comment",
+		"sent comment",
 		"**agent**",
 		"agent reply",
 	} {
@@ -978,12 +1101,14 @@ func TestExportRendersMarkdownWithoutDrafts(t *testing.T) {
 			t.Errorf("export missing %q:\n%s", want, md)
 		}
 	}
-	if strings.Contains(md, "unsubmitted draft") {
+	if strings.Contains(md, "unsent draft") {
 		t.Errorf("draft leaked into the export:\n%s", md)
 	}
 }
 
-func TestRoundAssetServesSnapshotThenRepo(t *testing.T) {
+// --- assets ---
+
+func TestAssetServesImagesFromTheCheckout(t *testing.T) {
 	repo := initRepo(t)
 	if err := os.MkdirAll(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -995,9 +1120,8 @@ func TestRoundAssetServesSnapshotThenRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts := startServer(t, repo, 0)
-	rv := ts.openReview(t)
 	get := func(p string) *http.Response {
-		return ts.do(t, "GET", fmt.Sprintf("/api/reviews/%d/rounds/1/asset?path=%s", rv.Review.ID, p), nil, nil)
+		return ts.do(t, "GET", "/api/asset?path="+url.QueryEscape(p), nil, nil)
 	}
 	read := func(resp *http.Response) []byte {
 		body, err := io.ReadAll(resp.Body)
@@ -1020,18 +1144,17 @@ func TestRoundAssetServesSnapshotThenRepo(t *testing.T) {
 		}
 	}
 	if got := string(read(resp)); got != svg {
-		t.Errorf("svg body = %q, want the captured file", got)
+		t.Errorf("svg body = %q", got)
 	}
 
-	// The round captured the SVG, so a later edit on disk does not show.
+	// The checkout is live: an edit on disk shows on the next request.
 	writeFile(t, repo, "docs/logo.svg", "<svg>changed</svg>")
 	resp = get("docs/logo.svg")
 	ts.mustStatus(t, resp, http.StatusOK)
-	if got := string(read(resp)); got != svg {
-		t.Errorf("after edit body = %q, want the snapshot", got)
+	if got := string(read(resp)); got != "<svg>changed</svg>" {
+		t.Errorf("after edit body = %q, want the current file", got)
 	}
 
-	// Binary content is never captured; it comes from the checkout.
 	resp = get("pic.png")
 	ts.mustStatus(t, resp, http.StatusOK)
 	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {

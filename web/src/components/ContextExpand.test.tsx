@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { RoundFile } from "../types";
+import type { DiffFile } from "../types";
 
 vi.mock("@pierre/diffs", () => ({
   processFile: vi.fn(
@@ -11,7 +11,7 @@ vi.mock("@pierre/diffs", () => ({
 
 vi.mock("../api", () => ({
   api: {
-    getFileVersions: vi.fn(async () => ({
+    getDiffFile: vi.fn(async () => ({
       path: "a.go",
       oldPath: "",
       status: "modified",
@@ -45,20 +45,20 @@ index 333..444 100644
 
 function Harness({
   parsed,
-  roundFiles,
-  seq,
+  diffFiles,
+  version,
   target,
 }: {
   parsed: FileDiffMetadata[];
-  roundFiles: RoundFile[];
-  seq: number;
+  diffFiles: DiffFile[];
+  version: number;
   target: string;
 }) {
   const { files, requestUpgrade } = useFullDiffs(
-    1,
-    seq,
+    [],
+    version,
     parsed,
-    roundFiles,
+    diffFiles,
     PATCH,
   );
   return (
@@ -96,38 +96,36 @@ describe("splitPatch", () => {
   });
 });
 
-describe("useFullDiffs (R25, lazy)", () => {
+describe("useFullDiffs (lazy)", () => {
   afterEach(() => vi.clearAllMocks());
 
   const partial = { name: "a.go", isPartial: true } as FileDiffMetadata;
-  const roundFile: RoundFile = {
-    id: 1,
-    roundId: 3,
+  const diffFile: DiffFile = {
     path: "a.go",
     status: "modified",
     isBinary: false,
   };
 
-  it("does nothing eagerly: no snapshot fetches on mount", async () => {
+  it("does nothing eagerly: no content fetches on mount", async () => {
     render(
       <Harness
         parsed={[partial]}
-        roundFiles={[roundFile]}
-        seq={3}
+        diffFiles={[diffFile]}
+        version={3}
         target="a.go"
       />,
     );
     await new Promise((r) => setTimeout(r, 10));
-    expect(api.getFileVersions).not.toHaveBeenCalled();
+    expect(api.getDiffFile).not.toHaveBeenCalled();
     expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:partial");
   });
 
-  it("upgrades one file on request with snapshot contents from the round", async () => {
+  it("upgrades one file on request with both versions from the capture", async () => {
     render(
       <Harness
         parsed={[partial]}
-        roundFiles={[roundFile]}
-        seq={3}
+        diffFiles={[diffFile]}
+        version={3}
         target="a.go"
       />,
     );
@@ -139,10 +137,8 @@ describe("useFullDiffs (R25, lazy)", () => {
       expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:full"),
     );
 
-    // Contents came from the round's frozen snapshot endpoint — the
-    // live tree is never read (AE-adjacent to R8).
-    expect(api.getFileVersions).toHaveBeenCalledTimes(1);
-    expect(api.getFileVersions).toHaveBeenCalledWith(1, 3, "a.go");
+    expect(api.getDiffFile).toHaveBeenCalledTimes(1);
+    expect(api.getDiffFile).toHaveBeenCalledWith([], "a.go");
     const call = vi.mocked(processFile).mock.calls[0];
     expect(call[0]).toContain("diff --git a/a.go b/a.go");
     expect(call[1]?.newFile?.contents).toContain("EXPANDED CONTEXT");
@@ -151,32 +147,56 @@ describe("useFullDiffs (R25, lazy)", () => {
     // A second request for the same file is a no-op.
     fireEvent.click(screen.getByRole("button", { name: "upgrade" }));
     await new Promise((r) => setTimeout(r, 10));
-    expect(api.getFileVersions).toHaveBeenCalledTimes(1);
+    expect(api.getDiffFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts over when the capture version changes", async () => {
+    const { rerender } = render(
+      <Harness
+        parsed={[partial]}
+        diffFiles={[diffFile]}
+        version={3}
+        target="a.go"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "upgrade" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:full"),
+    );
+    rerender(
+      <Harness
+        parsed={[partial]}
+        diffFiles={[diffFile]}
+        version={4}
+        target="a.go"
+      />,
+    );
+    expect(screen.getByTestId("file-a.go")).toHaveTextContent("a.go:partial");
   });
 
   it("ignores requests for binary files and unknown paths", async () => {
     render(
       <Harness
         parsed={[partial]}
-        roundFiles={[{ ...roundFile, isBinary: true }]}
-        seq={3}
+        diffFiles={[{ ...diffFile, isBinary: true }]}
+        version={3}
         target="a.go"
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "upgrade" }));
     await new Promise((r) => setTimeout(r, 10));
-    expect(api.getFileVersions).not.toHaveBeenCalled();
+    expect(api.getDiffFile).not.toHaveBeenCalled();
 
     render(
       <Harness
         parsed={[partial]}
-        roundFiles={[roundFile]}
-        seq={3}
+        diffFiles={[diffFile]}
+        version={3}
         target="not-in-patch.go"
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: "upgrade" })[1]);
     await new Promise((r) => setTimeout(r, 10));
-    expect(api.getFileVersions).not.toHaveBeenCalled();
+    expect(api.getDiffFile).not.toHaveBeenCalled();
   });
 });

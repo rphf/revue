@@ -1,14 +1,11 @@
 import type {
   Comment,
-  ReviewDetail,
-  Review,
-  Round,
-  RoundDetail,
+  DiffResponse,
   FileVersions,
-  Thread,
+  Send,
   Side,
-  Submission,
-  Verdict,
+  Snapshot,
+  Thread,
 } from "./types";
 
 export class ApiError extends Error {
@@ -44,46 +41,36 @@ async function request<T>(
   return data as T;
 }
 
+// Diff arguments travel as a repeated `arg` query parameter, one per
+// argument, so pathspecs with spaces survive the round trip.
+export function argsQuery(args: string[], extra?: Record<string, string>) {
+  const q = new URLSearchParams();
+  for (const a of args) q.append("arg", a);
+  for (const [k, v] of Object.entries(extra ?? {})) q.set(k, v);
+  const s = q.toString();
+  return s === "" ? "" : `?${s}`;
+}
+
 export const api = {
-  listReviews: () => request<{ reviews: Review[] }>("GET", "/api/reviews"),
-  getReview: (id: number) => request<ReviewDetail>("GET", `/api/reviews/${id}`),
-  getRound: (id: number, seq: number) =>
-    request<RoundDetail>("GET", `/api/reviews/${id}/rounds/${seq}`),
-  getPatch: async (id: number, seq: number): Promise<string> => {
-    const resp = await fetch(`/api/reviews/${id}/rounds/${seq}/patch`);
-    if (!resp.ok)
-      throw new ApiError(resp.status, "patch_fetch", resp.statusText);
-    return resp.text();
-  },
-  getFileVersions: (id: number, seq: number, path: string) =>
-    request<FileVersions>(
-      "GET",
-      `/api/reviews/${id}/rounds/${seq}/file?path=${encodeURIComponent(path)}`,
-    ),
-  // Image URL for the rich markdown view: the round's snapshot when the
-  // file changed in it, the checked-out file otherwise.
-  assetUrl: (id: number, seq: number, path: string) =>
-    `/api/reviews/${id}/rounds/${seq}/asset?path=${encodeURIComponent(path)}`,
-  listThreads: (id: number) =>
-    request<{ threads: Thread[] }>(
-      "GET",
-      `/api/reviews/${id}/threads?drafts=1`,
-    ),
-  createThread: (
-    id: number,
-    args: {
-      path: string;
-      side: Side;
-      line: number;
-      startLine?: number;
-      body: string;
-    },
-  ) =>
-    request<{ thread: Thread; comment: Comment }>(
-      "POST",
-      `/api/reviews/${id}/threads`,
-      args,
-    ),
+  getDiff: (args: string[]) =>
+    request<DiffResponse>("GET", `/api/diff${argsQuery(args)}`),
+  getDiffFile: (args: string[], path: string) =>
+    request<FileVersions>("GET", `/api/diff/file${argsQuery(args, { path })}`),
+  // Image URL for the rich markdown view, served from the checkout.
+  assetUrl: (path: string) => `/api/asset?path=${encodeURIComponent(path)}`,
+  listThreads: () =>
+    request<{ threads: Thread[] }>("GET", "/api/threads?drafts=1"),
+  getSnapshot: (threadId: number) =>
+    request<Snapshot>("GET", `/api/threads/${threadId}/snapshot`),
+  createThread: (args: {
+    args: string[];
+    path: string;
+    side: Side;
+    line: number;
+    startLine?: number;
+    body: string;
+  }) =>
+    request<{ thread: Thread; comment: Comment }>("POST", "/api/threads", args),
   reply: (threadId: number, body: string) =>
     request<{ comment: Comment }>("POST", `/api/threads/${threadId}/comments`, {
       role: "reviewer",
@@ -101,19 +88,6 @@ export const api = {
       `/api/threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
       {},
     ),
-  submit: (id: number, verdict: Verdict, summary: string) =>
-    request<{ submission: Submission }>("POST", `/api/reviews/${id}/submit`, {
-      verdict,
-      summary,
-    }),
-  close: (id: number) =>
-    request<{ review: Review }>("POST", `/api/reviews/${id}/close`, {}),
-  reopen: (id: number) =>
-    request<{ review: Review }>("POST", `/api/reviews/${id}/reopen`, {}),
-  createRound: (id: number) =>
-    request<{ round: Round; deduped: boolean; notice?: string }>(
-      "POST",
-      `/api/reviews/${id}/rounds`,
-      {},
-    ),
+  send: (note: string) =>
+    request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
 };

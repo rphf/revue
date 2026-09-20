@@ -7,8 +7,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-
-	"github.com/rphf/revue/internal/store"
 )
 
 // Image types the rich markdown view may embed. Anything else is refused,
@@ -25,20 +23,12 @@ var assetTypes = map[string]string{
 	".ico":  "image/x-icon",
 }
 
-// handleRoundAsset serves an image that a markdown file references, for
-// the rich view. The round's snapshot wins when the image changed in that
-// round; otherwise the file comes from the repository on disk, which is
-// what the reviewer has checked out. The response can never act as a
-// page: SVG may carry script, so it is sandboxed and never sniffed.
-func (s *Server) handleRoundAsset(w http.ResponseWriter, r *http.Request) {
-	review, ok := s.reviewFromPath(w, r)
-	if !ok {
-		return
-	}
-	round, ok := s.roundFromPath(w, r, review)
-	if !ok {
-		return
-	}
+// handleAsset serves an image that a markdown file references, for the
+// rich view, from the repository on disk: what the reviewer has checked
+// out, which is also what the live diff shows. The response can never
+// act as a page: SVG may carry script, so it is sandboxed and never
+// sniffed.
+func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	p, ok := cleanRepoPath(r.URL.Query().Get("path"))
 	if !ok {
 		httpError(w, http.StatusBadRequest, "validation", "path must be a relative file path inside the repository")
@@ -49,19 +39,19 @@ func (s *Server) handleRoundAsset(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnsupportedMediaType, "unsupported_type", "only image files are served")
 		return
 	}
-	content, err := s.roundAsset(round.ID, p)
+	content, err := repoAsset(s.repoRoot, p)
 	if errors.Is(err, os.ErrNotExist) {
-		httpError(w, http.StatusNotFound, "not_found", "no such file in this round")
+		httpError(w, http.StatusNotFound, "not_found", "no such file in the repository")
 		return
 	}
 	if err != nil {
-		httpError(w, http.StatusInternalServerError, "internal", err.Error())
+		internalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
 }
@@ -79,28 +69,10 @@ func cleanRepoPath(raw string) (string, bool) {
 	return p, true
 }
 
-// roundAsset returns the new-side content of p in the round when the
-// round captured it, and the checked-out file otherwise. Binary files
-// are never captured, so they always come from disk. A symlink that
-// leaves the repository is treated as missing.
-func (s *Server) roundAsset(roundID int64, p string) ([]byte, error) {
-	files, err := s.store.FilesForRound(roundID)
-	if err != nil {
-		return nil, err
-	}
-	for _, f := range files {
-		if f.Path != p {
-			continue
-		}
-		if f.Status == store.FileDeleted {
-			return nil, os.ErrNotExist
-		}
-		if f.NewBlob != "" {
-			return s.store.Blob(f.NewBlob)
-		}
-		break
-	}
-	root, err := filepath.EvalSymlinks(s.repoRoot)
+// repoAsset reads the checked-out file at p. A symlink that leaves the
+// repository is treated as missing.
+func repoAsset(repoRoot, p string) ([]byte, error) {
+	root, err := filepath.EvalSymlinks(repoRoot)
 	if err != nil {
 		return nil, err
 	}

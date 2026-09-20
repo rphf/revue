@@ -2,15 +2,15 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { processFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { api } from "../api";
-import type { RoundFile } from "../types";
+import type { DiffFile } from "../types";
 
-// Hunk-context expansion (R25): upgrade a partial diff to a full one
-// with old/new contents served from the round's frozen snapshot —
-// never the live tree. Upgrades are LAZY and per file (the reviewer
-// asks via the file header button): upgrading eagerly re-processed and
-// remounted every file diff on load, which made large reviews lag.
-// A full diff lets @pierre/diffs render its expand-context
-// affordances; DiffView keys on isPartial so the upgrade remounts.
+// Hunk-context expansion: upgrade a partial diff to a full one with
+// old/new contents from the current capture. Upgrades are LAZY and per
+// file (the reviewer asks via the file header button): upgrading
+// eagerly re-processed and remounted every file diff on load, which
+// made large diffs lag. A full diff lets @pierre/diffs render its
+// expand-context affordances; DiffView keys on isPartial so the
+// upgrade remounts.
 
 // splitPatch slices a multi-file git patch into per-file sections so
 // processFile can re-parse one file with full contents attached.
@@ -29,22 +29,22 @@ export function splitPatch(patch: string): Map<string, string> {
 
 export interface FullDiffs {
   files: FileDiffMetadata[] | null;
-  // requestUpgrade fetches snapshot contents for one file and swaps
-  // its diff for the full version. No-op for binary files, unknown
-  // paths, and files already upgraded or in flight.
+  // requestUpgrade fetches both versions of one file and swaps its
+  // diff for the full one. No-op for binary files, unknown paths, and
+  // files already upgraded or in flight.
   requestUpgrade: (path: string) => void;
 }
 
 export function useFullDiffs(
-  reviewId: number,
-  roundSeq: number | null,
+  args: string[],
+  version: number | null,
   parsed: FileDiffMetadata[] | null,
-  roundFiles: RoundFile[],
+  diffFiles: DiffFile[],
   patch: string | null,
 ): FullDiffs {
-  // Keys carry the review and round, so switching rounds stops finding
-  // the previous upgrades; rounds are frozen, so none of them go stale.
-  const scope = `${reviewId}:${roundSeq}`;
+  // Keys carry the diff arguments and the capture version: a refreshed
+  // diff starts over, since the contents it serves may have changed.
+  const scope = `${JSON.stringify(args)}:${version}`;
   const [upgraded, setUpgraded] = useState<Map<string, FileDiffMetadata>>(
     new Map(),
   );
@@ -52,18 +52,18 @@ export function useFullDiffs(
 
   const requestUpgrade = useCallback(
     (path: string) => {
-      if (roundSeq === null || patch === null) return;
+      if (version === null || patch === null) return;
       const key = `${scope}:${path}`;
       if (inFlight.current.has(key)) return;
-      if (roundFiles.some((f) => f.path === path && f.isBinary)) return;
+      if (diffFiles.some((f) => f.path === path && f.isBinary)) return;
       const section = splitPatch(patch).get(path);
       if (!section) return;
       inFlight.current.add(key);
       api
-        .getFileVersions(reviewId, roundSeq, path)
+        .getDiffFile(args, path)
         .then((versions) => {
           const full = processFile(section, {
-            cacheKey: `${reviewId}:${roundSeq}:${path}:full`,
+            cacheKey: `${scope}:${path}:full`,
             oldFile:
               versions.oldContent !== null
                 ? {
@@ -89,7 +89,7 @@ export function useFullDiffs(
           inFlight.current.delete(key);
         });
     },
-    [reviewId, roundSeq, patch, roundFiles, scope],
+    [args, version, patch, diffFiles, scope],
   );
 
   const files = useMemo(() => {

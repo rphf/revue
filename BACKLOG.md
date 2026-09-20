@@ -10,43 +10,38 @@ GitHub-style review driving from the keyboard: `j`/`k` next/previous change, `n`
 
 Add future ideas below with a date and a one-line why.
 
-## Round handoff note (2026-09-18)
+## Agent note (2026-09-18, reworded 2026-09-20)
 
-A review shows the diff but nothing about what the agent did or how it checked
+The page shows the diff but nothing about what the agent did or how it checked
 its work. An agent that works in a sandbox typically runs tests and browser
 checks, saves screenshots and reports somewhere it can serve over HTTP, and
-then opens the review. That evidence has no home in the review today. A short
-agent-written note per round, shown at the top of the review, turns the diff
-into a handoff.
+then says the change is ready. That evidence has no home in revue today. A
+short agent-written note, shown above the diff, turns the diff into a handoff:
+the counterpart of the note the reviewer attaches to a send.
 
 Design sketch, revue side:
 
-- Schema: `rounds.note TEXT NOT NULL DEFAULT ''` (markdown).
-- API: `POST /api/reviews` and `POST /api/reviews/{id}/rounds` accept an
-  optional `note` field. The round payload returns it. A new-round event carries
-  it.
-- CLI: `revue open -m TEXT` and `revue round -m TEXT`, or `--note-file PATH`,
-  or stdin when `-m` is absent and stdin is not a terminal.
-- UI: a "Handoff" section under the review header, rendered through the existing
+- Schema: a `notes` table (markdown body, created_at), or one current note.
+- CLI: `revue note -m TEXT`, or `--file PATH`, or stdin when `-m` is absent
+  and stdin is not a terminal.
+- UI: a "Note" section under the top bar, rendered through the existing
   `Markdown` component (DOMPurify keeps `img` and `a`, so a screenshot served
-  from any host the reviewer's browser can reach renders inline). The section
-  follows the round switcher, so each round keeps its own note. Collapsed when
-  empty.
-- Export (U11) includes the note per round.
+  from any host the reviewer's browser can reach renders inline). Collapsed
+  when empty. A new note is an event, so the page picks it up live.
+- Export includes the note.
 
 Outside revue, in the instructions the agent reads (whatever harness runs it):
 
 - The protocol: save evidence where the reviewer's browser can reach it, then
-  open the review with a note that links to it.
+  write the note that links to it.
 - A template for the note. Default sections: what changed, how it was checked
   (commands run, tests, browser checks), screenshots, known gaps or questions
   for the reviewer. If the repository has a PR template
   (`.github/PULL_REQUEST_TEMPLATE.md`), use its sections instead, so the note
   doubles as the PR description later.
 
-Not decided: whether the note is editable by the agent after the round opens
-(GitHub lets a PR body change at any time), and whether the reviewer can
-comment on the note itself as a thread without a line anchor.
+Not decided: whether the reviewer can comment on the note itself as a thread
+without a line anchor.
 
 ## Not planned: git-spice stack navigation (2026-09-18)
 

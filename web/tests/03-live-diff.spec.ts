@@ -1,54 +1,53 @@
 import { expect, test } from "@playwright/test";
 import {
   authenticate,
-  cli,
-  cliJSON,
   draftComment,
   readFixtureFile,
   writeFixtureFile,
 } from "./helpers/seed";
 
-// Covers AE7 end-to-end: unsubmitted drafts survive a new round —
-// live on unchanged hunks, outdated on changed ones, none lost, and
-// round creation never blocks. Plus the threads panel partition.
-test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async ({
+// The diff follows the working tree: an edit on disk shows up without a
+// reload. A draft on the changed hunk goes outdated and opens on the
+// file as it was; a draft on the unchanged hunk stays inline.
+test("an edit on disk updates the diff live and outdates the thread on its hunk", async ({
   page,
 }) => {
-  await authenticate(page, "/reviews/1");
+  await authenticate(page, "/");
   await expect(page.getByText("alpha three v2").first()).toBeVisible();
 
-  // Two unsubmitted drafts: one on the alpha hunk (about to change),
-  // one on the beta hunk (stays identical).
   await draftComment(page, "alpha three v2", "alpha draft note");
   await draftComment(page, "beta two v2", "beta draft note");
 
-  // The agent rewrites the alpha hunk and signals round 2 while the
-  // reviewer's drafts are still pending.
+  // The agent rewrites the alpha hunk while the drafts are pending.
   writeFixtureFile(
     "alpha.go",
     readFixtureFile("alpha.go").replace("alpha three v2", "alpha three v3"),
   );
-  const round = await cli(["round", "--review", "1"]);
-  expect(round.code).toBe(0);
-  const created = cliJSON<{ round: { seq: number }; deduped: boolean }>(round);
-  expect(created.round.seq).toBe(2);
-  expect(created.deduped).toBe(false);
 
-  // The UI follows to round 2 live (R7): new content appears.
-  await expect(page.getByText("alpha three v3").first()).toBeVisible();
+  // The page follows within a poll tick.
+  await expect(page.getByText("alpha three v3").first()).toBeVisible({
+    timeout: 10_000,
+  });
 
-  // The beta draft is still attached inline (live anchor).
+  // The beta draft is still inline; the alpha draft is not, but it is
+  // not lost: the panel lists it as outdated.
   await expect(page.getByText("beta draft note")).toBeVisible();
-
-  // The alpha draft is not inline anymore, but it is NOT lost: the
-  // panel lists it as outdated, linked to its origin round (R22).
   await expect(page.getByText("alpha draft note")).not.toBeVisible();
   await page.getByRole("button", { name: /threads/ }).click();
   const panel = page.getByTestId("threads-panel");
   await panel.getByRole("tab", { name: /outdated/ }).click();
   await expect(panel.getByText("alpha draft note")).toBeVisible();
 
-  // Live filter shows the beta draft thread.
+  // Opening it shows the file as it was, with the draft on it.
+  await panel.getByText("alpha draft note").click();
+  const dialog = page.getByTestId("snapshot-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("alpha three v2").first()).toBeVisible();
+  await expect(dialog.getByText("alpha draft note")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+
+  // The live filter shows the beta draft only.
   await panel.getByRole("tab", { name: /^live/ }).click();
   await expect(panel.getByText("beta draft note")).toBeVisible();
   await expect(panel.getByText("alpha draft note")).not.toBeVisible();
@@ -57,14 +56,15 @@ test("round 2 carries drafts: unchanged hunk live, changed hunk outdated", async
 test("threads panel partitions live, outdated, and resolved", async ({
   page,
 }) => {
-  await authenticate(page, "/reviews/1");
+  await authenticate(page, "/");
   await expect(page.getByText("beta draft note")).toBeVisible();
 
-  // Resolve the beta thread (reviewer-only action, R6). The button
-  // sits in a virtualized annotation; dispatch the click directly.
+  // Resolve the beta thread. The button sits in a virtualized
+  // annotation; dispatch the click directly.
   await page
+    .getByTestId(/^thread-/)
+    .filter({ hasText: "beta draft note" })
     .getByRole("button", { name: "Resolve", exact: true })
-    .first()
     .dispatchEvent("click");
   await expect(
     page.getByText("Resolved", { exact: true }).first(),

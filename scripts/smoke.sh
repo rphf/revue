@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Scripted end-to-end loop on a fixture repo (Verification Contract):
-# open -> draft -> submit -> agent reads -> reply -> round 2 ->
-# anchors recomputed. Exercises the real binary and the real server.
+# Scripted end-to-end loop on a fixture repo, against the real binary
+# and the real server: open -> draft -> send -> agent reads -> reply ->
+# an edit on disk outdates the thread -> reverting brings it back ->
+# wait.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,6 +35,10 @@ json() { # json <file> <python-expr over data>
 
 step() { echo "--- $1"; }
 
+# The server re-reads the repository at most twice a second; give an
+# edit on disk time to be seen.
+settle() { sleep 0.7; }
+
 [ -x "$BIN" ] || fail "bin/revue missing; run make build first"
 
 step "fixture repo"
@@ -46,12 +51,13 @@ git -C "$FIXTURE" add -A
 git -C "$FIXTURE" commit -qm c1
 printf 'package main\n\nfunc main() {\n\tprintln("v2")\n}\n' > "$FIXTURE/main.go"
 
-step "open review (auto-starts the server)"
+step "open prints a login link (auto-starts the server)"
 cd "$FIXTURE"
-"$BIN" open --no-browser > "$WORK/open.json"
-REVIEW_ID=$(json "$WORK/open.json" "data['review']['id']")
-CURSOR=$(json "$WORK/open.json" "data['cursor']")
-[ "$REVIEW_ID" -ge 1 ] || fail "no review id in open output"
+URL="$("$BIN" open --no-browser)"
+case "$URL" in
+  http://127.0.0.1:*/auth?token=*) ;;
+  *) fail "unexpected open output: $URL" ;;
+esac
 
 STATE_FILE=$(ls "$REVUE_DATA_DIR"/*/state.json)
 PORT=$(json "$STATE_FILE" "data['port']")
@@ -60,67 +66,73 @@ SERVER_PID=$(json "$STATE_FILE" "data['pid']")
 BASE="http://127.0.0.1:$PORT"
 AUTH=(-H "Authorization: Bearer $TOKEN")
 
-step "reviewer drafts a comment and submits request_changes"
+step "the diff is the working tree"
+curl -sf "${AUTH[@]}" "$BASE/api/diff" > "$WORK/diff.json"
+[ "$(json "$WORK/diff.json" "len(data['files'])")" = "1" ] || fail "expected one changed file"
+[ "$(json "$WORK/diff.json" "data['files'][0]['path']")" = "main.go" ] || fail "wrong changed file"
+[ "$(json "$WORK/diff.json" "data['branch']")" = "main" ] || fail "branch not reported"
+
+step "reviewer drafts a comment; the agent cannot see it"
 curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' \
-  -d '{"path":"main.go","side":"additions","line":4,"body":"use fmt.Println"}' \
-  "$BASE/api/reviews/$REVIEW_ID/threads" > "$WORK/thread.json"
+  -d '{"args":[],"path":"main.go","side":"additions","line":4,"body":"use fmt.Println"}' \
+  "$BASE/api/threads" > "$WORK/thread.json"
 THREAD_ID=$(json "$WORK/thread.json" "data['thread']['id']")
+"$BIN" feedback > "$WORK/pre.json"
+[ "$(json "$WORK/pre.json" "len(data['threads'])")" = "0" ] || fail "draft leaked before send"
 
-# Drafts are invisible to the agent before submit (AE3).
-"$BIN" feedback --review "$REVIEW_ID" --since "$CURSOR" > "$WORK/pre.json"
-[ "$(json "$WORK/pre.json" "len(data['threads'])")" = "0" ] || fail "draft leaked before submit"
-
-curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' \
-  -d '{"verdict":"request_changes","summary":"one fix"}' \
-  "$BASE/api/reviews/$REVIEW_ID/submit" > /dev/null
-
-step "agent reads feedback (verdict + quoted context)"
-"$BIN" feedback --review "$REVIEW_ID" --since "$CURSOR" > "$WORK/fb.json"
-[ "$(json "$WORK/fb.json" "data['verdict']")" = "request_changes" ] || fail "verdict missing"
-[ "$(json "$WORK/fb.json" "data['threads'][0]['quote']['lines'][0]")" = '	println("v2")' ] || fail "quoted snapshot context wrong"
+step "reviewer sends with a note"
+curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"one fix"}' \
+  "$BASE/api/send" > /dev/null
+"$BIN" feedback > "$WORK/fb.json"
+[ "$(json "$WORK/fb.json" "len(data['threads'])")" = "1" ] || fail "sent thread missing"
+[ "$(json "$WORK/fb.json" "data['threads'][0]['quote']['lines'][0]")" = '	println("v2")' ] || fail "quoted snapshot wrong"
+[ "$(json "$WORK/fb.json" "data['lastSend']['note']")" = "one fix" ] || fail "note missing"
+CURSOR=$(json "$WORK/fb.json" "data['cursor']")
 
 step "agent replies in thread"
 "$BIN" reply --thread "$THREAD_ID" -m "switched to fmt.Println" > "$WORK/reply.json"
 [ "$(json "$WORK/reply.json" "data['comment']['authorRole']")" = "agent" ] || fail "reply not recorded as agent"
 
-step "agent implements the change and signals round 2"
+step "an edit on disk outdates the thread; reverting brings it back"
 printf 'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("v2")\n}\n' > "$FIXTURE/main.go"
-"$BIN" round --review "$REVIEW_ID" > "$WORK/round.json"
-[ "$(json "$WORK/round.json" "data['round']['seq']")" = "2" ] || fail "round 2 not created"
-[ "$(json "$WORK/round.json" "data['deduped']")" = "False" ] || fail "round 2 wrongly deduped"
+settle
+curl -sf "${AUTH[@]}" "$BASE/api/diff" > "$WORK/diff2.json"
+[ "$(json "$WORK/diff2.json" "data['anchors'][0]['state']")" = "outdated" ] || fail "thread not outdated after the edit"
+printf 'package main\n\nfunc main() {\n\tprintln("v2")\n}\n' > "$FIXTURE/main.go"
+settle
+curl -sf "${AUTH[@]}" "$BASE/api/diff" > "$WORK/diff3.json"
+[ "$(json "$WORK/diff3.json" "data['anchors'][0]['state']")" = "live" ] || fail "thread not live after the revert"
 
-step "anchors recomputed for round 2"
-curl -sf "${AUTH[@]}" "$BASE/api/reviews/$REVIEW_ID/rounds/2" > "$WORK/round2.json"
-[ "$(json "$WORK/round2.json" "len(data['anchors'])")" -ge 1 ] || fail "no anchors in round 2"
-
-step "identical round signal is a no-op with notice (KTD12)"
-"$BIN" round --review "$REVIEW_ID" > "$WORK/dedupe.json"
-[ "$(json "$WORK/dedupe.json" "data['deduped']")" = "True" ] || fail "identical round not deduped"
+step "the snapshot keeps the file as it was"
+curl -sf "${AUTH[@]}" "$BASE/api/threads/$THREAD_ID/snapshot" > "$WORK/snap.json"
+[ "$(json "$WORK/snap.json" "'println(\"v2\")' in data['newContent']")" = "True" ] || fail "snapshot content wrong"
 
 step "a rebuilt binary restarts the running server on the next call"
 OLD_PID="$(json "$STATE_FILE" "data['pid']")"
 touch "$BIN"
-"$BIN" reviews > "$WORK/reviews-after-rebuild.json" || fail "reviews after rebuild failed"
+"$BIN" url > /dev/null || fail "url after rebuild failed"
 NEW_PID="$(json "$STATE_FILE" "data['pid']")"
 [ "$OLD_PID" != "$NEW_PID" ] || fail "server pid unchanged after the binary changed"
-[ "$(json "$WORK/reviews-after-rebuild.json" "len(data['reviews'])")" = "1" ] || fail "review list lost across the restart"
 SERVER_PID="$NEW_PID"
+curl -sf "${AUTH[@]}" "$BASE/api/threads" > "$WORK/threads.json"
+[ "$(json "$WORK/threads.json" "len(data['threads'])")" = "1" ] || fail "threads lost across the restart"
 
-step "wait: timeout is distinct (exit 4)"
+step "wait: timeout is distinct (exit 3)"
 set +e
-"$BIN" wait --review "$REVIEW_ID" --since "$(json "$WORK/fb.json" "data['cursor']")" --timeout 1s > "$WORK/wait1.json"
+"$BIN" wait --since "$CURSOR" --timeout 1s > "$WORK/wait1.json"
 CODE=$?
 set -e
-[ "$CODE" = "4" ] || fail "wait timeout exit = $CODE, want 4"
+[ "$CODE" = "3" ] || fail "wait timeout exit = $CODE, want 3"
 
-step "wait: close unblocks distinctly (exit 5, AE8)"
-( sleep 0.3 && curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{}' \
-    "$BASE/api/reviews/$REVIEW_ID/close" > /dev/null ) &
+step "wait: a send unblocks (exit 0)"
+( sleep 0.3 && curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"go"}' \
+    "$BASE/api/send" > /dev/null ) &
 set +e
-"$BIN" wait --review "$REVIEW_ID" --since "$(json "$WORK/fb.json" "data['cursor']")" --timeout 30s > "$WORK/wait2.json"
+"$BIN" wait --since "$CURSOR" --timeout 30s > "$WORK/wait2.json"
 CODE=$?
 set -e
 wait
-[ "$CODE" = "5" ] || fail "wait close exit = $CODE, want 5"
+[ "$CODE" = "0" ] || fail "wait send exit = $CODE, want 0"
+[ "$(json "$WORK/wait2.json" "data['outcome']")" = "sent" ] || fail "wait outcome not sent"
 
 echo "SMOKE OK"

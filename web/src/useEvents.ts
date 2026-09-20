@@ -1,21 +1,23 @@
 import { useEffect, useEffectEvent, useState } from "react";
+import { argsQuery } from "./api";
 import type { RevueEvent } from "./types";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting";
 
-// Subscribes to a review's SSE stream. EventSource reconnects on its
-// own; we surface the state so the UI can show a non-blocking banner
-// that never touches unsent form text.
+// Subscribes to the event stream for one diff: persisted thread events
+// plus diff.changed notices for these arguments. EventSource reconnects
+// on its own; we surface the state so the UI can show a non-blocking
+// banner that never touches unsent form text.
 export function useEvents(
-  reviewId: number | null,
+  args: string[],
   onEvent: (e: RevueEvent) => void,
 ): ConnectionState {
   const [state, setState] = useState<ConnectionState>("connecting");
   const handle = useEffectEvent(onEvent);
+  const query = argsQuery(args);
 
   useEffect(() => {
-    if (reviewId === null) return;
-    const es = new EventSource(`/api/reviews/${reviewId}/events`);
+    const es = new EventSource(`/api/events${query}`);
     es.onopen = () => setState("open");
     es.onerror = () => setState("reconnecting");
     es.onmessage = (m) => {
@@ -26,7 +28,7 @@ export function useEvents(
       }
     };
     return () => es.close();
-  }, [reviewId]);
+  }, [query]);
 
   return state;
 }

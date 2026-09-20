@@ -2,8 +2,8 @@
 # Playwright webServer command: builds the binary if needed, creates a
 # throwaway fixture git repo and temp data dir, pins the server to a
 # fixed test port + token (by pre-writing the state file the server
-# reuses), seeds review #1 through the real CLI, then holds the server
-# in the foreground for Playwright to manage.
+# reuses), then holds the server in the foreground for Playwright to
+# manage. Nothing is seeded: the page shows the working tree as is.
 set -euo pipefail
 
 PORT="${REVUE_E2E_PORT:?REVUE_E2E_PORT not set}"
@@ -26,7 +26,7 @@ if [ ! -x "$BIN" ]; then
 fi
 
 # Fixture repo: two committed files, both modified in the worktree so
-# the seeded review has two independent hunks (AE7 needs that).
+# the diff has two independent hunks.
 REPO="$E2E/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q -b main
@@ -61,25 +61,11 @@ sed -i.bak 's/beta two v1/beta two v2/' "$REPO/beta.go" && rm "$REPO/beta.go.bak
 REPO="$(git -C "$REPO" rev-parse --path-format=absolute --show-toplevel)"
 
 # Pin port and token: the server reuses both from a recorded state
-# file (KTD5), so pre-writing one fixes the test URL.
+# file, so pre-writing one fixes the test URL.
 KEY="$(printf '%s' "$REPO" | shasum -a 256 | awk '{print $1}' | cut -c1-16)"
 mkdir -p "$REVUE_DATA_DIR/$KEY"
 printf '{"port":%s,"token":"%s","pid":0}' "$PORT" "$TOKEN" > "$REVUE_DATA_DIR/$KEY/state.json"
 chmod 600 "$REVUE_DATA_DIR/$KEY/state.json"
 
-"$BIN" serve --repo "$REPO" --idle-timeout 0 &
-SERVE_PID=$!
-trap 'kill "$SERVE_PID" 2>/dev/null || true' EXIT
-
-for _ in $(seq 1 100); do
-  if curl -sf -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/healthz" > /dev/null 2>&1; then
-    break
-  fi
-  sleep 0.1
-done
-
-# Seed review #1 through the real CLI (it finds the healthy server).
-(cd "$REPO" && "$BIN" open --no-browser > "$E2E/seed-open.json")
-
-echo "e2e server ready on port $PORT (review seeded)"
-wait "$SERVE_PID"
+echo "e2e server starting on port $PORT"
+exec "$BIN" serve --repo "$REPO" --idle-timeout 0

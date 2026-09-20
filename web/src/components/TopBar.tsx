@@ -1,25 +1,14 @@
 import type { ReactNode } from "react";
 import {
-  CircleSlashIcon,
   Columns2Icon,
-  EllipsisIcon,
-  HistoryIcon,
   MessageSquareTextIcon,
-  RotateCcwIcon,
   Rows3Icon,
   SendIcon,
 } from "lucide-react";
 import type { Theme } from "../theme";
-import type { Review, RoundSummary } from "../types";
 import type { DiffStyle } from "./DiffView";
-import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -27,9 +16,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import ReviewSwitcher from "./ReviewSwitcher";
-import RoundSwitcher from "./RoundSwitcher";
-import StateBadge from "./StateBadge";
+import DiffPicker from "./DiffPicker";
 import ThemeToggle from "./ThemeToggle";
 
 // The mark, same drawing as public/favicon.svg: a hunk with its last
@@ -72,76 +59,73 @@ export function TopBarShell({ children }: { children: ReactNode }) {
   );
 }
 
+// The diff follows the working tree; the dot says so, and rings once
+// each time the page picked up a change. The ring remounts on every
+// pulse so its one-shot animation restarts.
+function LiveDot({ pulse }: { pulse: number }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="relative mx-1 inline-flex size-2 shrink-0"
+          role="img"
+          aria-label="Live"
+          data-testid="live-dot"
+        >
+          <span
+            key={pulse}
+            className={cn(
+              "absolute inset-0 rounded-full bg-added",
+              pulse > 0 && "live-pulse",
+            )}
+          />
+          <span className="relative inline-flex size-2 rounded-full bg-added" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Follows the working tree</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export interface TopBarProps {
-  review?: Review;
-  rounds: RoundSummary[];
-  currentSeq: number | null;
-  latestSeq: number | null;
-  roundBusy: boolean;
-  onSelectRound: (seq: number) => void;
+  branch?: string;
+  args: string[];
+  onNavigate: (to: string) => void;
+  pulse: number;
   threadCount: number;
   panelOpen: boolean;
   onTogglePanel: () => void;
   draftCount: number;
-  onSubmit: () => void;
-  onClose: () => void;
-  onReopen: () => void;
+  onSend: () => void;
   diffStyle: DiffStyle;
   onDiffStyleChange: (style: DiffStyle) => void;
   theme: Theme;
   onToggleTheme: () => void;
-  onNavigate: (to: string) => void;
 }
 
-// One bar for the whole review: what is being reviewed on the left,
-// how to look at it and what to do with it on the right.
+// One bar for the page: what is shown on the left, how to look at it
+// and what to do with it on the right.
 export default function TopBar({
-  review,
-  rounds,
-  currentSeq,
-  latestSeq,
-  roundBusy,
-  onSelectRound,
+  branch,
+  args,
+  onNavigate,
+  pulse,
   threadCount,
   panelOpen,
   onTogglePanel,
   draftCount,
-  onSubmit,
-  onClose,
-  onReopen,
+  onSend,
   diffStyle,
   onDiffStyleChange,
   theme,
   onToggleTheme,
-  onNavigate,
 }: TopBarProps) {
-  const state = review?.state ?? "open";
-  const pastRound =
-    currentSeq !== null && latestSeq !== null && currentSeq !== latestSeq;
-
   return (
     <TopBarShell>
       <Brand />
       <Separator orientation="vertical" className="mx-1 h-5!" />
-      <ReviewSwitcher current={review} onNavigate={onNavigate} />
-      {review && <StateBadge state={review.state} />}
-      {review && currentSeq !== null && (
-        <>
-          <Separator orientation="vertical" className="mx-1 h-5!" />
-          <RoundSwitcher
-            rounds={rounds}
-            current={currentSeq}
-            disabled={roundBusy}
-            onSelect={onSelectRound}
-          />
-        </>
-      )}
-      {pastRound && (
-        <Badge variant="secondary" className="gap-1 text-renamed">
-          <HistoryIcon />
-          viewing a past round
-        </Badge>
-      )}
+      <DiffPicker branch={branch} args={args} onNavigate={onNavigate} />
+      <LiveDot pulse={pulse} />
 
       <div className="ml-auto flex items-center gap-1">
         <Tooltip>
@@ -193,47 +177,20 @@ export default function TopBar({
 
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
 
-        {review && state === "open" ? (
-          <>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="More">
-                  <EllipsisIcon />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem onSelect={onClose}>
-                  <CircleSlashIcon />
-                  Close review
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              size="sm"
-              className="ml-1"
-              data-testid="open-submit"
-              onClick={onSubmit}
-            >
-              <SendIcon />
-              Submit review
-              {draftCount > 0 && (
-                <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">
-                  {draftCount}
-                </span>
-              )}
-            </Button>
-          </>
-        ) : review ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-1"
-            onClick={onReopen}
-          >
-            <RotateCcwIcon />
-            Reopen review
-          </Button>
-        ) : null}
+        <Button
+          size="sm"
+          className="ml-1"
+          data-testid="open-send"
+          onClick={onSend}
+        >
+          <SendIcon />
+          Send
+          {draftCount > 0 && (
+            <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">
+              {draftCount}
+            </span>
+          )}
+        </Button>
       </div>
     </TopBarShell>
   );

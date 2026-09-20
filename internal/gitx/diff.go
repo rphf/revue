@@ -1,9 +1,12 @@
 // Package gitx captures git diffs: raw patch text plus per-file
-// metadata and full old/new contents, ready to freeze as a round.
+// metadata and full old/new contents, ready to serve as a diff or to
+// freeze as a thread's snapshot.
 package gitx
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -236,7 +239,7 @@ func readWorktree(full string) ([]byte, error) {
 
 // isWorkingTreeCapture reports whether the diff's new side is the
 // working tree with no revision pinned: only then do untracked files
-// belong in the review (R1).
+// belong in the diff.
 func isWorkingTreeCapture(args []string) bool {
 	// Anything before a bare "--" pins a side: --staged makes the index
 	// the new side, a revision makes the old side a commit.
@@ -397,4 +400,51 @@ func untrackedSymlink(repoRoot, path, full string) (File, string, error) {
 	patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\nindex %s..%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1 @@\n+%s\n\\ No newline at end of file\n",
 		path, path, strings.Repeat("0", len(hash)), hash, path, target)
 	return File{Path: path, Status: StatusAdded, NewContent: []byte(target)}, patch, nil
+}
+
+// Fingerprint identifies the state a Capture of args would see, at a
+// fraction of its cost: the raw patch git prints, plus the untracked
+// files with their sizes and mtimes when the working tree is the new
+// side. Two equal fingerprints mean nothing changed for this diff.
+func Fingerprint(repoRoot string, args []string) (string, error) {
+	if err := ValidateArgs(args); err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	diffArgs := append([]string{"diff", "--no-color", "--full-index", "--no-ext-diff", "--no-textconv", "--find-renames"}, args...)
+	out, err := git(repoRoot, diffArgs...)
+	if err != nil {
+		return "", err
+	}
+	h.Write(out)
+	if isWorkingTreeCapture(args) {
+		lsArgs := []string{"ls-files", "--others", "--exclude-standard", "-z"}
+		if paths := pathspecs(args); len(paths) > 0 {
+			lsArgs = append(append(lsArgs, "--"), paths...)
+		}
+		out, err := git(repoRoot, lsArgs...)
+		if err != nil {
+			return "", err
+		}
+		for _, p := range strings.Split(string(out), "\x00") {
+			if p == "" {
+				continue
+			}
+			info, err := os.Lstat(filepath.Join(repoRoot, p))
+			if err != nil {
+				continue // vanished between the listing and the stat
+			}
+			_, _ = fmt.Fprintf(h, "\x00%s\x00%d\x00%d", p, info.Size(), info.ModTime().UnixNano())
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Branch names the checked-out branch, or "HEAD" when detached.
+func Branch(repoRoot string) string {
+	out, err := git(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

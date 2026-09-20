@@ -8,6 +8,8 @@ export interface CommentFormProps {
   placeholder?: string;
   submitLabel?: string;
   autoFocus?: boolean;
+  // Reports every edit, for a caller that keeps the text across remounts.
+  onChange?: (body: string) => void;
   onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
 }
@@ -24,6 +26,7 @@ export default function CommentForm({
   placeholder = "Leave a comment",
   submitLabel = "Add comment",
   autoFocus = true,
+  onChange,
   onSubmit,
   onCancel,
 }: CommentFormProps) {
@@ -72,7 +75,10 @@ export default function CommentForm({
         value={body}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        onChange={(e) => setBody(e.target.value)}
+        onChange={(e) => {
+          setBody(e.target.value);
+          onChange?.(e.target.value);
+        }}
         onKeyDown={onKeyDown}
         rows={3}
         className="min-h-18 bg-background text-sm"

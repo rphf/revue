@@ -2,41 +2,27 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ThreadsPanel from "./ThreadsPanel";
-import type { Thread, ThreadAnchor } from "../types";
+import type { Thread, ThreadPosition } from "../types";
 
-const CURRENT_ROUND = 20;
-const ORIGIN_ROUND = 10;
-
-let nextId = 1;
-function anchor(
+function position(
   threadId: number,
-  roundId: number,
-  state: ThreadAnchor["state"],
-  path = "a.go",
-): ThreadAnchor {
-  return {
-    id: nextId++,
-    threadId,
-    roundId,
-    path,
-    side: "additions",
-    line: 5,
-    state,
-  };
+  state: ThreadPosition["state"],
+  line = 5,
+): ThreadPosition {
+  return { threadId, path: "a.go", side: "additions", line, state };
 }
 
 function thread(
   id: number,
-  opts: { resolved?: boolean; anchors: ThreadAnchor[] },
+  opts: { resolved?: boolean; path?: string } = {},
 ): Thread {
   return {
     id,
-    reviewId: 1,
-    originRoundId: ORIGIN_ROUND,
+    path: opts.path ?? "a.go",
+    side: "additions",
+    line: 5,
     resolved: opts.resolved ?? false,
     createdAt: "",
-    originRoundSeq: 1,
-    anchors: opts.anchors,
     comments: [
       {
         id: id * 100,
@@ -52,28 +38,20 @@ function thread(
 
 describe("ThreadsPanel", () => {
   const threads = [
-    // Live in the current round.
-    thread(1, {
-      anchors: [
-        anchor(1, ORIGIN_ROUND, "live"),
-        anchor(1, CURRENT_ROUND, "live"),
-      ],
-    }),
-    // Outdated in the current round.
-    thread(2, {
-      anchors: [
-        anchor(2, ORIGIN_ROUND, "live"),
-        anchor(2, CURRENT_ROUND, "outdated"),
-      ],
-    }),
-    // Resolved (and live) — resolved wins.
-    thread(3, { resolved: true, anchors: [anchor(3, CURRENT_ROUND, "live")] }),
-    // Orphaned: no anchor in the current round at all (file gone) —
-    // still reachable, classified outdated (R22).
-    thread(4, {
-      anchors: [anchor(4, ORIGIN_ROUND, "live", "deleted/file.go")],
-    }),
+    // Live in the shown diff, at a shifted line.
+    thread(1),
+    // Its hunk changed: outdated, shown at its origin.
+    thread(2),
+    // Resolved (and live): resolved wins.
+    thread(3, { resolved: true }),
+    // Its file is gone from the diff: no position at all, still listed.
+    thread(4, { path: "deleted/file.go" }),
   ];
+  const positions = new Map<number, ThreadPosition>([
+    [1, position(1, "live", 9)],
+    [2, position(2, "outdated")],
+    [3, position(3, "live")],
+  ]);
 
   // The filter tabs activate on pointer down, as Radix tabs do, so the
   // test drives them with a full pointer sequence.
@@ -82,7 +60,7 @@ describe("ThreadsPanel", () => {
     render(
       <ThreadsPanel
         threads={threads}
-        currentRoundId={CURRENT_ROUND}
+        positions={positions}
         onJump={() => {}}
         onClose={() => {}}
       />,
@@ -108,32 +86,36 @@ describe("ThreadsPanel", () => {
     expect(rows[0]).toHaveTextContent("thread 3 body");
   });
 
-  it("keeps orphaned threads reachable with their origin-round anchor shown", () => {
+  it("shows the live line for live threads and the origin otherwise", () => {
     render(
       <ThreadsPanel
         threads={threads}
-        currentRoundId={CURRENT_ROUND}
+        positions={positions}
         onJump={() => {}}
         onClose={() => {}}
       />,
     );
-    const orphan = screen.getByTestId("panel-thread-4");
-    expect(orphan).toHaveTextContent("deleted/file.go:5");
-    expect(orphan).toHaveTextContent("round 1");
+    expect(screen.getByTestId("panel-thread-1")).toHaveTextContent("a.go:9");
+    expect(screen.getByTestId("panel-thread-2")).toHaveTextContent(
+      "not in this diff",
+    );
+    expect(screen.getByTestId("panel-thread-4")).toHaveTextContent(
+      "deleted/file.go:5",
+    );
   });
 
-  it("reports jumps with the current-round anchor when present", () => {
+  it("reports jumps with the thread's position when there is one", () => {
     const onJump = vi.fn();
     render(
       <ThreadsPanel
         threads={threads}
-        currentRoundId={CURRENT_ROUND}
+        positions={positions}
         onJump={onJump}
         onClose={() => {}}
       />,
     );
     fireEvent.click(screen.getByTestId("panel-thread-1"));
-    expect(onJump).toHaveBeenCalledWith(threads[0], threads[0].anchors[1]);
+    expect(onJump).toHaveBeenCalledWith(threads[0], positions.get(1));
 
     fireEvent.click(screen.getByTestId("panel-thread-4"));
     expect(onJump).toHaveBeenCalledWith(threads[3], undefined);

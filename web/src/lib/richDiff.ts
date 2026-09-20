@@ -147,16 +147,16 @@ export function diffBlocks(
 // view, from the round's frozen snapshot, and keeps the rendered blocks
 // per review and round. Rounds never change, so nothing here goes stale.
 export function useRichDocs(
-  reviewId: number,
-  roundSeq: number | null,
+  args: string[],
+  version: number | null,
   paths: ReadonlySet<string>,
 ): ReadonlyMap<string, RichDoc> {
-  const scope = `${reviewId}:${roundSeq}`;
+  const scope = `${JSON.stringify(args)}:${version}`;
   const [docs, setDocs] = useState<Map<string, RichDoc>>(new Map());
   const requested = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (roundSeq === null) return;
+    if (version === null) return;
     for (const path of paths) {
       const key = `${scope}:${path}`;
       if (requested.current.has(key)) continue;
@@ -166,12 +166,10 @@ export function useRichDocs(
       );
       const resolveImage = (src: string) => {
         const repoPath = resolveRepoPath(path, src);
-        return repoPath === null
-          ? src
-          : api.assetUrl(reviewId, roundSeq, repoPath);
+        return repoPath === null ? src : api.assetUrl(repoPath);
       };
       api
-        .getFileVersions(reviewId, roundSeq, path)
+        .getDiffFile(args, path)
         .then((v) => {
           setDocs((prev) =>
             new Map(prev).set(key, {
@@ -192,7 +190,7 @@ export function useRichDocs(
           );
         });
     }
-  }, [reviewId, roundSeq, scope, paths]);
+  }, [args, version, scope, paths]);
 
   // Stable across renders while nothing changed: the diff pane keys
   // its item versions on this map's contents, not its identity, but the

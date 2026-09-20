@@ -3,12 +3,11 @@ import {
   BotIcon,
   CheckIcon,
   CircleCheckIcon,
-  HistoryIcon,
   ReplyIcon,
   UserIcon,
 } from "lucide-react";
 import { api } from "../api";
-import type { AnchorState, ReviewState, Thread as ThreadType } from "../types";
+import type { Thread as ThreadType } from "../types";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -18,22 +17,13 @@ import Markdown from "./Markdown";
 
 export interface ThreadProps {
   thread: ThreadType;
-  anchorState?: AnchorState;
-  reviewState: ReviewState;
   onChanged: () => void;
-  onJumpToOrigin?: (roundSeq: number) => void;
 }
 
 // A comment thread: comments in order with author roles, draft
-// affordances (edit/delete before submit), reply, and reviewer-only
-// resolve (R4, R5, R6).
-export default function Thread({
-  thread,
-  anchorState,
-  reviewState,
-  onChanged,
-  onJumpToOrigin,
-}: ThreadProps) {
+// affordances (edit/delete before send), reply, and reviewer-only
+// resolve.
+export default function Thread({ thread, onChanged }: ThreadProps) {
   const [replying, setReplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -53,37 +43,17 @@ export default function Thread({
     void run(api.deleteComment(id));
   };
 
-  const outdated = anchorState === "outdated";
-
   return (
     <div
       className={cn("annotation-card", thread.resolved && "opacity-75")}
       data-testid={`thread-${thread.id}`}
     >
-      {(thread.resolved || outdated) && (
+      {thread.resolved && (
         <div className="flex items-center gap-1.5 border-b px-3 py-1.5">
-          {thread.resolved && (
-            <Badge variant="outline" className="border-added/40 text-added">
-              <CheckIcon />
-              Resolved
-            </Badge>
-          )}
-          {outdated && (
-            <Badge
-              asChild
-              variant="outline"
-              className="border-renamed/40 text-renamed hover:bg-renamed/10"
-            >
-              <button
-                type="button"
-                title="The code this thread was anchored to changed; view it in its original round"
-                onClick={() => onJumpToOrigin?.(thread.originRoundSeq)}
-              >
-                <HistoryIcon />
-                Outdated · round {thread.originRoundSeq}
-              </button>
-            </Badge>
-          )}
+          <Badge variant="outline" className="border-added/40 text-added">
+            <CheckIcon />
+            Resolved
+          </Badge>
         </div>
       )}
       <ul className="divide-y">
@@ -222,17 +192,15 @@ export default function Thread({
           </div>
         ) : (
           <>
-            {reviewState !== "closed" && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setReplying(true)}
-              >
-                <ReplyIcon />
-                Reply
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={() => setReplying(true)}
+            >
+              <ReplyIcon />
+              Reply
+            </Button>
             <Button
               type="button"
               variant="ghost"

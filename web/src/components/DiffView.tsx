@@ -23,11 +23,12 @@ import {
   FileDiffIcon,
   UnfoldVerticalIcon,
 } from "lucide-react";
-import type { ReviewState, RoundFile, Side, Thread } from "../types";
+import type { DiffFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { LAYOUT, THEMES, UNSAFE_CSS } from "./codeViewStyle";
 import { treePathCompare } from "./treePath";
 
 export type DiffStyle = "unified" | "split";
@@ -40,7 +41,6 @@ export interface AnnotationMeta {
   threadId?: number;
   rev?: string;
   thread?: Thread;
-  reviewState?: ReviewState;
   pending?: PendingComment;
   rich?: RichDoc;
 }
@@ -88,7 +88,7 @@ export interface DiffViewHandle {
 
 export interface DiffViewProps {
   files: FileDiffMetadata[];
-  roundFiles: RoundFile[];
+  diffFiles: DiffFile[];
   diffStyle: DiffStyle;
   theme: Theme;
   annotationsByFile?: Map<string, DiffLineAnnotation<AnnotationMeta>[]>;
@@ -126,26 +126,6 @@ const isRichItemId = (id: string) => id.startsWith(RICH_PREFIX);
 const pathFromItemId = (id: string) =>
   isRichItemId(id) ? id.slice(RICH_PREFIX.length) : id;
 
-// GitHub's own Shiki themes for the code; the surrounding chrome is
-// the app palette. The -default variants are GitHub's current colors
-// and their backgrounds sit next to the neutral page without a seam.
-const THEMES = { light: "github-light-default", dark: "github-dark-default" };
-
-// Item spacing lives in the CodeView layout, not in CSS, so the
-// virtualizer's offsets and the painted gaps agree. The bottom padding
-// lets the last file scroll to the top of the pane.
-const LAYOUT = { paddingTop: 12, paddingBottom: 480, gap: 16 };
-
-// Each file renders in its own shadow root; this is the one way to give
-// it a card outline. The app's border token inherits through the
-// shadow boundary. No overflow clipping, or the sticky header stops
-// sticking.
-const UNSAFE_CSS = `
-:host { border: 1px solid var(--border); border-radius: var(--radius-lg); }
-[data-diffs-header] { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
-[data-diff], [data-file] { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
-`;
-
 // The whole diff pane is ONE CodeView (the diffs.com architecture):
 // every file is an item in a single virtualized list whose layout is
 // computed from line counts up front — no per-file mounting or height
@@ -155,7 +135,7 @@ const UNSAFE_CSS = `
 export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   {
     files,
-    roundFiles,
+    diffFiles,
     diffStyle,
     theme,
     annotationsByFile,
@@ -189,8 +169,8 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   );
 
   const binaryByPath = useMemo(
-    () => new Map(roundFiles.filter((f) => f.isBinary).map((f) => [f.path, f])),
-    [roundFiles],
+    () => new Map(diffFiles.filter((f) => f.isBinary).map((f) => [f.path, f])),
+    [diffFiles],
   );
 
   // Item versions bump only when a file's diff or its annotations
@@ -389,7 +369,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                   variant="ghost"
                   size="xs"
                   className="text-muted-foreground hover:text-foreground"
-                  title="Load full file contents from the round snapshot to expand hunk context"
+                  title="Load the full file to expand hunk context"
                   onClick={() => onExpandContext(item.id)}
                 >
                   <UnfoldVerticalIcon />

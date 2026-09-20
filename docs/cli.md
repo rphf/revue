@@ -1,11 +1,13 @@
 # CLI reference
 
-`revue open` accepts the same arguments as `git diff`:
+`revue open` shows a diff in the browser. It takes the same arguments as
+`git diff`, and the page follows the working tree as files change:
 
 ```sh
-revue open                    # working tree, untracked files included
+revue                         # working tree against HEAD, untracked files included
 revue open -- web docs        # the same, limited to paths under web/ and docs/
 revue open --staged           # index
+revue open main               # working tree against main
 revue open main...HEAD        # this branch against its merge base with main
 revue open abc123 def456      # two commits
 ```
@@ -14,9 +16,9 @@ revue open abc123 def456      # two commits
 
 | Command | Effect |
 | --- | --- |
-| `revue open [git-diff args]` | Capture a diff, create a review, open the browser. `--no-browser` only prints. `--reuse` adds a round to this branch's open review with the same arguments instead of creating another review. |
-| `revue url [--review N]` | Print the browser URL of a review. Default: this branch's open review, else the review list. |
-| `revue serve` | Run the per-repo server in the foreground. Other commands start it on demand. |
+| `revue [open] [git-diff args]` | Open the browser on that diff and print the login link. `--no-browser` only prints. A bad argument fails here, with git's message. An empty diff opens as "No changes". |
+| `revue url` | Print a login link for the default diff. |
+| `revue serve` | Run the server in the foreground, as the entry point of a container or a service. On a laptop nobody types it: every other command starts the server in the background, and it stops after 30 minutes idle. |
 | `revue version` | Print the version. |
 
 ## Agent commands
@@ -25,16 +27,14 @@ Agent commands print JSON on stdout, except `export`, which prints markdown.
 
 | Command | Effect |
 | --- | --- |
-| `revue reviews` | List this repository's reviews. |
-| `revue feedback [--review N] [--since C]` | Read threads, comments, and verdicts. `--since` replays only what happened after cursor C. |
+| `revue feedback [--since C]` | Every unresolved thread with its sent comments and the code it was written on, the reviewer's last send with its note, and the events after cursor C. The output carries the new `cursor`. |
 | `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent. |
-| `revue round [--review N]` | Signal that a new round is ready. An identical diff is a no-op with a notice. |
-| `revue wait [--review N] [--since C] [--timeout D]` | Block until the reviewer submits or closes. |
-| `revue export [--review N]` | Print the review as markdown: source, verdicts by round, then threads grouped by file with quoted code and replies. Drafts are excluded. |
+| `revue wait [--since C] [--timeout D]` | Block until the reviewer sends comments. The default timeout is 5m. |
+| `revue export` | Print the threads as markdown, grouped by file, with quoted code and every sent comment. Drafts are excluded. |
 
-Without `--review`, a command targets the single open review of the current
-branch. When there is none, or more than one, the command says so and exits
-with a distinct code.
+Threads belong to the repository, not to a diff. `feedback` quotes the code
+each thread was written on, so the agent never needs to look at the diff to
+know what a comment refers to.
 
 ## Exit codes
 
@@ -45,7 +45,4 @@ Exit codes are stable across releases:
 | 0 | Success |
 | 1 | Unexpected error |
 | 2 | Bad arguments or invalid request |
-| 3 | No open review for this branch |
-| 4 | `wait` timed out |
-| 5 | The review is closed |
-| 6 | The review is approved and read-only for the agent |
+| 3 | `wait` timed out |

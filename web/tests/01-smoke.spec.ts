@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { authenticate } from "./helpers/seed";
 
-// The seeded review renders tree and diff (R2).
-test("seeded review renders the file tree and the diff", async ({ page }) => {
-  await authenticate(page, "/reviews/1");
+// The page renders the working tree's diff: tree and diff, plus the
+// branch and the diff's name in the top bar.
+test("the page renders the file tree and the diff of the working tree", async ({
+  page,
+}) => {
+  await authenticate(page, "/");
 
-  // Token-free URL after the exchange (R23).
+  // Token-free URL after the exchange.
   expect(page.url()).not.toContain("token=");
 
   // Tree: both changed files with modified badges.
@@ -21,7 +24,9 @@ test("seeded review renders the file tree and the diff", async ({ page }) => {
   await expect(page.getByText("alpha three v1").first()).toBeVisible();
   await expect(page.getByText("beta two v2").first()).toBeVisible();
 
-  // Review chrome.
-  await expect(page.getByText("#1", { exact: false }).first()).toBeVisible();
-  await expect(page.getByText("open", { exact: true })).toBeVisible();
+  // Top bar: the branch, the diff's name, the live dot.
+  const picker = page.getByRole("button", { name: "Change diff" });
+  await expect(picker).toContainText("main");
+  await expect(picker).toContainText("uncommitted");
+  await expect(page.getByTestId("live-dot")).toBeVisible();
 });

@@ -1,9 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { authenticate, cli, cliJSON, writeFixtureFile } from "./helpers/seed";
+import { authenticate, writeFixtureFile } from "./helpers/seed";
 
-// KTD12: everything reverted is a valid round and renders the empty
-// state in both the diff pane and the tree.
-test("empty-diff round renders the empty state", async ({ page }) => {
+// Everything reverted on disk: the page follows to the empty state in
+// both the diff pane and the tree, without a reload.
+test("a reverted working tree renders the empty state live", async ({
+  page,
+}) => {
+  await authenticate(page, "/");
+  await expect(page.getByText("beta two v2").first()).toBeVisible();
+
   // Restore both files to their committed contents (must mirror
   // tests/scripts/start-test-server.sh).
   writeFixtureFile(
@@ -30,14 +35,9 @@ func beta() {
 `,
   );
 
-  const round = await cli(["round", "--review", "1"]);
-  expect(round.code).toBe(0);
-  const created = cliJSON<{ round: { seq: number }; deduped: boolean }>(round);
-  expect(created.deduped).toBe(false);
-
-  await authenticate(page, "/reviews/1");
   await expect(page.getByTestId("diff-empty")).toHaveText(
     /No changes in this diff/,
+    { timeout: 10_000 },
   );
   await expect(page.getByText("No changed files")).toBeVisible();
 });

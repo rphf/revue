@@ -33,12 +33,11 @@ function comment(
 function thread(comments: Comment[], resolved = false): ThreadType {
   return {
     id: 1,
-    reviewId: 1,
-    originRoundId: 10,
+    path: "a.go",
+    side: "additions",
+    line: 5,
     resolved,
     createdAt: "",
-    originRoundSeq: 1,
-    anchors: [],
     comments,
   };
 }
@@ -52,7 +51,7 @@ describe("Thread", () => {
       comment("agent", "second: because of batching"),
       comment("reviewer", "third: fair enough"),
     ]);
-    render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
+    render(<Thread thread={t} onChanged={() => {}} />);
 
     const items = screen.getAllByTestId(/comment-/);
     expect(items).toHaveLength(3);
@@ -70,7 +69,7 @@ describe("Thread", () => {
         'before <script>window.__pwned = true</script> <img src=x onerror="window.__pwned=true"> after',
       ),
     ]);
-    render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
+    render(<Thread thread={t} onChanged={() => {}} />);
     expect(document.querySelector("script")).toBeNull();
     const img = document.querySelector("img");
     expect(img?.getAttribute("onerror") ?? null).toBeNull();
@@ -85,7 +84,7 @@ describe("Thread", () => {
     const onChanged = vi.fn();
     const draft = comment("reviewer", "draft body", true);
     const t = thread([draft]);
-    render(<Thread thread={t} reviewState="open" onChanged={onChanged} />);
+    render(<Thread thread={t} onChanged={onChanged} />);
 
     expect(screen.getByText("Draft")).toBeInTheDocument();
 
@@ -112,7 +111,7 @@ describe("Thread", () => {
 
   it("hides edit/delete on submitted comments", () => {
     const t = thread([comment("reviewer", "published", false)]);
-    render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
+    render(<Thread thread={t} onChanged={() => {}} />);
     expect(
       screen.queryByRole("button", { name: "Edit" }),
     ).not.toBeInTheDocument();
@@ -123,7 +122,7 @@ describe("Thread", () => {
 
   it("replies through the api", async () => {
     const t = thread([comment("reviewer", "question")]);
-    render(<Thread thread={t} reviewState="open" onChanged={() => {}} />);
+    render(<Thread thread={t} onChanged={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     fireEvent.change(screen.getByRole("textbox"), {
       target: { value: "an answer" },
@@ -134,9 +133,7 @@ describe("Thread", () => {
 
   it("resolves and unresolves", async () => {
     const t = thread([comment("reviewer", "x")]);
-    const { rerender } = render(
-      <Thread thread={t} reviewState="open" onChanged={() => {}} />,
-    );
+    const { rerender } = render(<Thread thread={t} onChanged={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
     await waitFor(() =>
       expect(api.resolveThread).toHaveBeenCalledWith(1, true),
@@ -145,7 +142,7 @@ describe("Thread", () => {
     rerender(
       <Thread
         thread={thread([comment("reviewer", "x")], true)}
-        reviewState="open"
+
         onChanged={() => {}}
       />,
     );
@@ -154,21 +151,5 @@ describe("Thread", () => {
     await waitFor(() =>
       expect(api.resolveThread).toHaveBeenCalledWith(1, false),
     );
-  });
-
-  it("links outdated threads to their origin round", () => {
-    const jump = vi.fn();
-    const t = thread([comment("reviewer", "old context")]);
-    render(
-      <Thread
-        thread={t}
-        anchorState="outdated"
-        reviewState="open"
-        onChanged={() => {}}
-        onJumpToOrigin={jump}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Outdated · round 1/ }));
-    expect(jump).toHaveBeenCalledWith(1);
   });
 });

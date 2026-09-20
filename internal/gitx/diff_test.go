@@ -396,3 +396,44 @@ func TestModifiedTrackedSymlinkReadsLinkTarget(t *testing.T) {
 		t.Errorf("link: got %+v, want modified a.txt -> b.txt", f)
 	}
 }
+
+func TestFingerprintFollowsTrackedAndUntrackedChanges(t *testing.T) {
+	repo := initRepo(t)
+	write(t, repo, "a.txt", "one\ntwo\n")
+	commitAll(t, repo, "c1")
+	fp1, err := Fingerprint(repo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp1b, _ := Fingerprint(repo, nil)
+	if fp1 != fp1b {
+		t.Fatal("fingerprint not stable on an unchanged tree")
+	}
+
+	write(t, repo, "a.txt", "changed\n")
+	fp2, _ := Fingerprint(repo, nil)
+	if fp2 == fp1 {
+		t.Error("tracked edit did not move the fingerprint")
+	}
+
+	write(t, repo, "new.txt", "hello\n")
+	fp3, _ := Fingerprint(repo, nil)
+	if fp3 == fp2 {
+		t.Error("untracked file did not move the fingerprint")
+	}
+
+	// The untracked file is not part of a staged capture.
+	s1, _ := Fingerprint(repo, []string{"--staged"})
+	write(t, repo, "new.txt", "hello again\n")
+	s2, _ := Fingerprint(repo, []string{"--staged"})
+	if s1 != s2 {
+		t.Error("staged fingerprint moved on an untracked edit")
+	}
+
+	if _, err := Fingerprint(repo, []string{"--ext-diff"}); !errors.Is(err, ErrInvalidArg) {
+		t.Errorf("flag arg err = %v, want ErrInvalidArg", err)
+	}
+	if Branch(repo) != "main" {
+		t.Errorf("Branch = %q, want main", Branch(repo))
+	}
+}

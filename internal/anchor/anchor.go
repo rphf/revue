@@ -1,9 +1,10 @@
-// Package anchor implements the cross-round carry-over engine (KTD3):
-// when a new round is created, every thread's and draft's anchor is
-// mapped from the previous round into the new one by normalized hunk
-// content, rename-aware. Unchanged hunks keep their threads live —
-// including through rebases and restacks that only move positions —
-// and changed hunks mark them outdated with history preserved.
+// Package anchor places comment threads in a diff. A thread remembers
+// where it was written (path, side, line, the hash and start of its
+// hunk, the file side's content hash); Locate maps that origin into any
+// later capture by normalized hunk content, rename-aware. An unchanged
+// hunk keeps its threads live, including through rebases and restacks
+// that only move positions; a changed or missing hunk leaves them
+// outdated for that capture, and they come back if the content does.
 package anchor
 
 import (
@@ -11,54 +12,60 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
-
-	"github.com/rphf/revue/internal/store"
 )
 
-type Engine struct{}
+// Position states.
+const (
+	Live     = "live"
+	Outdated = "outdated"
+)
 
-func New() *Engine { return &Engine{} }
+// Sides, matching store.Side*.
+const (
+	SideAdditions = "additions"
+	SideDeletions = "deletions"
+)
 
-// hunk is one @@ section of a unified git patch. Identity is the hash
-// of its body — prefixed content lines with the positional @@ header
-// stripped — so a pure position shift (restack, code added above)
-// keeps the hash while any content change, whitespace included,
-// produces a new one.
-type hunk struct {
-	path     string
-	oldStart int
-	oldCount int
-	newStart int
-	newCount int
-	hash     string
+// Hunk is one @@ section of a unified git patch. Identity is the hash
+// of its body, prefixed content lines with the positional @@ header
+// stripped, so a pure position shift (restack, code added above) keeps
+// the hash while any content change, whitespace included, produces a
+// new one.
+type Hunk struct {
+	Path     string
+	OldStart int
+	OldCount int
+	NewStart int
+	NewCount int
+	Hash     string
 }
 
-func (h *hunk) start(side string) int {
-	if side == store.SideDeletions {
-		return h.oldStart
+func (h *Hunk) Start(side string) int {
+	if side == SideDeletions {
+		return h.OldStart
 	}
-	return h.newStart
+	return h.NewStart
 }
 
-func (h *hunk) count(side string) int {
-	if side == store.SideDeletions {
-		return h.oldCount
+func (h *Hunk) count(side string) int {
+	if side == SideDeletions {
+		return h.OldCount
 	}
-	return h.newCount
+	return h.NewCount
 }
 
-func (h *hunk) contains(side string, line int) bool {
-	start := h.start(side)
+func (h *Hunk) contains(side string, line int) bool {
+	start := h.Start(side)
 	return line >= start && line < start+h.count(side)
 }
 
-// parsePatch extracts hunks from raw git patch text. Files without
-// hunks (binary, pure rename) contribute nothing; their threads are
-// handled by blob identity instead.
-func parsePatch(patch string) []*hunk {
-	var hunks []*hunk
+// ParsePatch extracts hunks from raw git patch text. Files without
+// hunks (binary, pure rename) contribute nothing; threads on them are
+// placed by blob identity instead.
+func ParsePatch(patch string) []*Hunk {
+	var hunks []*Hunk
 	var oldPath, newPath string
-	var current *hunk
+	var current *Hunk
 	var body []string
 
 	flush := func() {
@@ -66,7 +73,7 @@ func parsePatch(patch string) []*hunk {
 			return
 		}
 		sum := sha256.Sum256([]byte(strings.Join(body, "\n")))
-		current.hash = hex.EncodeToString(sum[:])
+		current.Hash = hex.EncodeToString(sum[:])
 		hunks = append(hunks, current)
 		current, body = nil, nil
 	}
@@ -86,23 +93,31 @@ func parsePatch(patch string) []*hunk {
 			if h == nil {
 				continue
 			}
-			h.path = newPath
+			h.Path = newPath
 			if newPath == "/dev/null" {
-				h.path = oldPath
+				h.Path = oldPath
 			}
 			current = h
 		case current != nil:
-			if line == "" || line[0] == ' ' || line[0] == '+' || line[0] == '-' || line[0] == '\\' {
+			if line == "" {
+				// Only the split artifact after the final newline: git writes
+				// an empty context line as a lone space.
+				continue
+			}
+			switch line[0] {
+			case ' ':
 				body = append(body, line)
-				if line == "" || line[0] == ' ' {
-					current.oldCount++
-					current.newCount++
-				} else if line[0] == '-' {
-					current.oldCount++
-				} else if line[0] == '+' {
-					current.newCount++
-				}
-			} else {
+				current.OldCount++
+				current.NewCount++
+			case '-':
+				body = append(body, line)
+				current.OldCount++
+			case '+':
+				body = append(body, line)
+				current.NewCount++
+			case '\\':
+				body = append(body, line)
+			default:
 				flush()
 			}
 		}
@@ -113,7 +128,7 @@ func parsePatch(patch string) []*hunk {
 
 // parseHunkHeader reads "@@ -oldStart[,n] +newStart[,m] @@ ...".
 // Counts are recomputed from the body; only the starts are trusted.
-func parseHunkHeader(line string) *hunk {
+func parseHunkHeader(line string) *Hunk {
 	rest := strings.TrimPrefix(line, "@@ ")
 	end := strings.Index(rest, " @@")
 	if end < 0 {
@@ -134,144 +149,113 @@ func parseHunkHeader(line string) *hunk {
 		}
 		return n
 	}
-	return &hunk{oldStart: parseStart(fields[0]), newStart: parseStart(fields[1])}
+	return &Hunk{OldStart: parseStart(fields[0]), NewStart: parseStart(fields[1])}
 }
 
-func sideBlob(f *store.RoundFile, side string) string {
-	if f == nil {
-		return ""
-	}
-	if side == store.SideDeletions {
-		return f.OldBlob
-	}
-	return f.NewBlob
-}
-
-// Recompute maps every previous-round anchor into the new round.
-// Threads and drafts follow identical rules (R21); a thread that goes
-// outdated keeps its last position so it stays reachable (R22), and
-// an already-outdated thread never resurrects (GitHub parity), even
-// if its original content reappears.
-func (e *Engine) Recompute(tx *store.Store, reviewID, prevRoundID, newRoundID int64) error {
-	prevAnchors, err := tx.AnchorsForRound(prevRoundID)
-	if err != nil {
-		return err
-	}
-	if len(prevAnchors) == 0 {
-		return nil
-	}
-	prevRound, err := tx.RoundByID(prevRoundID)
-	if err != nil {
-		return err
-	}
-	newRound, err := tx.RoundByID(newRoundID)
-	if err != nil {
-		return err
-	}
-	prevFilesList, err := tx.FilesForRound(prevRoundID)
-	if err != nil {
-		return err
-	}
-	newFilesList, err := tx.FilesForRound(newRoundID)
-	if err != nil {
-		return err
-	}
-
-	prevFiles := map[string]*store.RoundFile{}
-	for _, f := range prevFilesList {
-		prevFiles[f.Path] = f
-	}
-	newFiles := map[string]*store.RoundFile{}
-	rename := map[string]string{} // previous path -> new path (git -M)
-	for _, f := range newFilesList {
-		newFiles[f.Path] = f
-		if f.Status == store.FileRenamed && f.OldPath != "" {
-			rename[f.OldPath] = f.Path
-		}
-	}
-
-	prevHunks := parsePatch(prevRound.Patch)
-	// New-round hunks indexed by (path, hash): candidates never cross
-	// paths except through git's rename detection — a deleted path
-	// goes outdated even if identical content exists elsewhere.
-	newByPathHash := map[string][]*hunk{}
-	for _, h := range parsePatch(newRound.Patch) {
-		key := h.path + "\x00" + h.hash
-		newByPathHash[key] = append(newByPathHash[key], h)
-	}
-
-	for _, a := range prevAnchors {
-		state, anchor, hunkHash := carry(a, prevHunks, newByPathHash, rename, prevFiles, newFiles)
-		if err := tx.UpsertAnchor(a.ThreadID, newRoundID, anchor, state, hunkHash); err != nil {
-			return err
+// Find returns the hunk of path that contains line on side, or nil for
+// a line outside every hunk (expanded context).
+func Find(hunks []*Hunk, path, side string, line int) *Hunk {
+	for _, h := range hunks {
+		if h.Path == path && h.contains(side, line) {
+			return h
 		}
 	}
 	return nil
 }
 
-func carry(
-	a *store.ThreadAnchor,
-	prevHunks []*hunk,
-	newByPathHash map[string][]*hunk,
-	rename map[string]string,
-	prevFiles, newFiles map[string]*store.RoundFile,
-) (state string, anchor store.Anchor, hunkHash string) {
-	keep := a.Anchor // last known position: outdated threads stay reachable there
+// Origin is what a thread remembers about where it was written.
+type Origin struct {
+	Path      string
+	Side      string
+	StartLine *int
+	Line      int
+	HunkHash  string // "" when the comment sat outside any hunk
+	HunkStart int    // the hunk's start on Side at the time
+	SideBlob  string // content hash of Side's file version at the time
+}
 
-	// Once outdated, always outdated.
-	if a.State == store.AnchorOutdated {
-		return store.AnchorOutdated, keep, a.HunkHash
+// Position is where a thread sits in one capture.
+type Position struct {
+	Path      string `json:"path"`
+	Side      string `json:"side"`
+	StartLine *int   `json:"startLine,omitempty"`
+	Line      int    `json:"line"`
+	State     string `json:"state"`
+}
+
+// Target is a capture indexed for placement: hunks by path and hash,
+// renames from git's detection, and each file side's content hash.
+type Target struct {
+	byPathHash map[string][]*Hunk
+	renames    map[string]string // previous path -> new path
+	sideBlob   map[string]string // path\x00side -> content hash
+}
+
+func NewTarget(hunks []*Hunk) *Target {
+	t := &Target{
+		byPathHash: map[string][]*Hunk{},
+		renames:    map[string]string{},
+		sideBlob:   map[string]string{},
 	}
+	for _, h := range hunks {
+		key := h.Path + "\x00" + h.Hash
+		t.byPathHash[key] = append(t.byPathHash[key], h)
+	}
+	return t
+}
 
-	mapped := a.Path
-	if to, ok := rename[a.Path]; ok {
+// AddFile records a file of the capture: its rename source, if any,
+// and the content hashes of both sides ("" when a side does not exist
+// or is binary).
+func (t *Target) AddFile(path, oldPath, oldHash, newHash string) {
+	if oldPath != "" && oldPath != path {
+		t.renames[oldPath] = path
+	}
+	t.sideBlob[path+"\x00"+SideDeletions] = oldHash
+	t.sideBlob[path+"\x00"+SideAdditions] = newHash
+}
+
+// Locate maps an origin into the target. Candidates never cross paths
+// except through git's rename detection: a deleted path leaves its
+// threads outdated even if identical content exists elsewhere. Among
+// same-path matches the nearest start wins, and the offset inside the
+// hunk is kept, so a range shifts as a whole.
+func (t *Target) Locate(o Origin) Position {
+	keep := Position{Path: o.Path, Side: o.Side, StartLine: o.StartLine, Line: o.Line, State: Outdated}
+
+	mapped := o.Path
+	if to, ok := t.renames[o.Path]; ok {
 		mapped = to
 	}
 
-	// Find the hunk the thread sits in within the previous round.
-	var prev *hunk
-	for _, h := range prevHunks {
-		if h.path == a.Path && h.contains(a.Side, a.Line) {
-			prev = h
-			break
-		}
-	}
-
-	if prev == nil {
-		// Outside any hunk (e.g. a comment on expanded context, R25):
-		// live exactly while the side's blob is byte-identical.
-		pb := sideBlob(prevFiles[a.Path], a.Side)
-		nb := sideBlob(newFiles[mapped], a.Side)
-		if pb != "" && pb == nb {
+	if o.HunkHash == "" {
+		// Outside any hunk: live exactly while the side is byte-identical.
+		if o.SideBlob != "" && t.sideBlob[mapped+"\x00"+o.Side] == o.SideBlob {
 			live := keep
 			live.Path = mapped
-			return store.AnchorLive, live, ""
+			live.State = Live
+			return live
 		}
-		return store.AnchorOutdated, keep, ""
+		return keep
 	}
 
-	candidates := newByPathHash[mapped+"\x00"+prev.hash]
+	candidates := t.byPathHash[mapped+"\x00"+o.HunkHash]
 	if len(candidates) == 0 {
-		return store.AnchorOutdated, keep, prev.hash
+		return keep
 	}
-
-	// Tie-break: nearest start position within the (rename-mapped) path.
 	best := candidates[0]
 	for _, c := range candidates[1:] {
-		if abs(c.start(a.Side)-a.Line) < abs(best.start(a.Side)-a.Line) {
+		if abs(c.Start(o.Side)-o.Line) < abs(best.Start(o.Side)-o.Line) {
 			best = c
 		}
 	}
-
-	offset := a.Line - prev.start(a.Side)
-	newLine := best.start(a.Side) + offset
-	delta := newLine - a.Line
-	live := store.Anchor{Path: mapped, Side: a.Side, Line: newLine}
-	if a.StartLine != nil {
-		s := *a.StartLine + delta
+	delta := best.Start(o.Side) - o.HunkStart
+	live := Position{Path: mapped, Side: o.Side, Line: o.Line + delta, State: Live}
+	if o.StartLine != nil {
+		s := *o.StartLine + delta
 		live.StartLine = &s
 	}
-	return store.AnchorLive, live, prev.hash
+	return live
 }
 
 func abs(n int) int {

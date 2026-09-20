@@ -7,13 +7,14 @@ happens live, in revue, on the current working tree:
 
 1. Make the change. Run `make lint` and the relevant tests.
 2. Run `make build` so `bin/revue` embeds the current UI.
-3. Say that the change is ready and give the command, usually
-   `bin/revue open` from the repo root (add pathspecs such as `-- web` to
-   leave unrelated untracked files out). A CLI call from a newer build
-   replaces a running server from an older one, so no manual restart.
-4. Raphael reviews and comments there. Read the feedback with
-   `bin/revue feedback`, answer with `bin/revue reply`, fix, rebuild, and run
-   `bin/revue open --reuse` for a new round.
+3. Say that the change is ready. His browser follows the working tree, so
+   there is nothing to open; when he needs a link, `bin/revue url` prints
+   one, and `bin/revue open -- web` limits the diff to some paths. A CLI
+   call from a newer build replaces a running server from an older one, so
+   no manual restart.
+4. Raphael reviews and sends his comments there. Read them with
+   `bin/revue feedback`, answer with `bin/revue reply`, fix, rebuild. The
+   page follows the files as they change; there is no round to open.
 5. Commit only when he says so. Never chain a push, a tag, or a release after
    a commit in the same command.
 

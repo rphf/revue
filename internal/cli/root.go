@@ -1,6 +1,6 @@
-// Package cli is revue's command surface: human commands (open,
-// serve) and the agent interface (reviews, feedback, reply, round,
-// wait) with JSON output and the KTD7 exit-code contract.
+// Package cli is revue's command surface: human commands (open, url,
+// serve) and the agent interface (feedback, reply, wait, export) with
+// JSON output and a small exit-code contract.
 package cli
 
 import (
@@ -21,38 +21,33 @@ import (
 	"github.com/rphf/revue/internal/server"
 )
 
-// Exit codes (KTD7). Stable across releases; documented in docs/cli.md.
+// Exit codes. Stable across releases; documented in docs/cli.md.
 const (
-	ExitOK           = 0
-	ExitError        = 1 // unexpected failure
-	ExitValidation   = 2 // bad arguments or invalid request
-	ExitNoOpenReview = 3 // no (or no unambiguous) open review
-	ExitWaitTimeout  = 4 // wait elapsed without a submission
-	ExitClosed       = 5 // review is closed
-	ExitReadOnly     = 6 // review is approved and read-only for the agent
+	ExitOK          = 0
+	ExitError       = 1 // unexpected failure
+	ExitValidation  = 2 // bad arguments or invalid request
+	ExitWaitTimeout = 3 // wait elapsed without a send
 )
 
 // Version is stamped by the release build.
 var Version = "dev"
 
-const usage = `revue — local code review for agent-written diffs
+const usage = `revue — local code review on a live diff
 
 Human commands:
-  open [git-diff args]   capture a diff, open the review in the browser
-                         (--reuse: add a round to this branch's open review with the same args)
-  url [--review N]       print the browser URL of a review (default: this branch's open review)
-  serve                  run the per-repo server in the foreground
+  revue [open] [git-diff args]  open the browser on that diff (default: the working tree)
+                                --no-browser prints the URL only
+  revue url                     print a login link for the default diff
+  revue serve                   run the server in the foreground (a container entry point;
+                                the other commands start it in the background)
 
-Agent commands (JSON output, exit-code contract in docs/cli.md):
-  reviews                          list this repo's reviews
-  feedback [--review N] [--since C]  read threads, comments, verdicts
-  reply --thread N -m TEXT         reply in a thread
-  round [--review N]               signal that a new round is ready
-  wait [--review N] [--since C] [--timeout D]  block until submit/close
-  export [--review N]              render the review as markdown
+Agent commands (JSON output; exit codes in docs/cli.md):
+  feedback [--since C]            unresolved threads with quoted code, plus what happened since C
+  reply --thread N -m TEXT        reply in a thread (reads stdin when -m is absent)
+  wait [--since C] [--timeout D]  block until the reviewer sends
+  export                          threads as markdown
 
-Exit codes: 0 ok, 1 error, 2 validation, 3 no open review,
-            4 wait timeout, 5 review closed, 6 review approved (read-only)
+Exit codes: 0 ok, 1 error, 2 bad arguments or invalid request, 3 wait timed out
 
 Environment (read when a server starts; see docs/configuration.md):
   REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR
@@ -64,7 +59,6 @@ type env struct {
 	client    *Client
 	publicURL string
 	repoRoot  string
-	branch    string
 	stdout    io.Writer
 	stderr    io.Writer
 	openURL   func(string) error
@@ -74,13 +68,14 @@ func (e *env) authURL(next string) string {
 	return fmt.Sprintf("%s/auth?token=%s&next=%s", e.publicURL, e.client.Token, url.QueryEscape(next))
 }
 
-// Main is the CLI entry point; it returns the process exit code.
+// Main is the CLI entry point; it returns the process exit code. A
+// bare `revue`, or one that starts with a flag or a pathspec
+// separator, is `revue open`.
 func Main(args []string) int {
-	if len(args) == 0 {
-		fmt.Fprint(os.Stderr, usage)
-		return ExitValidation
+	cmd, rest := "open", args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, rest = args[0], args[1:]
 	}
-	cmd, rest := args[0], args[1:]
 
 	switch cmd {
 	case "help", "-h", "--help":
@@ -91,6 +86,10 @@ func Main(args []string) int {
 		return ExitOK
 	case "serve", "__serve":
 		return cmdServe(rest)
+	}
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		_, _ = fmt.Fprint(os.Stdout, usage)
+		return ExitOK
 	}
 
 	e, code := connect(os.Stdout, os.Stderr)
@@ -103,14 +102,10 @@ func Main(args []string) int {
 		return e.cmdOpen(rest)
 	case "url":
 		return e.cmdURL(rest)
-	case "reviews":
-		return e.cmdReviews(rest)
 	case "feedback":
 		return e.cmdFeedback(rest)
 	case "reply":
 		return e.cmdReply(rest)
-	case "round":
-		return e.cmdRound(rest)
 	case "wait":
 		return e.cmdWait(rest)
 	case "export":
@@ -121,15 +116,14 @@ func Main(args []string) int {
 	}
 }
 
-// connect resolves the repo, ensures a server is running (KTD5), and
-// builds the authenticated client.
+// connect resolves the repo, ensures a server is running, and builds
+// the authenticated client.
 func connect(stdout, stderr io.Writer) (*env, int) {
 	repoRoot, err := gitOutput("", "rev-parse", "--show-toplevel")
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "revue must run inside a git repository:", err)
 		return nil, ExitValidation
 	}
-	branch, _ := gitOutput(repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
 
 	st, err := server.Ensure(repoRoot)
 	if err != nil {
@@ -140,7 +134,6 @@ func connect(stdout, stderr io.Writer) (*env, int) {
 		client:    &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},
 		publicURL: st.PublicBaseURL(),
 		repoRoot:  repoRoot,
-		branch:    branch,
 		stdout:    stdout,
 		stderr:    stderr,
 		openURL:   openInBrowser,
@@ -197,10 +190,6 @@ func (c *Client) newRequest(method, path string) (*http.Request, error) {
 	return req, nil
 }
 
-func unmarshalAPIError(data []byte, apiErr *APIError) {
-	_ = json.Unmarshal(data, apiErr)
-}
-
 func (c *Client) do(method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
@@ -240,8 +229,8 @@ func (c *Client) do(method, path string, body any, out any) error {
 
 // --- output and error mapping ---
 
-// printJSON writes indented JSON to stdout — the machine-readable
-// surface (R10).
+// printJSON writes indented JSON to stdout: the machine-readable
+// surface.
 func (e *env) printJSON(v any) int {
 	enc := json.NewEncoder(e.stdout)
 	enc.SetEscapeHTML(false)
@@ -253,33 +242,46 @@ func (e *env) printJSON(v any) int {
 	return ExitOK
 }
 
+// exitCodeFor maps a server error to the exit-code contract: anything
+// the caller could have asked differently is a validation failure.
+func exitCodeFor(err error) int {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case "validation", "not_found", "stale_diff", "not_draft", "unsupported_type":
+			return ExitValidation
+		}
+	}
+	return ExitError
+}
+
 // fail prints a machine-readable error object and returns the mapped
-// exit code (KTD7). Errors go to stdout: they are part of the
-// contract, not diagnostics.
+// exit code. Errors go to stdout: they are part of the agent contract,
+// not diagnostics.
 func (e *env) fail(err error) int {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		e.printJSON(apiErr)
-		switch apiErr.Code {
-		case "review_closed":
-			return ExitClosed
-		case "review_approved":
-			return ExitReadOnly
-		case "validation", "empty_diff", "not_draft":
-			return ExitValidation
-		case "not_found":
-			return ExitNoOpenReview
-		default:
-			return ExitError
-		}
+	} else {
+		e.printJSON(&APIError{Code: "error", Message: err.Error()})
 	}
-	e.printJSON(&APIError{Code: "error", Message: err.Error()})
-	return ExitError
+	return exitCodeFor(err)
 }
 
 func (e *env) failValidation(msg string) int {
 	e.printJSON(&APIError{Code: "validation", Message: msg})
 	return ExitValidation
+}
+
+// failText is fail for the human commands: one line on stderr.
+func (e *env) failText(err error) int {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		_, _ = fmt.Fprintln(e.stderr, apiErr.Message)
+	} else {
+		_, _ = fmt.Fprintln(e.stderr, err.Error())
+	}
+	return exitCodeFor(err)
 }
 
 // --- serve ---

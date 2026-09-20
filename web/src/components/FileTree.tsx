@@ -13,11 +13,11 @@ import type {
 } from "@pierre/trees";
 import { FileTree as Tree, useFileTree } from "@pierre/trees/react";
 import { CopyIcon, EyeIcon, EyeOffIcon, InboxIcon } from "lucide-react";
-import type { RoundFile } from "../types";
+import type { DiffFile } from "../types";
 
 // The changed-file sidebar is a @pierre/trees model: virtualized rows,
 // flattened empty directory chains, sticky folders, keyboard navigation,
-// type-to-search, and a git-status lane fed from the round's file
+// type-to-search, and a git-status lane fed from the diff's file
 // statuses. Revue adds the per-file viewed toggle as a row decoration
 // plus a context menu, and turns row activation into a diff jump.
 //
@@ -26,7 +26,7 @@ import type { RoundFile } from "../types";
 // must never be interpolated into HTML here either.
 
 export interface FileTreeProps {
-  files: RoundFile[];
+  files: DiffFile[];
   viewed: ReadonlySet<string>;
   onToggleViewed: (path: string) => void;
   onSelect: (path: string) => void;
@@ -63,7 +63,7 @@ const DECORATION_SELECTOR = '[data-item-section="decoration"] > span';
 const MENU_ITEM =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground";
 
-function toGitStatus(files: RoundFile[]): GitStatusEntry[] {
+function toGitStatus(files: DiffFile[]): GitStatusEntry[] {
   return files.map((f) => ({ path: f.path, status: f.status }));
 }
 
@@ -125,7 +125,7 @@ function FileTree({
     },
   });
 
-  // The model is created once; later rounds replace its paths in place.
+  // The model is created once; later diffs replace its paths in place.
   useEffect(() => {
     if (initialFiles.current === files) return;
     model.resetPaths(files.map((f) => f.path));

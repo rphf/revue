@@ -21,8 +21,14 @@ class FakeEventSource {
   }
 }
 
-function Harness({ onEvent }: { onEvent: (e: RevueEvent) => void }) {
-  const state = useEvents(7, onEvent);
+function Harness({
+  args = [],
+  onEvent,
+}: {
+  args?: string[];
+  onEvent: (e: RevueEvent) => void;
+}) {
+  const state = useEvents(args, onEvent);
   return (
     <>
       <span data-testid="conn-state">{state}</span>
@@ -44,7 +50,7 @@ describe("useEvents + ConnectionBanner", () => {
   it("shows the reconnect banner on drop and clears it on reconnect", () => {
     render(<Harness onEvent={() => {}} />);
     const es = FakeEventSource.instances[0];
-    expect(es.url).toBe("/api/reviews/7/events");
+    expect(es.url).toBe("/api/events");
 
     act(() => es.onopen?.());
     expect(screen.getByTestId("conn-state")).toHaveTextContent("open");
@@ -63,7 +69,14 @@ describe("useEvents + ConnectionBanner", () => {
     expect(input.value).toBe("unsent draft text");
   });
 
-  it("delivers parsed events to the handler", () => {
+  it("subscribes to the stream of the diff it is given", () => {
+    render(<Harness args={["main...HEAD", "--", "web"]} onEvent={() => {}} />);
+    expect(FakeEventSource.instances[0].url).toBe(
+      "/api/events?arg=main...HEAD&arg=--&arg=web",
+    );
+  });
+
+  it("delivers parsed events to the handler, with and without an id", () => {
     const events: RevueEvent[] = [];
     render(<Harness onEvent={(e) => events.push(e)} />);
     const es = FakeEventSource.instances[0];
@@ -71,15 +84,25 @@ describe("useEvents + ConnectionBanner", () => {
       es.onmessage?.({
         data: JSON.stringify({
           id: 3,
-          reviewId: 7,
-          type: "round.created",
+          type: "thread.replied",
           payload: {},
           createdAt: "",
         }),
       }),
     );
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("round.created");
+    act(() =>
+      es.onmessage?.({
+        data: JSON.stringify({
+          type: "diff.changed",
+          payload: { version: 4 },
+        }),
+      }),
+    );
+    expect(events.map((e) => e.type)).toEqual([
+      "thread.replied",
+      "diff.changed",
+    ]);
+    expect(events[1].id).toBeUndefined();
   });
 
   it("closes the stream on unmount", () => {
