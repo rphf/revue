@@ -4,17 +4,11 @@
 set -euo pipefail
 cd /workspace
 
-# AGENT.md and .mcp.json live on the harness side, not in the revue repo (revue does not know about any harness).
-# Copy them in from the mounted host checkout and keep them out of git, so `git status` here stays clean.
-if [ ! -f .agentbox/AGENT.md ] && [ -f /host-repo/.agentbox/AGENT.md ]; then
-  mkdir -p .agentbox
-  cp /host-repo/.agentbox/AGENT.md .agentbox/AGENT.md
-  grep -qx '.agentbox/' .git/info/exclude 2>/dev/null || echo '.agentbox/' >> .git/info/exclude
-fi
-if [ ! -f .mcp.json ] && [ -f /host-repo/.agentbox/mcp.json ]; then
-  cp /host-repo/.agentbox/mcp.json .mcp.json
-  grep -qx '.mcp.json' .git/info/exclude 2>/dev/null || echo '.mcp.json' >> .git/info/exclude
-fi
+# .agentbox/ is committed, so the clone brings AGENT.md with it. .mcp.json is not in the repo — revue does not know
+# about any harness — so put the copy from .agentbox/ in place and keep it out of git, so `git status` stays clean.
+[ -f .mcp.json ] || cp .agentbox/mcp.json .mcp.json
+# Excluded whoever wrote it, so `git status` stays clean even when it arrived some other way.
+grep -qx '.mcp.json' .git/info/exclude 2>/dev/null || echo '.mcp.json' >> .git/info/exclude
 
 echo "── mise install (go, node, golangci-lint from mise.toml)"
 mise trust >/dev/null 2>&1 || true
