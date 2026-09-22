@@ -1,0 +1,11 @@
+# revue overlay on the agentbox base compose (agentbox/compose.base.yml defines the `agent` service, its
+# src/home volumes and the harness env). revue has no services of its own — no database, no redis, no separate
+# app server: it is one pure-Go binary with an embedded UI and a SQLite-backed store. The agent only needs to
+# publish two loopback ports for the human at this machine; its caches live in the home volume the base defines.
+services:
+  agent:
+    ports:
+      # The control panel + outbox, served from ~/out by the harness. Loopback: for the human here, not the network.
+      - "127.0.0.1:${OUT_PORT}:${OUT_PORT}"
+      # The revue review server, run from the agent's freshly built binary; the human reviews the live diff here.
+      - "127.0.0.1:${REVUE_PORT}:${REVUE_PORT}"

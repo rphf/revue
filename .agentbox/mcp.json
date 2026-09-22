@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@0.0.78",
+        "--browser", "chromium",
+        "--headless",
+        "--no-sandbox",
+        "--isolated",
+        "--output-dir", "/home/agent/out"
+      ]
+    }
+  }
+}

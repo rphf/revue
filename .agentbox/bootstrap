@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# revue project bootstrap — run by the harness bootstrap as `agent` in /workspace on every `agentbox up`, after
+# the clone and the home overlay. Idempotent: sandbox-only files, toolchain, web deps, and a first build.
+set -euo pipefail
+cd /workspace
+
+# AGENT.md and .mcp.json live on the harness side, not in the revue repo (revue does not know about any harness).
+# Copy them in from the mounted host checkout and keep them out of git, so `git status` here stays clean.
+if [ ! -f .agentbox/AGENT.md ] && [ -f /host-repo/.agentbox/AGENT.md ]; then
+  mkdir -p .agentbox
+  cp /host-repo/.agentbox/AGENT.md .agentbox/AGENT.md
+  grep -qx '.agentbox/' .git/info/exclude 2>/dev/null || echo '.agentbox/' >> .git/info/exclude
+fi
+if [ ! -f .mcp.json ] && [ -f /host-repo/.agentbox/mcp.json ]; then
+  cp /host-repo/.agentbox/mcp.json .mcp.json
+  grep -qx '.mcp.json' .git/info/exclude 2>/dev/null || echo '.mcp.json' >> .git/info/exclude
+fi
+
+echo "── mise install (go, node, golangci-lint from mise.toml)"
+mise trust >/dev/null 2>&1 || true
+mise install
+hash -r
+
+echo "── npm ci (web)"
+(cd web && npm ci)
+
+# A first build so bin/revue exists right away: PATH puts it ahead of the release build, so the review server runs
+# the current tree from the start. Later ups skip it — the agent rebuilds after each change (see .agentbox/AGENT.md).
+if [ ! -x bin/revue ]; then
+  echo "── make build"
+  make build
+fi
+
+echo "── ready: $(go version | awk '{print $3}'), node $(node -v), golangci-lint $(golangci-lint version 2>/dev/null | head -1)"
