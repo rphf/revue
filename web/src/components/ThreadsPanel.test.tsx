@@ -151,7 +151,7 @@ describe("ThreadsPanel", () => {
     const headers = screen.getAllByRole("button", { expanded: true });
     expect(headers.map((h) => h.textContent)).toEqual([
       expect.stringContaining("Not sent yet"),
-      expect.stringContaining("Send 2"),
+      expect.stringContaining("Round 2"),
     ]);
     expect(screen.getByTestId("panel-round-send-2")).toHaveTextContent(
       "second pass",
@@ -160,13 +160,13 @@ describe("ThreadsPanel", () => {
     expect(screen.getByTestId("panel-thread-3")).toBeInTheDocument();
 
     // The first send is collapsed: its header shows, its thread does not.
-    const first = screen.getByRole("button", { name: /Send 1/ });
+    const first = screen.getByRole("button", { name: /Round 1/ });
     expect(first).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("panel-thread-1")).not.toBeInTheDocument();
 
     fireEvent.click(first);
     expect(screen.getByTestId("panel-thread-1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Send 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Round 2/ }));
     expect(screen.queryByTestId("panel-thread-2")).not.toBeInTheDocument();
   });
 

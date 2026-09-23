@@ -209,7 +209,7 @@ function RoundHeader({
           )}
         />
         <span className="font-medium">
-          {round.kind === "send" ? `Send ${round.number}` : "Not sent yet"}
+          {round.kind === "send" ? `Round ${round.number}` : "Not sent yet"}
         </span>
         {round.kind === "send" && (
           <span
