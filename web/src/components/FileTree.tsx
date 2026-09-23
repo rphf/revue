@@ -27,6 +27,8 @@ import type { DiffFile } from "../types";
 
 export interface FileTreeProps {
   files: DiffFile[];
+  additions?: number;
+  deletions?: number;
   viewed: ReadonlySet<string>;
   onToggleViewed: (path: string) => void;
   onSelect: (path: string) => void;
@@ -93,6 +95,8 @@ function ancestorDirs(path: string): string[] {
 
 function FileTree({
   files,
+  additions = 0,
+  deletions = 0,
   viewed,
   onToggleViewed,
   onSelect,
@@ -165,9 +169,18 @@ function FileTree({
         <span className="font-medium">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
-        <span className="text-muted-foreground">{viewedCount} viewed</span>
         <span
-          className="ml-auto h-1 w-14 overflow-hidden rounded-full bg-border"
+          className="font-mono tabular-nums"
+          aria-label={`${additions} added, ${deletions} removed lines`}
+        >
+          <span className="text-added">+{additions}</span>{" "}
+          <span className="text-removed">−{deletions}</span>
+        </span>
+        <span className="whitespace-nowrap text-muted-foreground">
+          {viewedCount} viewed
+        </span>
+        <span
+          className="ml-auto h-1 w-14 min-w-4 shrink overflow-hidden rounded-full bg-border"
           aria-hidden="true"
         >
           <span
@@ -179,7 +192,7 @@ function FileTree({
         </span>
       </div>
     ),
-    [files.length, viewedCount],
+    [files.length, viewedCount, additions, deletions],
   );
 
   if (files.length === 0) {

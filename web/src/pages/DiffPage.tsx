@@ -231,6 +231,17 @@ export default function DiffPage({
   }, []);
 
   const diffFiles = useMemo(() => diff?.files ?? [], [diff]);
+  const lineTotals = useMemo(() => {
+    let additions = 0;
+    let deletions = 0;
+    for (const f of parsedFiles ?? []) {
+      for (const h of f.hunks) {
+        additions += h.additionLines;
+        deletions += h.deletionLines;
+      }
+    }
+    return { additions, deletions };
+  }, [parsedFiles]);
   // Positions come with the diff. A thread the diff does not know yet
   // was started after that fetch, against this very diff, so it sits at
   // its origin until the next fetch says otherwise.
@@ -536,6 +547,8 @@ export default function DiffPage({
                 >
                   <FileTree
                     files={diffFiles}
+                    additions={lineTotals.additions}
+                    deletions={lineTotals.deletions}
                     viewed={viewed}
                     onToggleViewed={toggleViewed}
                     onSelect={scrollToFile}

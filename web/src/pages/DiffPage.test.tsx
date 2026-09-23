@@ -84,7 +84,7 @@ vi.mock("@pierre/diffs/react", async () => {
 });
 
 vi.mock("@pierre/diffs", () => ({
-  parsePatchFiles: () => [{ files: [{ name: "a.go" }] }],
+  parsePatchFiles: () => [{ files: [{ name: "a.go", hunks: [] }] }],
   processFile: () => undefined,
   parseDiffFromFile: () => ({ name: "a.go" }),
 }));

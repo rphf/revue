@@ -22,7 +22,10 @@ export const LINE_SCROLL_OFFSET = 72;
 // shadow boundary. The card clips its own corners, so the header stays
 // square: stuck at the top of the pane, it hides the code scrolling
 // under it edge to edge. overflow: clip, unlike hidden, makes no scroll
-// container, so the header still sticks to the pane.
+// container, so the header still sticks to the pane. The library prints
+// the header's line counts as -N +N; the order puts +N first, as in the
+// file tree header.
 export const UNSAFE_CSS = `
 :host { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: clip; }
+[data-additions-count] { order: -1; }
 `;

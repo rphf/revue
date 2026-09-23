@@ -96,6 +96,8 @@ describe("FileTree", () => {
     const { rerender } = render(
       <FileTree
         files={files}
+        additions={12}
+        deletions={3}
         viewed={new Set(["a.txt"])}
         onToggleViewed={noop}
         onSelect={noop}
@@ -103,6 +105,9 @@ describe("FileTree", () => {
     );
     expect(screen.getByText("2 files")).toBeInTheDocument();
     expect(screen.getByText("1 viewed")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("12 added, 3 removed lines"),
+    ).toHaveTextContent("+12 −3");
 
     rerender(
       <FileTree
