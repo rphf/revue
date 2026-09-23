@@ -4,6 +4,8 @@
 
 Local code review for diffs that a coding agent wrote. The reviewer gets a GitHub-style browser UI over anything `git diff` can express. The agent gets a CLI to read the feedback and to reply in threads. Everything stays on one machine: no remote, no accounts.
 
+<img width="1580" height="1084" alt="Screenshot 2026-09-23 at 21 58 31" src="https://github.com/user-attachments/assets/3b849e93-6e7f-4768-b5d7-75a774071ce4" />
+
 ## Install
 
 Binaries for Linux and macOS, amd64 and arm64, are on the [releases page](https://github.com/rphf/revue/releases). See [docs/install.md](docs/install.md) for download one-liners and building from source.
