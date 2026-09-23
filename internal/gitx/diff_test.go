@@ -437,3 +437,62 @@ func TestFingerprintFollowsTrackedAndUntrackedChanges(t *testing.T) {
 		t.Errorf("Branch = %q, want main", Branch(repo))
 	}
 }
+
+func TestTypeChangeIsOneSection(t *testing.T) {
+	for _, tc := range []struct {
+		name, oldMode, newMode string
+		setup, change          func(t *testing.T, repo string)
+		oldContent, newContent string
+		body                   string
+	}{
+		{
+			name: "file to symlink", oldMode: "100644", newMode: "120000",
+			setup: func(t *testing.T, repo string) { write(t, repo, "notes.md", "one\ntwo\n") },
+			change: func(t *testing.T, repo string) {
+				if err := os.Remove(filepath.Join(repo, "notes.md")); err != nil {
+					t.Fatal(err)
+				}
+				symlink(t, repo, "a.txt", "notes.md")
+			},
+			oldContent: "one\ntwo\n", newContent: "a.txt",
+			body: "@@ -1,2 +1 @@\n-one\n-two\n+a.txt\n\\ No newline at end of file\n",
+		},
+		{
+			name: "symlink to file", oldMode: "120000", newMode: "100644",
+			setup: func(t *testing.T, repo string) { symlink(t, repo, "a.txt", "notes.md") },
+			change: func(t *testing.T, repo string) {
+				if err := os.Remove(filepath.Join(repo, "notes.md")); err != nil {
+					t.Fatal(err)
+				}
+				write(t, repo, "notes.md", "one\ntwo\n")
+			},
+			oldContent: "a.txt", newContent: "one\ntwo\n",
+			body: "@@ -1 +1,2 @@\n-a.txt\n\\ No newline at end of file\n+one\n+two\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := initRepo(t)
+			write(t, repo, "a.txt", "a\n")
+			tc.setup(t, repo)
+			commitAll(t, repo, "c1")
+			tc.change(t, repo)
+
+			res, err := Capture(repo, nil)
+			if err != nil {
+				t.Fatalf("Capture: %v", err)
+			}
+			if n := strings.Count(res.Patch, "diff --git a/notes.md b/notes.md\n"); n != 1 {
+				t.Fatalf("got %d sections for notes.md, want 1:\n%s", n, res.Patch)
+			}
+			modes := "old mode " + tc.oldMode + "\nnew mode " + tc.newMode + "\n"
+			paths := "--- a/notes.md\n+++ b/notes.md\n" + tc.body
+			if !strings.Contains(res.Patch, modes) || !strings.Contains(res.Patch, paths) {
+				t.Errorf("patch lacks the joined section:\n%s", res.Patch)
+			}
+			f := fileByPath(res, "notes.md")
+			if f == nil || f.Status != StatusModified || string(f.OldContent) != tc.oldContent || string(f.NewContent) != tc.newContent {
+				t.Errorf("notes.md: got %+v, want modified", f)
+			}
+		})
+	}
+}

@@ -194,7 +194,7 @@ func Capture(repoRoot string, args []string) (*Result, error) {
 		files = append(files, f)
 	}
 
-	patch := string(patchOut)
+	patch := joinTypeChanges(string(patchOut))
 
 	if isWorkingTreeCapture(args) {
 		untracked, upatch, err := captureUntracked(repoRoot, pathspecs(args))
@@ -311,6 +311,125 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 		files = append(files, f)
 	}
 	return files, patch.String(), nil
+}
+
+// joinTypeChanges rewrites each type change (a file that became a
+// symlink, or the reverse) as one section. git prints it as a deletion
+// followed by an addition of the same path, which the raw listing
+// reports as one entry; one section per path keeps the patch and the
+// file list in step.
+func joinTypeChanges(patch string) string {
+	sections := splitSections(patch)
+	var b strings.Builder
+	for i := 0; i < len(sections); i++ {
+		if i+1 < len(sections) {
+			if joined, ok := joinTypeChange(sections[i], sections[i+1]); ok {
+				b.WriteString(joined)
+				i++
+				continue
+			}
+		}
+		b.WriteString(sections[i])
+	}
+	return b.String()
+}
+
+// splitSections cuts a patch at each "diff --git " line. Content lines
+// carry a +, - or space prefix, so they never match.
+func splitSections(patch string) []string {
+	var sections []string
+	start := 0
+	for i := 0; i < len(patch); {
+		if i > start && strings.HasPrefix(patch[i:], "diff --git ") {
+			sections = append(sections, patch[start:i])
+			start = i
+		}
+		nl := strings.IndexByte(patch[i:], '\n')
+		if nl < 0 {
+			break
+		}
+		i += nl + 1
+	}
+	if start < len(patch) {
+		sections = append(sections, patch[start:])
+	}
+	return sections
+}
+
+type patchSection struct {
+	header, mode, oid string
+	fromLine, toLine  string
+	binary            string
+	hunkRange         []string
+	body              string
+}
+
+// parseSection reads a whole-file section: a deletion or an addition,
+// with at most one hunk.
+func parseSection(s string) patchSection {
+	var p patchSection
+	lines := strings.SplitAfter(s, "\n")
+	p.header = lines[0]
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		switch {
+		case strings.HasPrefix(line, "deleted file mode "):
+			p.mode = strings.TrimSpace(strings.TrimPrefix(line, "deleted file mode "))
+		case strings.HasPrefix(line, "new file mode "):
+			p.mode = strings.TrimSpace(strings.TrimPrefix(line, "new file mode "))
+		case strings.HasPrefix(line, "index "):
+			p.oid = strings.TrimSpace(strings.TrimPrefix(line, "index "))
+		case strings.HasPrefix(line, "--- "):
+			p.fromLine = line
+		case strings.HasPrefix(line, "+++ "):
+			p.toLine = line
+		case strings.HasPrefix(line, "Binary files "):
+			p.binary = line
+		case strings.HasPrefix(line, "@@ "):
+			p.hunkRange = strings.Fields(line)[1:3]
+			p.body = strings.Join(lines[i+1:], "")
+			return p
+		}
+	}
+	return p
+}
+
+// joinTypeChange merges a deletion and the addition that follows it
+// into one section with old and new modes, the way git prints a mode
+// change, and one hunk that replaces the old content with the new.
+func joinTypeChange(first, second string) (string, bool) {
+	del, add := parseSection(first), parseSection(second)
+	if del.header != add.header ||
+		!strings.Contains(first, "\ndeleted file mode ") ||
+		!strings.Contains(second, "\nnew file mode ") {
+		return "", false
+	}
+	oldOID, _, _ := strings.Cut(del.oid, "..")
+	_, newOID, _ := strings.Cut(add.oid, "..")
+
+	var b strings.Builder
+	b.WriteString(del.header)
+	fmt.Fprintf(&b, "old mode %s\nnew mode %s\nindex %s..%s\n", del.mode, add.mode, oldOID, newOID)
+	if del.binary != "" || add.binary != "" {
+		b.WriteString("Binary files differ\n")
+		return b.String(), true
+	}
+	if del.hunkRange == nil && add.hunkRange == nil {
+		return b.String(), true
+	}
+	b.WriteString(del.fromLine)
+	b.WriteString(add.toLine)
+	oldRange, newRange := "-0,0", "+0,0"
+	if del.hunkRange != nil {
+		oldRange = del.hunkRange[0]
+	}
+	if add.hunkRange != nil {
+		newRange = add.hunkRange[1]
+	}
+	fmt.Fprintf(&b, "@@ %s %s @@\n", oldRange, newRange)
+	b.WriteString(del.body)
+	b.WriteString(add.body)
+	return b.String(), true
 }
 
 // parseRawZ parses `git diff --raw -z` output:
