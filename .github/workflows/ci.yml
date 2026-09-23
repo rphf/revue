@@ -17,6 +17,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: bash scripts/next-version.sh --check | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash
       - uses: jdx/mise-action@v4
       - run: cd web && npm ci
       - run: make lint
