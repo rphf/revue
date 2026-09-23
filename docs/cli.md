@@ -37,7 +37,8 @@ Agent commands print JSON on stdout, except `export`, which prints markdown.
 
 Threads belong to the repository, not to a diff. `feedback` quotes the code
 each thread was written on, so the agent never needs to look at the diff to
-know what a comment refers to.
+know what a comment refers to. A thread with `"line": 0` is about the file as
+a whole: it has no quote, and it stays live while the file is in the diff.
 
 ## Exit codes
 

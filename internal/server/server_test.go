@@ -469,6 +469,68 @@ func TestCreateThreadValidatesAndDetectsStaleDiff(t *testing.T) {
 	}
 }
 
+func TestFileThreadCommentsOnTheWholeFile(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+
+	var out apiError
+	resp := ts.do(t, "POST", "/api/threads", map[string]any{
+		"args": []string{}, "path": "a.txt", "side": "additions", "line": 0, "startLine": 0, "body": "x",
+	}, &out)
+	if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
+		t.Errorf("file thread with a range: %d %s, want 400 validation", resp.StatusCode, out.Error)
+	}
+
+	id := ts.draft(t, 0, "about this file")
+	if a := ts.anchorOf(t, id); a.State != "live" || a.Line != 0 || a.Path != "a.txt" {
+		t.Fatalf("file thread anchor = %+v, want live at line 0", a)
+	}
+	// Another edit rewrites the hunk: a line thread would go outdated,
+	// the file thread stays with the file.
+	writeFile(t, ts.repo, "a.txt", fixtureContent(map[int]string{15: "line 15 AGAIN"}))
+	if a := ts.anchorOf(t, id); a.State != "live" {
+		t.Errorf("after an edit: %+v, want live", a)
+	}
+	ts.send(t, "")
+	fb := ts.feedback(t, 0)
+	for _, th := range fb.Threads {
+		if th.ID == id && th.Quote != nil {
+			t.Errorf("file thread quote = %+v, want none", th.Quote)
+		}
+	}
+
+	resp = ts.do(t, "GET", "/api/export", nil, nil)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "`a.txt` (whole file, ") {
+		t.Errorf("export does not label the file thread:\n%s", body)
+	}
+
+	// The file leaves the diff: the thread is outdated at its origin.
+	writeFile(t, ts.repo, "a.txt", fixtureContent(nil))
+	if a := ts.anchorOf(t, id); a.State != "outdated" {
+		t.Errorf("file gone: %+v, want outdated", a)
+	}
+}
+
+func TestBinaryFilesTakeFileCommentsOnly(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	writeFile(t, ts.repo, "logo.png", "\x89PNG\r\n\x1a\n\x00\x00binary")
+	post := func(line int) (int, string) {
+		var out apiError
+		resp := ts.do(t, "POST", "/api/threads", map[string]any{
+			"args": []string{}, "path": "logo.png", "side": "additions", "line": line, "body": "x",
+		}, &out)
+		return resp.StatusCode, out.Error
+	}
+	if code, e := post(1); code != http.StatusBadRequest || e != "validation" {
+		t.Errorf("line comment on a binary: %d %s, want 400 validation", code, e)
+	}
+	if code, _ := post(0); code != http.StatusCreated {
+		t.Errorf("file comment on a binary: %d, want 201", code)
+	}
+}
+
 func TestSnapshotKeepsTheFileAsItWas(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)

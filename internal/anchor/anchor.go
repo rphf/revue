@@ -162,7 +162,7 @@ type Origin struct {
 	Path      string
 	Side      string
 	StartLine *int
-	Line      int
+	Line      int    // 0 for the file as a whole
 	HunkHash  string // "" when the comment sat outside any hunk
 	HunkStart int    // the hunk's start on Side at the time
 	SideBlob  string // content hash of Side's file version at the time
@@ -183,6 +183,7 @@ type Target struct {
 	byPathHash map[string][]*Hunk
 	renames    map[string]string // previous path -> new path
 	sideBlob   map[string]string // path\x00side -> content hash
+	files      map[string]bool
 }
 
 func NewTarget(hunks []*Hunk) *Target {
@@ -190,6 +191,7 @@ func NewTarget(hunks []*Hunk) *Target {
 		byPathHash: map[string][]*Hunk{},
 		renames:    map[string]string{},
 		sideBlob:   map[string]string{},
+		files:      map[string]bool{},
 	}
 	for _, h := range hunks {
 		key := h.Path + "\x00" + h.Hash
@@ -205,6 +207,7 @@ func (t *Target) AddFile(path, oldPath, oldHash, newHash string) {
 	if oldPath != "" && oldPath != path {
 		t.renames[oldPath] = path
 	}
+	t.files[path] = true
 	t.sideBlob[path+"\x00"+SideDeletions] = oldHash
 	t.sideBlob[path+"\x00"+SideAdditions] = newHash
 }
@@ -220,6 +223,17 @@ func (t *Target) Locate(o Origin) Position {
 	mapped := o.Path
 	if to, ok := t.renames[o.Path]; ok {
 		mapped = to
+	}
+
+	if o.Line == 0 {
+		// On the file as a whole: live while the file is in the diff.
+		if t.files[mapped] {
+			live := keep
+			live.Path = mapped
+			live.State = Live
+			return live
+		}
+		return keep
 	}
 
 	if o.HunkHash == "" {

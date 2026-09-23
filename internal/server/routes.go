@@ -331,16 +331,18 @@ type createThreadRequest struct {
 
 // handleCreateThread starts a reviewer draft thread anchored in the
 // capture the reviewer is looking at, freezing that file's contents as
-// the thread's snapshot. Drafts emit no events: they are invisible
+// the thread's snapshot. Line 0 comments on the file as a whole, on the
+// side the file exists on. Drafts emit no events: they are invisible
 // until sent.
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	var req createThreadRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.Path == "" || req.Line < 1 || req.Body == "" ||
-		(req.Side != store.SideAdditions && req.Side != store.SideDeletions) {
-		httpError(w, http.StatusBadRequest, "validation", "path, side (additions|deletions), line >= 1, and body are required")
+	if req.Path == "" || req.Line < 0 || req.Body == "" ||
+		(req.Side != store.SideAdditions && req.Side != store.SideDeletions) ||
+		(req.Line == 0 && req.StartLine != nil) {
+		httpError(w, http.StatusBadRequest, "validation", "path, side (additions|deletions), line (0 for the whole file, no range), and body are required")
 		return
 	}
 	c, ok := s.captureFromQuery(w, req.Args)
@@ -352,16 +354,22 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "stale_diff", fmt.Sprintf("%s is not in this diff any more; the page will refresh", req.Path))
 		return
 	}
-	if f.IsBinary {
+	side := req.Side
+	if req.Line == 0 {
+		side = store.SideAdditions
+		if f.Status == gitx.StatusDeleted {
+			side = store.SideDeletions
+		}
+	} else if f.IsBinary {
 		httpError(w, http.StatusBadRequest, "validation", "binary files take no line comments")
 		return
 	}
 	nt := store.NewThread{
-		Path: f.Path, OldPath: f.OldPath, Status: f.Status, Side: req.Side,
+		Path: f.Path, OldPath: f.OldPath, Status: f.Status, Side: side,
 		StartLine: req.StartLine, Line: req.Line,
 		OldContent: f.OldContent, NewContent: f.NewContent,
 	}
-	if h := anchor.Find(c.hunks, req.Path, req.Side, req.Line); h != nil {
+	if h := anchor.Find(c.hunks, req.Path, side, req.Line); req.Line > 0 && h != nil {
 		nt.HunkHash, nt.HunkStart = h.Hash, h.Start(req.Side)
 	}
 	var thread *store.Thread

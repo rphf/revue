@@ -625,6 +625,29 @@ describe("DiffPage pending comment", () => {
     expect(selectionClears).toHaveLength(1);
     expect(api.getDiff).toHaveBeenCalledTimes(1);
   });
+
+  it("starts a thread on the whole file from its header", async () => {
+    vi.mocked(api.createThread).mockResolvedValue(undefined as never);
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Comment on a.go" }),
+    );
+    const box = await screen.findByPlaceholderText("Comment on this file");
+    expect(screen.getByTestId("annotation-a.go-0")).toContainElement(box);
+    fireEvent.change(box, { target: { value: "about the file" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start thread" }));
+
+    await waitFor(() =>
+      expect(api.createThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: "a.go",
+          side: "additions",
+          line: 0,
+          body: "about the file",
+        }),
+      ),
+    );
+  });
 });
 
 describe("DiffPage viewed files", () => {

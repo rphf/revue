@@ -40,7 +40,7 @@ import { keyForArgs } from "@/lib/diffArgs";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
 import { groupByRound } from "@/lib/rounds";
-import { threadRev } from "@/lib/threads";
+import { locationLabel, threadRev } from "@/lib/threads";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -351,7 +351,8 @@ export default function DiffPage({
   );
   useEffect(() => {
     if (!jump) return;
-    if (jump.side !== undefined && jump.line !== undefined)
+    // Line 0 is the file as a whole, whose threads sit under its header.
+    if (jump.side !== undefined && jump.line)
       diffViewRef.current?.scrollToLine(jump.path, jump.side, jump.line);
     else diffViewRef.current?.scrollToFile(jump.path);
   }, [jump]);
@@ -471,9 +472,11 @@ export default function DiffPage({
                 pendingBody.current = body;
               }}
               placeholder={
-                p.startLine && p.startLine !== p.line
-                  ? `Comment on lines ${p.startLine}–${p.line}`
-                  : `Comment on line ${p.line}`
+                p.line === 0
+                  ? "Comment on this file"
+                  : p.startLine && p.startLine !== p.line
+                    ? `Comment on lines ${p.startLine}–${p.line}`
+                    : `Comment on line ${p.line}`
               }
               submitLabel="Start thread"
               onSubmit={async (body) => {
@@ -524,6 +527,19 @@ export default function DiffPage({
       startLine: start !== end ? start : undefined,
     });
   }, []);
+  // A comment on the whole file sits at line 0, on the side the file
+  // exists on, and opens the file if it was collapsed.
+  const onFileComment = useCallback(
+    (path: string) => {
+      const deleted =
+        diffFiles.find((f) => f.path === path)?.status === "deleted";
+      pendingBody.current = "";
+      diffViewRef.current?.clearSelection();
+      overrideCollapse(path, false);
+      setPending({ path, side: deleted ? "deletions" : "additions", line: 0 });
+    },
+    [diffFiles, overrideCollapse],
+  );
 
   // A pending form stays where it was started; when its file leaves
   // the diff it waits, text and all, for the file to come back.
@@ -668,7 +684,7 @@ export default function DiffPage({
               <span>
                 Your unsent comment on{" "}
                 <span className="font-mono">
-                  {pending.path}:{pending.line}
+                  {locationLabel(pending.path, pending.line)}
                 </span>{" "}
                 is kept until that file is back in the diff.
               </span>
@@ -775,6 +791,7 @@ export default function DiffPage({
                       imageUrl={imageUrl}
                       viewed={viewed}
                       onToggleViewed={toggleViewed}
+                      onFileComment={onFileComment}
                       collapsed={collapsed}
                       onToggleCollapsed={toggleCollapsed}
                     />

@@ -64,11 +64,14 @@ func writeThread(b *strings.Builder, v *threadView) {
 	}
 	fmt.Fprintf(b, "\n### Thread %d%s\n\n", v.ID, label)
 
-	lines := fmt.Sprint(v.Line)
-	if v.StartLine != nil && *v.StartLine != v.Line {
-		lines = fmt.Sprintf("%d-%d", *v.StartLine, v.Line)
+	at, side := fmt.Sprintf("%s:%d", v.Path, v.Line), v.Side
+	switch {
+	case v.Line == 0:
+		at, side = v.Path, "whole file"
+	case v.StartLine != nil && *v.StartLine != v.Line:
+		at = fmt.Sprintf("%s:%d-%d", v.Path, *v.StartLine, v.Line)
 	}
-	fmt.Fprintf(b, "`%s:%s` (%s, %s)\n", v.Path, lines, v.Side, v.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"))
+	fmt.Fprintf(b, "`%s` (%s, %s)\n", at, side, v.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"))
 	if q := v.Quote; q != nil {
 		fence := codeFence(q.Lines)
 		fmt.Fprintf(b, "\n%s\n%s\n%s\n", fence, strings.Join(q.Lines, "\n"), fence)

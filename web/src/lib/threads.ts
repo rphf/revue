@@ -5,3 +5,9 @@ import type { Thread } from "../types";
 export function threadRev(t: Thread): string {
   return `${t.resolved ? 1 : 0}|${t.comments.map((c) => `${c.id}#${c.draft ? 1 : 0}#${c.body}`).join("\u0000")}`;
 }
+
+// Where a thread points: `path:line`, or the bare path for one on the
+// file as a whole (line 0).
+export function locationLabel(path: string, line: number): string {
+  return line === 0 ? path : `${path}:${line}`;
+}

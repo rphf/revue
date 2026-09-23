@@ -27,6 +27,7 @@ import {
   ChevronRightIcon,
   CodeIcon,
   FileDiffIcon,
+  MessageSquarePlusIcon,
 } from "lucide-react";
 import type { DiffFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
@@ -121,6 +122,8 @@ export interface DiffViewProps {
   imageUrl?: (path: string, side: "old" | "new") => string;
   viewed?: ReadonlySet<string>;
   onToggleViewed?: (path: string) => void;
+  // Starts a comment on the file as a whole, from its header.
+  onFileComment?: (path: string) => void;
   // Files shown as their header only.
   collapsed?: ReadonlySet<string>;
   onToggleCollapsed?: (path: string) => void;
@@ -149,6 +152,7 @@ const BINARY_CAPTION = "Binary file: no line diff.";
 interface BinaryMemo {
   file: FileContents;
   rev?: string;
+  notes?: DiffLineAnnotation<AnnotationMeta>[];
   collapsed: boolean;
   version: number;
 }
@@ -184,6 +188,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     imageUrl,
     viewed,
     onToggleViewed,
+    onFileComment,
     collapsed,
     onToggleCollapsed,
   }: DiffViewProps,
@@ -250,6 +255,11 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
 
     return ordered.map(({ path, meta }) => {
       const isCollapsed = collapsed?.has(path) ?? false;
+      // Threads on the whole file sit at line 0, under the header, in
+      // every variant of the item.
+      const fileNotes = annotationsByFile
+        ?.get(path)
+        ?.filter((a) => a.lineNumber === 0);
       if (meta === null) {
         const binary = binaryByPath.get(path);
         const image =
@@ -275,26 +285,37 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           ? {
               ...prev,
               rev,
+              notes: fileNotes,
               collapsed: isCollapsed,
               version:
-                prev.rev === rev && prev.collapsed === isCollapsed
+                prev.rev === rev &&
+                prev.collapsed === isCollapsed &&
+                annotationsEqual(prev.notes, fileNotes)
                   ? prev.version
                   : prev.version + 1,
             }
           : {
               file: { name: path, contents: BINARY_CAPTION, lang: "text" },
               rev,
+              notes: fileNotes,
               collapsed: isCollapsed,
               version: 0,
             };
         binaryMemoRef.current.set(path, memo);
+        const fileAnnotations = [
+          ...(image
+            ? [{ lineNumber: 0, metadata: { kind: "image", rev, image } }]
+            : []),
+          ...(fileNotes ?? []).map(({ lineNumber, metadata }) => ({
+            lineNumber,
+            metadata,
+          })),
+        ];
         return {
           id: path,
           type: "file",
           file: memo.file,
-          annotations: image && [
-            { lineNumber: 0, metadata: { kind: "image", rev, image } },
-          ],
+          annotations: fileAnnotations.length > 0 ? fileAnnotations : undefined,
           collapsed: isCollapsed,
           version: memo.version,
         } as CodeViewItem<AnnotationMeta>;
@@ -311,6 +332,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                 rich: richDoc,
               },
             },
+            ...(fileNotes ?? []),
           ]
         : annotationsByFile?.get(path);
       const prev = memoRef.current.get(path);
@@ -442,6 +464,19 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<AnnotationMeta>) => {
       const path = pathFromItemId(item.id);
+      const commentButton = onFileComment && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="text-muted-foreground hover:text-foreground"
+          aria-label={`Comment on ${path}`}
+          title="Comment on this file"
+          onClick={() => onFileComment(path)}
+        >
+          <MessageSquarePlusIcon />
+        </Button>
+      );
       const viewedToggle = onToggleViewed && (
         <label className="flex h-6 cursor-pointer items-center gap-1.5 rounded-[min(var(--radius-md),10px)] px-2 font-sans text-xs font-medium text-muted-foreground transition-colors select-none hover:bg-muted hover:text-foreground has-data-checked:text-foreground dark:hover:bg-muted/50">
           <Checkbox
@@ -464,6 +499,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
               {binarySummary(binary.oldSize, binary.newSize) ||
                 `Binary file (${binary.status})`}
             </span>
+            {commentButton}
             {viewedToggle}
           </span>
         );
@@ -495,11 +531,19 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
               </ToggleGroupItem>
             </ToggleGroup>
           )}
+          {commentButton}
           {viewedToggle}
         </span>
       );
     },
-    [viewed, onToggleViewed, binaryByPath, richByFile, onToggleRich],
+    [
+      viewed,
+      onToggleViewed,
+      onFileComment,
+      binaryByPath,
+      richByFile,
+      onToggleRich,
+    ],
   );
 
   if (items.length === 0) {

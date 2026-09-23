@@ -8,6 +8,7 @@ import {
 import type { Thread, ThreadPosition } from "../types";
 import type { Round } from "@/lib/rounds";
 import { excerpt } from "@/lib/text";
+import { locationLabel } from "@/lib/threads";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -289,7 +290,7 @@ function ThreadRow({
         </span>
         <span className="flex w-full items-center gap-2 text-xs text-muted-foreground">
           <span className="truncate font-mono">
-            {shown.path}:{shown.line}
+            {locationLabel(shown.path, shown.line)}
           </span>
           {replies > 0 && (
             <span className="ml-auto inline-flex shrink-0 items-center gap-1 tabular-nums">

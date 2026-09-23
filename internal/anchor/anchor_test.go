@@ -415,3 +415,23 @@ func TestParsePatchCountsAndPaths(t *testing.T) {
 		t.Error("Find bounds on the deletions side")
 	}
 }
+
+// A comment on the file as a whole (line 0): live while the file is in
+// the diff, whatever its hunks do, following renames; outdated once the
+// file leaves the diff.
+func TestFileThreadsFollowTheFile(t *testing.T) {
+	o := origin(patchMainV1, []file{mainFile("v1")}, "main.go", SideAdditions, 0, nil)
+	if o.HunkHash != "" {
+		t.Fatalf("setup: a file thread sits in no hunk, got hash %q", o.HunkHash)
+	}
+	if got := target(patchMainV2, mainFile("v2")).Locate(o); got.State != Live || got.Line != 0 {
+		t.Errorf("rewritten hunks: %+v, want live at 0", got)
+	}
+	renamed := file{path: "pkg/renamed.go", oldPath: "main.go", old: "old\n", new: "v1"}
+	if got := target(patchRenamed, renamed).Locate(o); got.State != Live || got.Path != "pkg/renamed.go" {
+		t.Errorf("renamed: %+v, want live on pkg/renamed.go", got)
+	}
+	if got := target("").Locate(o); got.State != Outdated || got.Path != "main.go" {
+		t.Errorf("file gone: %+v, want outdated at its origin", got)
+	}
+}

@@ -23,7 +23,7 @@ import {
 import { api, errorMessage } from "../api";
 import type { Theme } from "../theme";
 import type { Thread as ThreadType } from "../types";
-import { threadRev } from "@/lib/threads";
+import { locationLabel, threadRev } from "@/lib/threads";
 import { timeAgo } from "@/lib/time";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
@@ -212,15 +212,25 @@ export default function SnapshotView({
   useEffect(() => {
     if (!ready) return;
     const frame = requestAnimationFrame(() =>
-      codeView.current?.scrollTo({
-        type: "line",
-        id: thread.path,
-        lineNumber: thread.line,
-        side: thread.side,
-        align: "start",
-        offset: LINE_SCROLL_OFFSET,
-        behavior: "instant",
-      }),
+      codeView.current?.scrollTo(
+        // A thread on the whole file sits under the file header.
+        thread.line === 0
+          ? {
+              type: "item",
+              id: thread.path,
+              align: "start",
+              behavior: "instant",
+            }
+          : {
+              type: "line",
+              id: thread.path,
+              lineNumber: thread.line,
+              side: thread.side,
+              align: "start",
+              offset: LINE_SCROLL_OFFSET,
+              behavior: "instant",
+            },
+      ),
     );
     return () => cancelAnimationFrame(frame);
   }, [ready, thread.path, thread.line, thread.side]);
@@ -270,7 +280,7 @@ export default function SnapshotView({
           </p>
           <p className="truncate text-xs text-muted-foreground">
             <span className="font-mono">
-              {thread.path}:{thread.line}
+              {locationLabel(thread.path, thread.line)}
             </span>
             {snap.status === "ready" && ` · ${timeAgo(snap.createdAt)}`}
             {" · The code has changed since; reply and resolve still work."}
