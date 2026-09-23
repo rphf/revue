@@ -19,6 +19,8 @@ revue open abc123 def456      # two commits
 | `revue [open] [git-diff args]` | Open the browser on that diff and print the login link. `--no-browser` only prints. A bad argument fails here, with git's message. An empty diff opens as "No changes". |
 | `revue url` | Print a login link for the default diff. |
 | `revue serve` | Run the server in the foreground, as the entry point of a container or a service. On a laptop nobody types it: every other command starts the server in the background, and it stops after 30 minutes idle. |
+| `revue servers [--json]` | List the running servers, one per repository, with the repository, port, PID, and URL. It starts no server. |
+| `revue stop [--all]` | Stop the server of the repository you are in. Each repository has its own server, so `--all` also stops the ones for your other repositories: everything `revue servers` lists. When no server is running, it says so and exits 0. A stopped server keeps its port and token, so open tabs work again once any command starts it. |
 | `revue version` | Print the version. |
 
 ## Agent commands

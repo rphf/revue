@@ -100,6 +100,9 @@ type State struct {
 	PID       int    `json:"pid"`
 	Bind      string `json:"bind,omitempty"`
 	PublicURL string `json:"publicUrl,omitempty"`
+	// Repo is the repository the server serves, so a listing of every
+	// server can name it; the directory name is only its hash.
+	Repo string `json:"repo,omitempty"`
 }
 
 // Per-repo directories follow the XDG base-directory convention (like
@@ -137,14 +140,23 @@ func DataDir(repoRoot string) (string, error) {
 // file and log): $XDG_STATE_HOME/revue/<key>, default
 // ~/.local/state/revue/<key>.
 func StateDir(repoRoot string) (string, error) {
+	base, err := stateBase()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, repoKey(repoRoot)), nil
+}
+
+// stateBase is the directory holding every repository's state dir.
+func stateBase() (string, error) {
 	if base := os.Getenv("REVUE_DATA_DIR"); base != "" {
-		return filepath.Join(base, repoKey(repoRoot)), nil
+		return base, nil
 	}
 	base, err := xdgDir("XDG_STATE_HOME", filepath.Join(".local", "state"))
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "revue", repoKey(repoRoot)), nil
+	return filepath.Join(base, "revue"), nil
 }
 
 func statePath(stateDir string) string { return filepath.Join(stateDir, "state.json") }
@@ -263,7 +275,7 @@ func Start(cfg Config) (*Server, error) {
 	s.http = &http.Server{Handler: s.Handler()}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	state := &State{Port: port, Token: token, PID: os.Getpid(), PublicURL: publicURL}
+	state := &State{Port: port, Token: token, PID: os.Getpid(), PublicURL: publicURL, Repo: cfg.RepoRoot}
 	if bind != defaultBind {
 		state.Bind = bind
 	}

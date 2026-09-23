@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -80,6 +81,49 @@ func stopStale(st *State) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// Running lists the servers that answer on their recorded port with
+// their recorded token. State files of stopped servers stay on disk:
+// they keep the port and token a revived server reuses.
+func Running() ([]*State, error) {
+	base, err := stateBase()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []*State
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		st, err := ReadState(filepath.Join(base, e.Name()))
+		if err != nil || !Healthy(st) {
+			continue
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+// Stop ends a running server and waits for it to go. It only signals a
+// process that still answers with the recorded token, so a PID the
+// system reused for another program is left alone.
+func Stop(st *State) error {
+	if !Healthy(st) {
+		return nil
+	}
+	stopStale(st)
+	if Healthy(st) {
+		return fmt.Errorf("server on port %d (pid %d) did not stop", st.Port, st.PID)
+	}
+	return nil
 }
 
 // Ensure returns a healthy server's state for the repo, starting one

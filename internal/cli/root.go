@@ -40,6 +40,9 @@ Human commands:
   revue url                     print a login link for the default diff
   revue serve                   run the server in the foreground (a container entry point;
                                 the other commands start it in the background)
+  revue servers [--json]        list the running servers, one per repository
+  revue stop [--all]            stop this repository's server; --all also stops
+                                the servers of your other repositories
 
 Agent commands (JSON output; exit codes in docs/cli.md):
   feedback [--since C]            unresolved threads with quoted code, plus what happened since C
@@ -86,6 +89,10 @@ func Main(args []string) int {
 		return ExitOK
 	case "serve", "__serve":
 		return cmdServe(rest)
+	case "servers":
+		return cmdServers(rest, os.Stdout, os.Stderr)
+	case "stop":
+		return cmdStop(rest, os.Stdout, os.Stderr)
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		_, _ = fmt.Fprint(os.Stdout, usage)
