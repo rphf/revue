@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -177,7 +176,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"args":    args,
 		"branch":  c.branch,
-		"repo":    filepath.Base(s.repoRoot),
+		"repo":    gitx.RepoName(s.repoRoot),
 		"version": c.version,
 		"patch":   c.result.Patch,
 		"files":   c.fileViews(),

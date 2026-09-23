@@ -496,3 +496,22 @@ func TestTypeChangeIsOneSection(t *testing.T) {
 		})
 	}
 }
+
+func TestRepoNameFollowsOrigin(t *testing.T) {
+	repo := initRepo(t)
+	if got, want := RepoName(repo), filepath.Base(repo); got != want {
+		t.Errorf("without origin: got %q, want %q", got, want)
+	}
+	mustGit(t, repo, "remote", "add", "origin", "https://example.com/placeholder")
+	for _, url := range []string{
+		"git@github.com:rphf/revue.git",
+		"https://github.com/rphf/revue.git",
+		"https://github.com/rphf/revue/",
+		"/srv/git/revue",
+	} {
+		mustGit(t, repo, "remote", "set-url", "origin", url)
+		if got := RepoName(repo); got != "revue" {
+			t.Errorf("%s: got %q, want revue", url, got)
+		}
+	}
+}

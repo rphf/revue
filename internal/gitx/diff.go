@@ -567,3 +567,17 @@ func Branch(repoRoot string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// RepoName names the repository after its origin remote, so a checkout
+// in a generic directory such as a container's /workspace still reads
+// as the project. Without an origin, the directory name stands in.
+func RepoName(repoRoot string) string {
+	out, err := git(repoRoot, "remote", "get-url", "origin")
+	if err == nil {
+		url := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(string(out)), "/"), ".git")
+		if i := strings.LastIndexAny(url, "/:"); i >= 0 && i < len(url)-1 {
+			return url[i+1:]
+		}
+	}
+	return filepath.Base(repoRoot)
+}

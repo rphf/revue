@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  BookMarkedIcon,
   Columns2Icon,
   MessageSquareTextIcon,
   Rows3Icon,
@@ -88,6 +89,7 @@ function LiveDot({ pulse }: { pulse: number }) {
 }
 
 export interface TopBarProps {
+  repo?: string;
   branch?: string;
   args: string[];
   onNavigate: (to: string) => void;
@@ -106,6 +108,7 @@ export interface TopBarProps {
 // One bar for the page: what is shown on the left, how to look at it
 // and what to do with it on the right.
 export default function TopBar({
+  repo,
   branch,
   args,
   onNavigate,
@@ -124,6 +127,15 @@ export default function TopBar({
     <TopBarShell>
       <Brand />
       <Separator orientation="vertical" className="mx-1 h-5!" />
+      {repo && (
+        <span
+          className="flex min-w-0 items-center gap-1.5 px-1 text-sm font-medium"
+          data-testid="repo-name"
+        >
+          <BookMarkedIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">{repo}</span>
+        </span>
+      )}
       <DiffPicker branch={branch} args={args} onNavigate={onNavigate} />
       <LiveDot pulse={pulse} />
 

@@ -195,6 +195,10 @@ export default function DiffPage({
     };
   }, [args, argsKey, fetchNonce]);
   const diff = shown?.diff ?? null;
+  const repo = diff?.repo;
+  useEffect(() => {
+    document.title = repo ? `${repo} · revue` : "revue";
+  }, [repo]);
   const parsedFiles = shown?.files ?? null;
   const diffError = shown?.error ?? null;
   const version = diff?.version ?? null;
@@ -469,6 +473,7 @@ export default function DiffPage({
         <div className="flex h-full flex-col">
           <ConnectionBanner state={connection} />
           <TopBar
+            repo={repo}
             branch={diff?.branch}
             args={args}
             onNavigate={onNavigate}

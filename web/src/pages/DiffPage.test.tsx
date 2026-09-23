@@ -199,6 +199,15 @@ describe("DiffPage live updates", () => {
     vi.clearAllMocks();
   });
 
+  it("names the repository in the top bar and the tab title", async () => {
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("repo-name")).toHaveTextContent("repo"),
+    );
+    expect(document.title).toBe("repo · revue");
+  });
+
   it("shows an agent reply arriving over SSE without any reload", async () => {
     renderPage();
 
