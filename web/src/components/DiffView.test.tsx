@@ -14,38 +14,44 @@ interface StubItem {
   collapsed?: boolean;
   annotations?: unknown[];
 }
+let lastOptions: { loadDiffFiles?: (d: { name: string }) => unknown } = {};
 vi.mock("@pierre/diffs/react", () => ({
   CodeView: ({
     items,
+    options,
     renderAnnotation,
     renderHeaderPrefix,
     renderHeaderMetadata,
     className,
   }: {
     items: StubItem[];
+    options: typeof lastOptions;
     renderAnnotation?: (a: unknown, item: StubItem) => React.ReactNode;
     renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
     renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
     className?: string;
-  }) => (
-    <div className={className}>
-      {items.map((item) => (
-        <div
-          key={item.id}
-          data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}
-          data-collapsed={item.collapsed ? "true" : undefined}
-          data-version={item.version}
-        >
-          {renderHeaderPrefix?.(item)}
-          {item.id}
-          {renderHeaderMetadata?.(item)}
-          {item.annotations?.map((a, i) => (
-            <div key={i}>{renderAnnotation?.(a, item)}</div>
-          ))}
-        </div>
-      ))}
-    </div>
-  ),
+  }) => {
+    lastOptions = options;
+    return (
+      <div className={className}>
+        {items.map((item) => (
+          <div
+            key={item.id}
+            data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}
+            data-collapsed={item.collapsed ? "true" : undefined}
+            data-version={item.version}
+          >
+            {renderHeaderPrefix?.(item)}
+            {item.id}
+            {renderHeaderMetadata?.(item)}
+            {item.annotations?.map((a, i) => (
+              <div key={i}>{renderAnnotation?.(a, item)}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 import DiffView from "./DiffView";
@@ -297,5 +303,25 @@ describe("DiffView viewed files", () => {
     ).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(expand);
     expect(onToggleCollapsed).toHaveBeenCalledWith("a.go");
+  });
+});
+
+describe("DiffView context expansion", () => {
+  it("hands the renderer a loader that fetches the file by its path", async () => {
+    const loadFile = vi.fn(async () => ({
+      oldFile: { name: "a.go", contents: "a\n" },
+      newFile: { name: "a.go", contents: "b\n" },
+    }));
+    render(
+      <DiffView
+        files={[meta("a.go")]}
+        diffFiles={[diffFile("a.go")]}
+        diffStyle="unified"
+        theme="light"
+        loadFile={loadFile}
+      />,
+    );
+    await lastOptions.loadDiffFiles?.({ name: "a.go" });
+    expect(loadFile).toHaveBeenCalledWith("a.go");
   });
 });

@@ -9,6 +9,7 @@ import type {
   CodeViewItem,
   DiffLineAnnotation,
   FileContents,
+  FileDiffLoadedFiles,
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
@@ -23,7 +24,6 @@ import {
   ChevronRightIcon,
   CodeIcon,
   FileDiffIcon,
-  UnfoldVerticalIcon,
 } from "lucide-react";
 import type { DiffFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
@@ -113,7 +113,9 @@ export interface DiffViewProps {
     path: string,
   ) => ReactNode;
   onLineSelect?: (path: string, range: SelectedLineRange) => void;
-  onExpandContext?: (path: string) => void;
+  // Both versions of a changed file, fetched on the first click that
+  // expands hunk context in it.
+  loadFile?: (path: string) => Promise<FileDiffLoadedFiles>;
   // Markdown files switched to the rendered view, with their documents.
   richByFile?: ReadonlyMap<string, RichDoc>;
   onToggleRich?: (path: string) => void;
@@ -177,7 +179,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     annotationsByFile,
     renderAnnotation,
     onLineSelect,
-    onExpandContext,
+    loadFile,
     richByFile,
     onToggleRich,
     imageUrl,
@@ -374,6 +376,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       // whole in split view.
       overflow: "wrap",
       expansionLineCount: 20,
+      loadDiffFiles: loadFile && ((fileDiff) => loadFile(fileDiff.name)),
       layout: LAYOUT,
       unsafeCSS: UNSAFE_CSS,
       // The library's own gutter "+" carries the GitHub gesture: a click
@@ -400,7 +403,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       theme: THEMES,
       themeType: theme,
     }),
-    [diffStyle, theme, onLineSelect],
+    [diffStyle, theme, onLineSelect, loadFile],
   );
 
   if (items.length === 0) {
@@ -506,22 +509,6 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                 </ToggleGroupItem>
               </ToggleGroup>
             )}
-            {item.type === "diff" &&
-              item.fileDiff.isPartial &&
-              !collapsed?.has(path) &&
-              onExpandContext && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  className="text-muted-foreground hover:text-foreground"
-                  title="Load the full file to expand hunk context"
-                  onClick={() => onExpandContext(item.id)}
-                >
-                  <UnfoldVerticalIcon />
-                  Expand context
-                </Button>
-              )}
             {viewedToggle}
           </span>
         );

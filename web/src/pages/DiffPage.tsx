@@ -19,7 +19,6 @@ import { CircleAlertIcon, XIcon } from "lucide-react";
 import { useDefaultLayout } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
-import { splitPatch, useFullDiffs } from "../components/ContextExpand";
 import DiffView, {
   type AnnotationMeta,
   type DiffStyle,
@@ -34,6 +33,7 @@ import Thread from "../components/Thread";
 import { FocusedThreadContext } from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
+import { loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
 import { groupByRound } from "@/lib/rounds";
 import { threadRev } from "@/lib/threads";
@@ -326,12 +326,9 @@ export default function DiffPage({
     return map;
   }, [diff, threads]);
   // Expansion and the rich view read the current capture.
-  const { files: displayFiles, requestUpgrade } = useFullDiffs(
-    args,
-    version,
-    parsedFiles,
-    diffFiles,
-    diff?.patch ?? null,
+  const loadFile = useCallback(
+    async (path: string) => loadedFiles(await api.getDiffFile(args, path)),
+    [args],
   );
   const richByFile = useRichDocs(args, version, richPaths);
   const imageUrl = useCallback(
@@ -664,7 +661,7 @@ export default function DiffPage({
                         Retry
                       </Button>
                     </div>
-                  ) : displayFiles === null ? (
+                  ) : parsedFiles === null ? (
                     <div
                       className="flex-1 space-y-3 p-4"
                       data-testid="diff-loading"
@@ -682,14 +679,14 @@ export default function DiffPage({
                   ) : (
                     <DiffView
                       ref={diffViewRef}
-                      files={displayFiles}
+                      files={parsedFiles}
                       diffFiles={diffFiles}
                       diffStyle={diffStyle}
                       theme={theme}
                       annotationsByFile={annotationsByFile}
                       renderAnnotation={renderAnnotation}
                       onLineSelect={onLineSelect}
-                      onExpandContext={requestUpgrade}
+                      loadFile={loadFile}
                       richByFile={richByFile}
                       onToggleRich={toggleRich}
                       imageUrl={imageUrl}
