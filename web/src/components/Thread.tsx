@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import {
   BotIcon,
   CheckIcon,
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CommentForm from "./CommentForm";
 import Markdown from "./Markdown";
+import { FocusedThreadContext } from "./threadFocus";
 
 export interface ThreadProps {
   thread: ThreadType;
@@ -28,6 +29,7 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const focused = useContext(FocusedThreadContext) === thread.id;
 
   const run = (op: Promise<unknown>) =>
     op.then(
@@ -45,8 +47,14 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
 
   return (
     <div
-      className={cn("annotation-card", thread.resolved && "opacity-75")}
+      className={cn(
+        "annotation-card",
+        thread.resolved && "opacity-75",
+        focused && "outline-2 outline-offset-2 outline-primary",
+      )}
       data-testid={`thread-${thread.id}`}
+      data-thread-id={thread.id}
+      data-focused={focused || undefined}
     >
       {thread.resolved && (
         <div className="flex items-center gap-1.5 border-b px-3 py-1.5">

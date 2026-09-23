@@ -14,7 +14,8 @@ import type { Comment, DiffResponse, Thread } from "../types";
 // stub CodeView invokes renderAnnotation for every item annotation,
 // so threads flow through the same path as in the browser. Annotation
 // containers are keyed by item version, so a changed file remounts
-// them the way the real virtualizer does.
+// them the way the real virtualizer does. Like the real one, the stub
+// keeps an item it has seen until its version changes.
 interface StubItem {
   id: string;
   type: "diff" | "file";
@@ -27,9 +28,10 @@ interface StubOptions {
     context: { item: { id: string } },
   ) => void;
 }
-vi.mock("@pierre/diffs/react", () => ({
-  CodeView: ({
-    items,
+vi.mock("@pierre/diffs/react", async () => {
+  const { useRef } = await import("react");
+  const CodeView = ({
+    items: next,
     options,
     renderAnnotation,
   }: {
@@ -39,34 +41,47 @@ vi.mock("@pierre/diffs/react", () => ({
       a: DiffLineAnnotation<AnnotationMeta>,
       item: StubItem,
     ) => React.ReactNode;
-  }) => (
-    <div>
-      <button
-        type="button"
-        onClick={() =>
-          options.onGutterUtilityClick?.(
-            { start: 5, end: 5, side: "additions" },
-            { item: { id: "a.go" } },
-          )
-        }
-      >
-        select-line
-      </button>
-      {items.map((item) => (
-        <div
-          key={`${item.id}:${item.version ?? 0}`}
-          data-testid={`filediff-${item.id}`}
+  }) => {
+    const seen = useRef(new Map<string, StubItem>());
+    const items = next.map((item) => {
+      const prev = seen.current.get(item.id);
+      if (prev && prev.version === item.version) return prev;
+      seen.current.set(item.id, item);
+      return item;
+    });
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() =>
+            options.onGutterUtilityClick?.(
+              { start: 5, end: 5, side: "additions" },
+              { item: { id: "a.go" } },
+            )
+          }
         >
-          {item.annotations?.map((a, i) => (
-            <div key={i} data-testid={`annotation-${item.id}-${a.lineNumber}`}>
-              {renderAnnotation?.(a, item)}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  ),
-}));
+          select-line
+        </button>
+        {items.map((item) => (
+          <div
+            key={`${item.id}:${item.version ?? 0}`}
+            data-testid={`filediff-${item.id}`}
+          >
+            {item.annotations?.map((a, i) => (
+              <div
+                key={i}
+                data-testid={`annotation-${item.id}-${a.lineNumber}`}
+              >
+                {renderAnnotation?.(a, item)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  };
+  return { CodeView };
+});
 
 vi.mock("@pierre/diffs", () => ({
   parsePatchFiles: () => [{ files: [{ name: "a.go" }] }],
@@ -237,6 +252,23 @@ describe("DiffPage live updates", () => {
     );
   });
 
+  it("outlines a live thread jumped to from the panel", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("please rename this")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    expect(screen.getByTestId("thread-1")).toHaveAttribute("data-focused");
+    expect(screen.queryByTestId("snapshot-view")).not.toBeInTheDocument();
+
+    // A click inside the thread keeps it; one outside drops it.
+    fireEvent.pointerDown(screen.getByTestId("comment-100"));
+    expect(screen.getByTestId("thread-1")).toHaveAttribute("data-focused");
+    fireEvent.pointerDown(document.body);
+    expect(screen.getByTestId("thread-1")).not.toHaveAttribute("data-focused");
+  });
+
   it("opens an outdated thread on its snapshot from the threads panel", async () => {
     vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1, "outdated"));
     vi.mocked(api.getSnapshot).mockResolvedValue({
@@ -258,11 +290,127 @@ describe("DiffPage live updates", () => {
     expect(row).toHaveTextContent(/outdated/);
     fireEvent.click(row);
 
-    const dialog = await screen.findByTestId("snapshot-dialog");
-    expect(dialog).toHaveTextContent("As it was when the thread started");
+    const view = await screen.findByTestId("snapshot-view");
+    expect(view).toHaveTextContent("As it was when the thread started");
     await waitFor(() => expect(api.getSnapshot).toHaveBeenCalledWith(1));
-    // The thread renders on the snapshot, with its actions.
-    await waitFor(() => expect(dialog).toHaveTextContent("please rename this"));
+    // The thread renders on the snapshot, with its actions, outlined.
+    await waitFor(() => expect(view).toHaveTextContent("please rename this"));
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+    expect(screen.getByTestId("thread-1")).toHaveAttribute("data-focused");
+    // The panel stays open beside it, the row marked.
+    expect(screen.getByTestId("panel-thread-1")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+
+    // A click elsewhere drops the outline; Escape goes back to the diff.
+    fireEvent.pointerDown(view);
+    expect(screen.getByTestId("thread-1")).not.toHaveAttribute("data-focused");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("snapshot-view")).not.toBeInTheDocument();
+  });
+
+  it("shows a reply sent from the snapshot without reopening it", async () => {
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1, "outdated"));
+    vi.mocked(api.getSnapshot).mockResolvedValue({
+      path: "a.go",
+      status: "modified",
+      oldContent: "old\n",
+      newContent: "new\n",
+      createdAt: "2026-09-20T10:00:00Z",
+    });
+    vi.mocked(api.reply).mockResolvedValue(undefined as never);
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("snapshot-view")).toHaveTextContent(
+        "please rename this",
+      ),
+    );
+
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [
+        makeThread([
+          reviewerComment,
+          { ...reviewerComment, id: 102, body: "one more thing", draft: true },
+        ]),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    fireEvent.change(screen.getByPlaceholderText("Reply"), {
+      target: { value: "one more thing" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+
+    await waitFor(() =>
+      expect(api.reply).toHaveBeenCalledWith(1, "one more thing"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("snapshot-view")).toHaveTextContent(
+        "one more thing",
+      ),
+    );
+    expect(screen.getByTestId("comment-102")).toBeInTheDocument();
+  });
+
+  it("steps through outdated threads without leaving the snapshot", async () => {
+    const second: Thread = {
+      ...makeThread([{ ...reviewerComment, id: 200, body: "second one" }]),
+      id: 2,
+      line: 9,
+    };
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment]), second],
+    });
+    const diff = makeDiff(1, "outdated");
+    diff.anchors.push({ ...diff.anchors[0], threadId: 2, line: 9 });
+    vi.mocked(api.getDiff).mockResolvedValue(diff);
+    vi.mocked(api.getSnapshot).mockResolvedValue({
+      path: "a.go",
+      status: "modified",
+      oldContent: "old\n",
+      newContent: "new\n",
+      createdAt: "2026-09-20T10:00:00Z",
+    });
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+
+    await screen.findByTestId("snapshot-view");
+    expect(screen.getByTestId("snapshot-position")).toHaveTextContent(
+      "1 of 2 outdated",
+    );
+    expect(
+      screen.getByRole("button", { name: "Previous outdated thread" }),
+    ).toBeDisabled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Next outdated thread" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("snapshot-view")).toHaveTextContent(
+        "second one",
+      ),
+    );
+    expect(api.getSnapshot).toHaveBeenLastCalledWith(2);
+    expect(screen.getByTestId("snapshot-position")).toHaveTextContent(
+      "2 of 2 outdated",
+    );
+    expect(screen.getByTestId("thread-2")).toHaveAttribute("data-focused");
+
+    // The keyboard goes back, but not while typing.
+    fireEvent.keyDown(window, { key: "k" });
+    await waitFor(() =>
+      expect(screen.getByTestId("snapshot-view")).toHaveTextContent(
+        "please rename this",
+      ),
+    );
   });
 });

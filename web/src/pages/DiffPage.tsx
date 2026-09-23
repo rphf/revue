@@ -28,8 +28,9 @@ import DiffView, {
 import FileTree from "../components/FileTree";
 import RichMarkdown from "../components/RichMarkdown";
 import SendDialog from "../components/SendDialog";
-import SnapshotDialog from "../components/SnapshotDialog";
+import SnapshotView from "../components/SnapshotView";
 import Thread from "../components/Thread";
+import { FocusedThreadContext } from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { useRichDocs } from "@/lib/richDiff";
@@ -113,6 +114,7 @@ export default function DiffPage({
   const [showPanel, setShowPanel] = useState(false);
   const [showSend, setShowSend] = useState(false);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
+  const [focusedId, setFocusedId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(0);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(loadDiffStyle);
@@ -131,13 +133,21 @@ export default function DiffPage({
     });
   }, []);
 
-  // Pane widths survive reloads; the threads pane is conditional, so
-  // the layout with and without it is stored separately.
-  const paneLayout = useDefaultLayout({
-    id: "revue-review-panes",
+  // Pane widths survive reloads. The threads pane sits outside the
+  // tree and the diff, so a snapshot can cover both and leave the list
+  // of threads beside it; it is conditional, so the layout with and
+  // without it is stored separately.
+  const outerLayout = useDefaultLayout({
+    id: "revue-outer-panes",
     storage: localStorage,
     onlySaveAfterUserInteractions: true,
-    panelIds: showPanel ? ["tree", "diff", "threads"] : ["tree", "diff"],
+    panelIds: showPanel ? ["main", "threads"] : ["main"],
+  });
+  const mainLayout = useDefaultLayout({
+    id: "revue-main-panes",
+    storage: localStorage,
+    onlySaveAfterUserInteractions: true,
+    panelIds: ["tree", "diff"],
   });
 
   const loadThreads = useCallback(() => {
@@ -370,21 +380,60 @@ export default function DiffPage({
     !parsedFiles.some((f) => f.name === pending.path);
 
   // A live thread scrolls to its line; an outdated one opens on the
-  // file as it was when the thread started.
+  // file as it was when the thread started. Either way the thread is
+  // outlined until the next click elsewhere.
   const jumpToThread = useCallback(
     (thread: ThreadType, position: ThreadPosition | undefined) => {
+      setFocusedId(thread.id);
       if (position?.state === "live") {
-        scrollToFile(position.path);
+        setSnapshotId(null);
+        setSelectedPath(position.path);
+        diffViewRef.current?.scrollToLine(
+          position.path,
+          position.side,
+          position.line,
+        );
       } else {
         setSnapshotId(thread.id);
       }
     },
-    [scrollToFile],
+    [],
   );
-  const snapshotThread = useMemo(
-    () => threads.find((t) => t.id === snapshotId) ?? null,
-    [threads, snapshotId],
+  const openSnapshot = useCallback((id: number) => {
+    setSnapshotId(id);
+    setFocusedId(id);
+  }, []);
+  const closeSnapshot = useCallback(() => setSnapshotId(null), []);
+
+  useEffect(() => {
+    if (focusedId === null) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const inside = e
+        .composedPath()
+        .some(
+          (n) =>
+            n instanceof HTMLElement &&
+            n.dataset.threadId === String(focusedId),
+        );
+      if (!inside) setFocusedId(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [focusedId]);
+
+  // The snapshot steps through the threads that open there, in panel
+  // order; the one on screen stays in the list even if its code came
+  // back meanwhile.
+  const outdated = useMemo(
+    () =>
+      threads.filter(
+        (t) => positions.get(t.id)?.state !== "live" || t.id === snapshotId,
+      ),
+    [threads, positions, snapshotId],
   );
+  const snapshotIndex = outdated.findIndex((t) => t.id === snapshotId);
+  const snapshotThread = snapshotIndex >= 0 ? outdated[snapshotIndex] : null;
 
   const sendComments = useCallback(
     async (note: string) => {
@@ -397,172 +446,195 @@ export default function DiffPage({
 
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col">
-        <ConnectionBanner state={connection} />
-        <TopBar
-          branch={diff?.branch}
-          args={args}
-          onNavigate={onNavigate}
-          pulse={pulse}
-          threadCount={threads.length}
-          panelOpen={showPanel}
-          onTogglePanel={() => setShowPanel((v) => !v)}
-          draftCount={draftCount}
-          onSend={() => setShowSend(true)}
-          diffStyle={diffStyle}
-          onDiffStyleChange={setDiffStyle}
-          theme={theme}
-          onToggleTheme={onToggleTheme}
-        />
-        {threadsError && (
-          <p
-            className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
-            role="alert"
-          >
-            <CircleAlertIcon className="size-3.5" />
-            {threadsError}
-          </p>
-        )}
-        {pendingHidden && pending && (
-          <p
-            className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
-            role="status"
-          >
-            <CircleAlertIcon className="size-3.5" />
-            <span>
-              Your unsent comment on{" "}
-              <span className="font-mono">
-                {pending.path}:{pending.line}
-              </span>{" "}
-              is kept until that file is back in the diff.
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="ml-auto"
-              onClick={() => {
-                pendingBody.current = "";
-                setPending(null);
-              }}
-            >
-              <XIcon />
-              Discard
-            </Button>
-          </p>
-        )}
-        <ResizablePanelGroup
-          orientation="horizontal"
-          id="review-panes"
-          className="min-h-0 flex-1"
-          defaultLayout={paneLayout.defaultLayout}
-          onLayoutChanged={paneLayout.onLayoutChanged}
-        >
-          <ResizablePanel
-            id="tree"
-            defaultSize={272}
-            minSize={200}
-            maxSize="40"
-            className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
-          >
-            <FileTree
-              files={diffFiles}
-              viewed={viewed}
-              onToggleViewed={toggleViewed}
-              onSelect={scrollToFile}
-              selectedPath={selectedPath}
-            />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel
-            id="diff"
-            minSize={360}
-            className="flex min-w-0 flex-col"
-          >
-            {diffError !== null ? (
-              <div
-                className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
-                data-testid="diff-error"
-              >
-                <CircleAlertIcon className="size-6 text-destructive" />
-                <p className="max-w-lg text-destructive">{diffError}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFetchNonce((n) => n + 1)}
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : displayFiles === null ? (
-              <div
-                className="flex-1 space-y-3 p-4"
-                data-testid="diff-loading"
-                aria-busy="true"
-              >
-                <span className="sr-only">Loading diff…</span>
-                <Skeleton className="h-9 w-full" />
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="h-4 w-4/5" />
-                <Skeleton className="mt-6 h-9 w-full" />
-                <Skeleton className="h-4 w-1/2" />
-                <Skeleton className="h-4 w-3/5" />
-              </div>
-            ) : (
-              <DiffView
-                ref={diffViewRef}
-                files={displayFiles}
-                diffFiles={diffFiles}
-                diffStyle={diffStyle}
-                theme={theme}
-                annotationsByFile={annotationsByFile}
-                renderAnnotation={renderAnnotation}
-                onLineSelect={onLineSelect}
-                onExpandContext={requestUpgrade}
-                richByFile={richByFile}
-                onToggleRich={toggleRich}
-              />
-            )}
-          </ResizablePanel>
-          {showPanel && (
-            <>
-              <ResizableHandle />
-              <ResizablePanel
-                id="threads"
-                defaultSize={360}
-                minSize={280}
-                maxSize="45"
-                className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
-              >
-                <ThreadsPanel
-                  threads={threads}
-                  positions={positions}
-                  onJump={jumpToThread}
-                  onClose={() => setShowPanel(false)}
-                />
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
-        {showSend && (
-          <SendDialog
+      <FocusedThreadContext.Provider value={focusedId}>
+        <div className="flex h-full flex-col">
+          <ConnectionBanner state={connection} />
+          <TopBar
+            branch={diff?.branch}
+            args={args}
+            onNavigate={onNavigate}
+            pulse={pulse}
+            threadCount={threads.length}
+            panelOpen={showPanel}
+            onTogglePanel={() => setShowPanel((v) => !v)}
             draftCount={draftCount}
-            onSend={sendComments}
-            onClose={() => setShowSend(false)}
-          />
-        )}
-        {snapshotThread && (
-          <SnapshotDialog
-            thread={snapshotThread}
+            onSend={() => setShowSend(true)}
             diffStyle={diffStyle}
+            onDiffStyleChange={setDiffStyle}
             theme={theme}
-            onChanged={loadThreads}
-            onClose={() => setSnapshotId(null)}
+            onToggleTheme={onToggleTheme}
           />
-        )}
-      </div>
+          {threadsError && (
+            <p
+              className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
+              role="alert"
+            >
+              <CircleAlertIcon className="size-3.5" />
+              {threadsError}
+            </p>
+          )}
+          {pendingHidden && pending && (
+            <p
+              className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
+              role="status"
+            >
+              <CircleAlertIcon className="size-3.5" />
+              <span>
+                Your unsent comment on{" "}
+                <span className="font-mono">
+                  {pending.path}:{pending.line}
+                </span>{" "}
+                is kept until that file is back in the diff.
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="ml-auto"
+                onClick={() => {
+                  pendingBody.current = "";
+                  setPending(null);
+                }}
+              >
+                <XIcon />
+                Discard
+              </Button>
+            </p>
+          )}
+          <ResizablePanelGroup
+            orientation="horizontal"
+            id="outer-panes"
+            className="min-h-0 flex-1"
+            defaultLayout={outerLayout.defaultLayout}
+            onLayoutChanged={outerLayout.onLayoutChanged}
+          >
+            <ResizablePanel
+              id="main"
+              minSize={560}
+              className="relative min-w-0"
+            >
+              <ResizablePanelGroup
+                orientation="horizontal"
+                id="main-panes"
+                defaultLayout={mainLayout.defaultLayout}
+                onLayoutChanged={mainLayout.onLayoutChanged}
+              >
+                <ResizablePanel
+                  id="tree"
+                  defaultSize={272}
+                  minSize={200}
+                  maxSize="40"
+                  className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+                >
+                  <FileTree
+                    files={diffFiles}
+                    viewed={viewed}
+                    onToggleViewed={toggleViewed}
+                    onSelect={scrollToFile}
+                    selectedPath={selectedPath}
+                  />
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel
+                  id="diff"
+                  minSize={360}
+                  className="flex min-w-0 flex-col"
+                >
+                  {diffError !== null ? (
+                    <div
+                      className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+                      data-testid="diff-error"
+                    >
+                      <CircleAlertIcon className="size-6 text-destructive" />
+                      <p className="max-w-lg text-destructive">{diffError}</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFetchNonce((n) => n + 1)}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : displayFiles === null ? (
+                    <div
+                      className="flex-1 space-y-3 p-4"
+                      data-testid="diff-loading"
+                      aria-busy="true"
+                    >
+                      <span className="sr-only">Loading diff…</span>
+                      <Skeleton className="h-9 w-full" />
+                      <Skeleton className="h-4 w-3/4" />
+                      <Skeleton className="h-4 w-2/3" />
+                      <Skeleton className="h-4 w-4/5" />
+                      <Skeleton className="mt-6 h-9 w-full" />
+                      <Skeleton className="h-4 w-1/2" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </div>
+                  ) : (
+                    <DiffView
+                      ref={diffViewRef}
+                      files={displayFiles}
+                      diffFiles={diffFiles}
+                      diffStyle={diffStyle}
+                      theme={theme}
+                      annotationsByFile={annotationsByFile}
+                      renderAnnotation={renderAnnotation}
+                      onLineSelect={onLineSelect}
+                      onExpandContext={requestUpgrade}
+                      richByFile={richByFile}
+                      onToggleRich={toggleRich}
+                    />
+                  )}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+              {snapshotThread && (
+                <div className="absolute inset-0 z-10">
+                  <SnapshotView
+                    key={snapshotThread.id}
+                    thread={snapshotThread}
+                    index={snapshotIndex}
+                    total={outdated.length}
+                    onPrev={() => openSnapshot(outdated[snapshotIndex - 1].id)}
+                    onNext={() => openSnapshot(outdated[snapshotIndex + 1].id)}
+                    diffStyle={diffStyle}
+                    theme={theme}
+                    onChanged={loadThreads}
+                    onClose={closeSnapshot}
+                  />
+                </div>
+              )}
+            </ResizablePanel>
+            {showPanel && (
+              <>
+                <ResizableHandle />
+                <ResizablePanel
+                  id="threads"
+                  defaultSize={360}
+                  minSize={280}
+                  maxSize="45"
+                  className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+                >
+                  <ThreadsPanel
+                    threads={threads}
+                    positions={positions}
+                    onJump={jumpToThread}
+                    activeId={snapshotThread?.id ?? focusedId}
+                    onClose={() => setShowPanel(false)}
+                  />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
+          {showSend && (
+            <SendDialog
+              draftCount={draftCount}
+              onSend={sendComments}
+              onClose={() => setShowSend(false)}
+            />
+          )}
+        </div>
+      </FocusedThreadContext.Provider>
     </TooltipProvider>
   );
 }

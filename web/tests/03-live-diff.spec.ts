@@ -38,14 +38,46 @@ test("an edit on disk updates the diff live and outdates the thread on its hunk"
   await panel.getByRole("tab", { name: /outdated/ }).click();
   await expect(panel.getByText("alpha draft note")).toBeVisible();
 
-  // Opening it shows the file as it was, with the draft on it.
+  // Opening it shows the file as it was, with the draft on it, outlined,
+  // and the panel still beside it.
   await panel.getByText("alpha draft note").click();
-  const dialog = page.getByTestId("snapshot-dialog");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("alpha three v2").first()).toBeVisible();
-  await expect(dialog.getByText("alpha draft note")).toBeVisible();
+  const view = page.getByTestId("snapshot-view");
+  await expect(view).toBeVisible();
+  await expect(view.getByText("alpha three v2").first()).toBeVisible();
+  const thread = view
+    .getByTestId(/^thread-/)
+    .filter({ hasText: "alpha draft note" });
+  await expect(thread).toBeVisible();
+  await expect(thread).toHaveAttribute("data-focused", "true");
+  await expect(view.getByTestId("snapshot-position")).toHaveText(
+    /^\d+ of \d+ outdated$/,
+  );
+  await expect(panel).toBeVisible();
+
+  // A reply shows on the snapshot at once.
+  await thread
+    .getByRole("button", { name: "Reply", exact: true })
+    .dispatchEvent("click");
+  await thread.getByPlaceholder("Reply").fill("alpha reply from snapshot");
+  await thread
+    .getByRole("button", { name: "Reply", exact: true })
+    .dispatchEvent("click");
+  await expect(thread.getByText("alpha reply from snapshot")).toBeVisible();
+
+  // A click elsewhere drops the outline; Escape goes back to the diff.
+  await view.getByText("As it was when the thread started").click();
+  await expect(thread).not.toHaveAttribute("data-focused");
   await page.keyboard.press("Escape");
-  await expect(dialog).not.toBeVisible();
+  await expect(view).not.toBeVisible();
+
+  // A live thread in the panel scrolls the diff to it, outlined.
+  await panel.getByRole("tab", { name: /^all/ }).click();
+  await panel.getByText("beta draft note").click();
+  const beta = page
+    .getByTestId(/^thread-/)
+    .filter({ hasText: "beta draft note" });
+  await expect(beta).toBeInViewport();
+  await expect(beta).toHaveAttribute("data-focused", "true");
 
   // The live filter shows the beta draft only.
   await panel.getByRole("tab", { name: /^live/ }).click();

@@ -28,7 +28,13 @@ import type { Theme } from "../theme";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { LAYOUT, THEMES, UNSAFE_CSS } from "./codeViewStyle";
+import {
+  LAYOUT,
+  LINE_SCROLL_OFFSET,
+  THEMES,
+  UNSAFE_CSS,
+} from "./codeViewStyle";
+import { useStickyHeaderFix } from "./stickyHeaderFix";
 import { treePathCompare } from "./treePath";
 
 export type DiffStyle = "unified" | "split";
@@ -81,6 +87,10 @@ export interface DiffViewHandle {
   // Exact jump: CodeView computes the offset from its own layout
   // math, so far-away files land instantly with no settling.
   scrollToFile(path: string): void;
+  // Brings a line near the top, with a few lines above it, so the
+  // thread drawn under it is in view. A line the diff does not show
+  // leaves the view at the top of its file.
+  scrollToLine(path: string, side: Side, line: number): void;
   // Drops the line selection the library keeps after a gutter click or
   // drag, so the next one starts fresh instead of extending it.
   clearSelection(): void;
@@ -148,6 +158,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   ref,
 ) {
   const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
+  useStickyHeaderFix(codeView);
   const richRef = useRef(richByFile);
   richRef.current = richByFile;
   useImperativeHandle(
@@ -158,6 +169,24 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           type: "item",
           id: richRef.current?.has(path) ? richItemId(path) : path,
           align: "start",
+          behavior: "instant",
+        });
+      },
+      scrollToLine: (path: string, side: Side, line: number) => {
+        const id = richRef.current?.has(path) ? richItemId(path) : path;
+        codeView.current?.scrollTo({
+          type: "item",
+          id,
+          align: "start",
+          behavior: "instant",
+        });
+        codeView.current?.scrollTo({
+          type: "line",
+          id,
+          lineNumber: line,
+          side,
+          align: "start",
+          offset: LINE_SCROLL_OFFSET,
           behavior: "instant",
         });
       },

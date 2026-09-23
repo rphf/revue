@@ -24,6 +24,8 @@ export interface ThreadsPanelProps {
   // live position is outdated for this diff.
   positions: ReadonlyMap<number, ThreadPosition>;
   onJump: (thread: Thread, position: ThreadPosition | undefined) => void;
+  // The thread the page is showing, marked in the list.
+  activeId?: number | null;
   onClose: () => void;
 }
 
@@ -36,6 +38,7 @@ export default function ThreadsPanel({
   threads,
   positions,
   onJump,
+  activeId,
   onClose,
 }: ThreadsPanelProps) {
   const [filter, setFilter] = useState<PanelFilter>("all");
@@ -126,7 +129,9 @@ export default function ThreadsPanel({
                     className={cn(
                       "flex w-full flex-col gap-1.5 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60",
                       state === "resolved" && "opacity-70",
+                      thread.id === activeId && "bg-muted",
                     )}
+                    aria-current={thread.id === activeId || undefined}
                     data-testid={`panel-thread-${thread.id}`}
                     onClick={() => onJump(thread, position)}
                   >
