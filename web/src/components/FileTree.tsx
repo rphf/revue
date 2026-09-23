@@ -166,31 +166,33 @@ function FileTree({
   const header = useMemo(
     () => (
       <div className="tree-header flex items-center gap-2 px-3 pt-2.5 pb-1.5 text-xs">
-        <span className="font-medium">
+        <span className="font-medium whitespace-nowrap">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
         {additions + deletions > 0 && (
           <span
-            className="font-mono tabular-nums"
+            className="font-mono whitespace-nowrap tabular-nums"
             aria-label={`${additions} added, ${deletions} removed lines`}
           >
             <span className="text-added">+{additions}</span>{" "}
             <span className="text-removed">−{deletions}</span>
           </span>
         )}
-        <span className="whitespace-nowrap text-muted-foreground">
-          {viewedCount} viewed
-        </span>
-        <span
-          className="ml-auto h-1 w-14 min-w-4 shrink overflow-hidden rounded-full bg-border"
-          aria-hidden="true"
-        >
+        <span className="ml-auto flex min-w-0 items-center gap-1.5">
+          <span className="whitespace-nowrap text-muted-foreground">
+            {viewedCount} viewed
+          </span>
           <span
-            className="block h-full rounded-full bg-added transition-[width]"
-            style={{
-              width: `${files.length ? (viewedCount / files.length) * 100 : 0}%`,
-            }}
-          />
+            className="h-1 w-14 min-w-4 shrink overflow-hidden rounded-full bg-border"
+            aria-hidden="true"
+          >
+            <span
+              className="block h-full rounded-full bg-added transition-[width]"
+              style={{
+                width: `${files.length ? (viewedCount / files.length) * 100 : 0}%`,
+              }}
+            />
+          </span>
         </span>
       </div>
     ),
