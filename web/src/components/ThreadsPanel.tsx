@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   ChevronRightIcon,
   MessageSquareIcon,
@@ -35,6 +35,8 @@ export interface ThreadsPanelProps {
   // The thread the page is showing, marked in the list.
   activeId?: number | null;
   onClose: () => void;
+  // Pinned under the list: the composer for the next send.
+  footer?: ReactNode;
 }
 
 interface Row {
@@ -56,6 +58,7 @@ export default function ThreadsPanel({
   onJump,
   activeId,
   onClose,
+  footer,
 }: ThreadsPanelProps) {
   const [filter, setFilter] = useState<PanelFilter>("all");
   // Sections the reviewer opened or closed; the rest follow the default.
@@ -142,7 +145,7 @@ export default function ThreadsPanel({
         </TabsList>
       </Tabs>
       {visibleSections.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">
+        <p className="min-h-0 flex-1 p-4 text-sm text-muted-foreground">
           No {filter === "all" ? "" : filter + " "}threads
         </p>
       ) : (
@@ -178,6 +181,7 @@ export default function ThreadsPanel({
           })}
         </ScrollArea>
       )}
+      {footer}
     </div>
   );
 }

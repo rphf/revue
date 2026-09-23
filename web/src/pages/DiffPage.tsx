@@ -28,7 +28,7 @@ import DiffView, {
 } from "../components/DiffView";
 import FileTree from "../components/FileTree";
 import RichMarkdown from "../components/RichMarkdown";
-import SendDialog from "../components/SendDialog";
+import SendComposer from "../components/SendComposer";
 import SnapshotView from "../components/SnapshotView";
 import Thread from "../components/Thread";
 import { FocusedThreadContext } from "../components/threadFocus";
@@ -115,7 +115,12 @@ export default function DiffPage({
   const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
-  const [showSend, setShowSend] = useState(false);
+  // The note for the next send outlives the panel, so closing it to
+  // look at the diff loses nothing.
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [composerFocus, setComposerFocus] = useState(0);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
@@ -463,13 +468,30 @@ export default function DiffPage({
   const snapshotIndex = outdated.findIndex((t) => t.id === snapshotId);
   const snapshotThread = snapshotIndex >= 0 ? outdated[snapshotIndex] : null;
 
-  const sendComments = useCallback(
-    async (note: string) => {
-      await api.send(note);
-      setShowSend(false);
-      loadThreads();
+  const openComposer = useCallback(() => {
+    setShowPanel(true);
+    setComposerFocus((n) => n + 1);
+  }, []);
+
+  // One path for both ways to send: the composer's, with the note, and
+  // the top bar's, drafts only. A failed quick send opens the composer,
+  // where the error shows.
+  const sendRound = useCallback(
+    async (text: string) => {
+      setSending(true);
+      setSendError(null);
+      try {
+        await api.send(text);
+        if (text !== "") setNote("");
+        loadThreads();
+      } catch (e) {
+        setSendError(e instanceof Error ? e.message : String(e));
+        if (text === "") openComposer();
+      } finally {
+        setSending(false);
+      }
     },
-    [loadThreads],
+    [loadThreads, openComposer],
   );
 
   return (
@@ -487,7 +509,9 @@ export default function DiffPage({
             panelOpen={showPanel}
             onTogglePanel={() => setShowPanel((v) => !v)}
             draftCount={draftCount}
-            onSend={() => setShowSend(true)}
+            onSendNow={() => void sendRound("")}
+            onCompose={openComposer}
+            sending={sending}
             diffStyle={diffStyle}
             onDiffStyleChange={setDiffStyle}
             theme={theme}
@@ -653,18 +677,22 @@ export default function DiffPage({
                     onJump={jumpToThread}
                     activeId={snapshotThread?.id ?? focusedId}
                     onClose={() => setShowPanel(false)}
+                    footer={
+                      <SendComposer
+                        draftCount={draftCount}
+                        note={note}
+                        onNoteChange={setNote}
+                        onSend={() => void sendRound(note)}
+                        sending={sending}
+                        error={sendError}
+                        focusSignal={composerFocus}
+                      />
+                    }
                   />
                 </ResizablePanel>
               </>
             )}
           </ResizablePanelGroup>
-          {showSend && (
-            <SendDialog
-              draftCount={draftCount}
-              onSend={sendComments}
-              onClose={() => setShowSend(false)}
-            />
-          )}
         </div>
       </FocusedThreadContext.Provider>
     </TooltipProvider>

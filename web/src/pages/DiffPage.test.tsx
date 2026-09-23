@@ -184,6 +184,45 @@ function renderPage() {
   );
 }
 
+describe("DiffPage send", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.send).mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("sends the drafts in one click from the top bar", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([{ ...reviewerComment, draft: true }])],
+    });
+    renderPage();
+    const sendNow = await screen.findByTestId("send-now");
+    await waitFor(() => expect(sendNow).toHaveTextContent("1"));
+    fireEvent.click(sendNow);
+    await waitFor(() => expect(api.send).toHaveBeenCalledWith(""));
+    expect(screen.queryByTestId("send-composer")).not.toBeInTheDocument();
+  });
+
+  it("opens the threads panel on the composer to send with a note", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    renderPage();
+    fireEvent.click(await screen.findByTestId("open-send"));
+    const note = await screen.findByLabelText("Note to the agent");
+    expect(screen.getByTestId("threads-panel")).toBeInTheDocument();
+    await waitFor(() => expect(note).toHaveFocus());
+    fireEvent.change(note, { target: { value: "LGTM" } });
+    fireEvent.keyDown(note, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(api.send).toHaveBeenCalledWith("LGTM"));
+    await waitFor(() => expect(note).toHaveValue(""));
+  });
+});
+
 describe("DiffPage live updates", () => {
   beforeEach(() => {
     FakeEventSource.instances = [];

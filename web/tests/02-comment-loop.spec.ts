@@ -32,10 +32,10 @@ test("draft -> send with a note -> CLI feedback -> live agent reply", async ({
   expect(before.lastSend).toBeNull();
 
   await page.getByTestId("open-send").click();
-  const dialog = page.getByTestId("send-dialog");
-  await dialog.getByPlaceholder(/Note/).fill("one naming fix");
-  await dialog.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
+  const composer = page.getByTestId("send-composer");
+  await composer.getByLabel("Note to the agent").fill("one naming fix");
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(composer.getByLabel("Note to the agent")).toHaveValue("");
 
   // The agent receives the comment, the quoted code and the note at once.
   const result = await cli(["feedback"]);

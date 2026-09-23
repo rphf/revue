@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   BookMarkedIcon,
   Columns2Icon,
+  MessageSquarePlusIcon,
   MessageSquareTextIcon,
   Rows3Icon,
   SendIcon,
@@ -98,7 +99,11 @@ export interface TopBarProps {
   panelOpen: boolean;
   onTogglePanel: () => void;
   draftCount: number;
-  onSend: () => void;
+  // Sends the drafts at once, without a note.
+  onSendNow: () => void;
+  // Opens the threads panel on the composer, to send with a note.
+  onCompose: () => void;
+  sending: boolean;
   diffStyle: DiffStyle;
   onDiffStyleChange: (style: DiffStyle) => void;
   theme: Theme;
@@ -117,7 +122,9 @@ export default function TopBar({
   panelOpen,
   onTogglePanel,
   draftCount,
-  onSend,
+  onSendNow,
+  onCompose,
+  sending,
   diffStyle,
   onDiffStyleChange,
   theme,
@@ -189,20 +196,49 @@ export default function TopBar({
 
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
 
-        <Button
-          size="sm"
-          className="ml-1"
-          data-testid="open-send"
-          onClick={onSend}
-        >
-          <SendIcon />
-          Send
-          {draftCount > 0 && (
-            <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">
-              {draftCount}
-            </span>
-          )}
-        </Button>
+        {/* One click sends the drafts as they are; the second half
+            opens the composer to add a note. Without drafts there is
+            nothing to send at once, so both halves open the composer. */}
+        <div className="ml-1 flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                className="rounded-r-none"
+                data-testid="send-now"
+                disabled={sending}
+                onClick={draftCount > 0 ? onSendNow : onCompose}
+              >
+                <SendIcon />
+                {sending ? "Sending…" : "Send"}
+                {draftCount > 0 && (
+                  <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">
+                    {draftCount}
+                  </span>
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {draftCount > 0
+                ? `Send ${draftCount} draft comment${draftCount === 1 ? "" : "s"} now`
+                : "Write a note to send"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                className="rounded-l-none border-l border-primary-foreground/20 px-2"
+                aria-label="Send with a note"
+                data-testid="open-send"
+                onClick={onCompose}
+              >
+                <MessageSquarePlusIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Send with a note</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </TopBarShell>
   );
