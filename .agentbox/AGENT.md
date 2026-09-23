@@ -1,7 +1,7 @@
 # Running revue in an agentbox sandbox
 
 Read this before deciding how to run revue or its tests here. Machine-level facts and the review protocol are in
-`~/AGENTBOX.md`; the project's own rules (review before commit, toolchain) are in `CLAUDE.md` at the repo root.
+`~/AGENTBOX.md`; the project's own rules (review before commit, toolchain) are in `AGENTS.md` at the repo root.
 
 ## Toolchain
 
@@ -23,7 +23,7 @@ revue open --no-browser main...HEAD    # or: revue url — prints the login link
 (yours, the control panel's, `agentbox review`) serves the review from the freshly built binary. revue notices the
 new build and restarts its own server on the next call, reusing the port and token, so the human just refreshes the
 tab. The server answers on this sandbox's hostname and port (`REVUE_PUBLIC_URL`), which the human can open
-unchanged. Never commit or push without the human's review (see `CLAUDE.md`).
+unchanged. Never commit or push without the human's review (see `AGENTS.md`).
 
 ## Visiting the running app
 

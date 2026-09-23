@@ -32,6 +32,6 @@ and token, so an open review tab just needs a refresh.
 
 ## Not committed to revue
 
-revue is a standalone tool that "does not know about agentbox or any other harness" (`CLAUDE.md`), so this whole
+revue is a standalone tool that "does not know about agentbox or any other harness" (`AGENTS.md`), so this whole
 folder and the generated `.mcp.json` are kept out of git via `.git/info/exclude`. They live in the working tree for
 the harness to read; they are not part of the revue repository.
