@@ -169,13 +169,15 @@ function FileTree({
         <span className="font-medium">
           {files.length} {files.length === 1 ? "file" : "files"}
         </span>
-        <span
-          className="font-mono tabular-nums"
-          aria-label={`${additions} added, ${deletions} removed lines`}
-        >
-          <span className="text-added">+{additions}</span>{" "}
-          <span className="text-removed">−{deletions}</span>
-        </span>
+        {additions + deletions > 0 && (
+          <span
+            className="font-mono tabular-nums"
+            aria-label={`${additions} added, ${deletions} removed lines`}
+          >
+            <span className="text-added">+{additions}</span>{" "}
+            <span className="text-removed">−{deletions}</span>
+          </span>
+        )}
         <span className="whitespace-nowrap text-muted-foreground">
           {viewedCount} viewed
         </span>

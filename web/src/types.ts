@@ -10,6 +10,9 @@ export interface DiffFile {
   oldPath?: string;
   status: FileStatus;
   isBinary: boolean;
+  // Byte size of each side a binary file has.
+  oldSize?: number;
+  newSize?: number;
 }
 
 // Where a thread sits in one diff: at its current line when the hunk

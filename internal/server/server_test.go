@@ -1192,3 +1192,89 @@ func TestAssetServesImagesFromTheCheckout(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 }
+
+func TestDiffImageServesEachSideFromTheDiff(t *testing.T) {
+	repo := initRepo(t)
+	pngV1 := []byte{0x89, 'P', 'N', 'G', 0, 1}
+	pngV2 := []byte{0x89, 'P', 'N', 'G', 0, 2, 3}
+	gone := []byte{0x89, 'P', 'N', 'G', 0, 9, 9, 9}
+	for p, b := range map[string][]byte{"pic.png": pngV1, "gone.png": gone} {
+		if err := os.WriteFile(filepath.Join(repo, p), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(t, repo, "add", "-A")
+	mustGit(t, repo, "commit", "-q", "-m", "images")
+	if err := os.WriteFile(filepath.Join(repo, "pic.png"), pngV2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "gone.png")); err != nil {
+		t.Fatal(err)
+	}
+	fresh := []byte{0x89, 'P', 'N', 'G', 0}
+	if err := os.WriteFile(filepath.Join(repo, "new.png"), fresh, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := startServer(t, repo, 0)
+
+	sizes := map[string][2]int64{}
+	for _, f := range ts.getDiff(t).Files {
+		var s [2]int64
+		s[0], s[1] = -1, -1
+		if f.OldSize != nil {
+			s[0] = *f.OldSize
+		}
+		if f.NewSize != nil {
+			s[1] = *f.NewSize
+		}
+		sizes[f.Path] = s
+	}
+	for p, want := range map[string][2]int64{
+		"pic.png":  {int64(len(pngV1)), int64(len(pngV2))},
+		"gone.png": {int64(len(gone)), -1},
+		"new.png":  {-1, int64(len(fresh))},
+	} {
+		if sizes[p] != want {
+			t.Errorf("%s sizes = %v, want %v (old, new; -1 absent)", p, sizes[p], want)
+		}
+	}
+
+	get := func(p, side string) *http.Response {
+		q := url.Values{"path": {p}, "side": {side}}
+		return ts.do(t, "GET", "/api/diff/image?"+q.Encode(), nil, nil)
+	}
+	for _, tc := range []struct {
+		path, side string
+		want       []byte
+	}{
+		{"pic.png", "old", pngV1},
+		{"pic.png", "new", pngV2},
+		{"gone.png", "old", gone},
+		{"new.png", "new", fresh},
+	} {
+		resp := get(tc.path, tc.side)
+		ts.mustStatus(t, resp, http.StatusOK)
+		if csp := resp.Header.Get("Content-Security-Policy"); csp != "default-src 'none'; sandbox" {
+			t.Errorf("%s %s: CSP = %q", tc.path, tc.side, csp)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if !bytes.Equal(body, tc.want) {
+			t.Errorf("%s %s = %v, want %v", tc.path, tc.side, body, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		path, side string
+		want       int
+	}{
+		{"gone.png", "new", http.StatusNotFound},
+		{"new.png", "old", http.StatusNotFound},
+		{"other.png", "new", http.StatusNotFound},
+		{"a.txt", "new", http.StatusUnsupportedMediaType},
+		{"pic.png", "both", http.StatusBadRequest},
+	} {
+		resp := get(tc.path, tc.side)
+		ts.mustStatus(t, resp, tc.want)
+		_ = resp.Body.Close()
+	}
+}

@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { DiffFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
+import { binarySummary, isImagePath } from "@/lib/binary";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -34,6 +35,7 @@ import {
   THEMES,
   UNSAFE_CSS,
 } from "./codeViewStyle";
+import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import { treePathCompare } from "./treePath";
 
@@ -43,12 +45,13 @@ export type DiffStyle = "unified" | "split";
 // pending comment forms through it. rev fingerprints the thread's
 // visible content so item versions bump only when something changed.
 export interface AnnotationMeta {
-  kind: "thread" | "pending" | "rich";
+  kind: "thread" | "pending" | "rich" | "image";
   threadId?: number;
   rev?: string;
   thread?: Thread;
   pending?: PendingComment;
   rich?: RichDoc;
+  image?: Omit<ImageDiffProps, "diffStyle">;
 }
 
 export interface PendingComment {
@@ -111,6 +114,8 @@ export interface DiffViewProps {
   // Markdown files switched to the rendered view, with their documents.
   richByFile?: ReadonlyMap<string, RichDoc>;
   onToggleRich?: (path: string) => void;
+  // Where to load one side of an image file in this diff.
+  imageUrl?: (path: string, side: "old" | "new") => string;
 }
 
 interface ItemMemo {
@@ -128,6 +133,16 @@ interface ItemMemo {
 // annotation only above a line, so the line is a short caption.
 const RICH_CAPTION = "Switch to Source to comment on lines.";
 
+// A binary file is a one-line file item too: the caption, with an image
+// file's preview as the annotation above it.
+const BINARY_CAPTION = "Binary file: no line diff.";
+
+interface BinaryMemo {
+  file: FileContents;
+  rev?: string;
+  version: number;
+}
+
 // The rich variant is a separate item: the virtualizer prepares a layout
 // per item id and refuses to render a file where it laid out a diff.
 const RICH_PREFIX = "rich:";
@@ -140,8 +155,9 @@ const pathFromItemId = (id: string) =>
 // every file is an item in a single virtualized list whose layout is
 // computed from line counts up front — no per-file mounting or height
 // measuring — and rows paint as plain text while highlighting streams
-// in. Items render in tree order, binary files as stat-only header
-// items in place (R24); an empty diff renders the empty state.
+// in. Items render in tree order, binary files as one-line file items
+// in place (R24), images previewed; an empty diff renders the empty
+// state.
 export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   {
     files,
@@ -154,6 +170,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     onExpandContext,
     richByFile,
     onToggleRich,
+    imageUrl,
   }: DiffViewProps,
   ref,
 ) {
@@ -205,6 +222,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   // Item versions bump only when a file's diff or its annotations
   // actually change, so CodeView re-processes exactly those items.
   const memoRef = useRef<Map<string, ItemMemo>>(new Map());
+  const binaryMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
 
   const items = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
     const ordered = [
@@ -219,11 +237,46 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
 
     return ordered.map(({ path, meta }) => {
       if (meta === null) {
-        // Binary: a header-only file item in its tree position.
+        const binary = binaryByPath.get(path);
+        const image =
+          binary && imageUrl && isImagePath(path)
+            ? {
+                path,
+                status: binary.status,
+                oldUrl:
+                  binary.oldSize !== undefined
+                    ? imageUrl(path, "old")
+                    : undefined,
+                newUrl:
+                  binary.newSize !== undefined
+                    ? imageUrl(path, "new")
+                    : undefined,
+                oldSize: binary.oldSize,
+                newSize: binary.newSize,
+              }
+            : undefined;
+        const rev = image && `${image.oldUrl}|${image.newUrl}`;
+        const prev = binaryMemoRef.current.get(path);
+        const memo: BinaryMemo = prev
+          ? {
+              ...prev,
+              rev,
+              version: prev.rev === rev ? prev.version : prev.version + 1,
+            }
+          : {
+              file: { name: path, contents: BINARY_CAPTION, lang: "text" },
+              rev,
+              version: 0,
+            };
+        binaryMemoRef.current.set(path, memo);
         return {
           id: path,
           type: "file",
-          file: { name: path, contents: "" },
+          file: memo.file,
+          annotations: image && [
+            { lineNumber: 0, metadata: { kind: "image", rev, image } },
+          ],
+          version: memo.version,
         } as CodeViewItem<AnnotationMeta>;
       }
       const richDoc = richByFile?.get(path);
@@ -283,7 +336,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         version,
       } as CodeViewItem<AnnotationMeta>;
     });
-  }, [files, binaryByPath, annotationsByFile, richByFile]);
+  }, [files, binaryByPath, annotationsByFile, richByFile, imageUrl]);
 
   // The options object is stable across renders that do not change it,
   // as the library asks; a new object would re-configure the viewer.
@@ -305,15 +358,17 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       // onLineSelectionEnd.
       enableGutterUtility: Boolean(onLineSelect),
       enableLineSelection: Boolean(onLineSelect),
+      // Only diff items take comments: the rich view and binary files
+      // are one-line file items with a caption.
       onGutterUtilityClick: onLineSelect
         ? (range, context) => {
-            if (!isRichItemId(context.item.id))
+            if (context.item.type === "diff")
               onLineSelect(context.item.id, range);
           }
         : undefined,
       onLineSelectionEnd: onLineSelect
         ? (range, context) => {
-            if (range && !isRichItemId(context.item.id))
+            if (range && context.item.type === "diff")
               onLineSelect(context.item.id, range);
           }
         : undefined,
@@ -341,15 +396,16 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       className="diff-scroll"
       items={items}
       options={options}
-      renderAnnotation={
-        renderAnnotation
-          ? (annotation, item) =>
-              renderAnnotation(
-                annotation as DiffLineAnnotation<AnnotationMeta>,
-                pathFromItemId(item.id),
-              )
-          : undefined
-      }
+      renderAnnotation={(annotation, item) => {
+        const meta = annotation.metadata as AnnotationMeta | undefined;
+        if (meta?.kind === "image" && meta.image) {
+          return <ImageDiff {...meta.image} diffStyle={diffStyle} />;
+        }
+        return renderAnnotation?.(
+          annotation as DiffLineAnnotation<AnnotationMeta>,
+          pathFromItemId(item.id),
+        );
+      }}
       renderHeaderMetadata={(item) => {
         const path = pathFromItemId(item.id);
         const binary = binaryByPath.get(path);
@@ -359,7 +415,8 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
               className="font-sans text-xs text-muted-foreground"
               data-testid={`binary-${path}`}
             >
-              Binary file ({binary.status}) — no diff shown
+              {binarySummary(binary.oldSize, binary.newSize) ||
+                `Binary file (${binary.status})`}
             </span>
           );
         }

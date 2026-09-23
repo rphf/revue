@@ -89,6 +89,55 @@ describe("DiffView", () => {
     expect(screen.getByTestId("filediff-code.go")).toBeInTheDocument();
   });
 
+  it("previews image files from each side they have, with their sizes", () => {
+    const imageUrl = (path: string, side: string) => `/img/${side}/${path}`;
+    render(
+      <DiffView
+        files={[]}
+        diffFiles={[
+          diffFile("new.png", {
+            isBinary: true,
+            status: "added",
+            newSize: 2048,
+          }),
+          diffFile("pic.png", {
+            isBinary: true,
+            oldSize: 1024,
+            newSize: 1536,
+          }),
+          diffFile("data.bin", {
+            isBinary: true,
+            status: "deleted",
+            oldSize: 10,
+          }),
+        ]}
+        diffStyle="split"
+        theme="light"
+        imageUrl={imageUrl}
+      />,
+    );
+    const added = screen.getByTestId("image-diff-new.png");
+    expect(within(added).getByRole("img")).toHaveAttribute(
+      "src",
+      "/img/new/new.png",
+    );
+    expect(screen.getByTestId("binary-new.png")).toHaveTextContent("2.0 KB");
+
+    const changed = screen.getByTestId("image-diff-pic.png");
+    expect(
+      within(changed)
+        .getAllByRole("img")
+        .map((img) => img.getAttribute("src")),
+    ).toEqual(["/img/old/pic.png", "/img/new/pic.png"]);
+    expect(changed).toHaveClass("grid-cols-2");
+    expect(screen.getByTestId("binary-pic.png")).toHaveTextContent(
+      "1.0 KB → 1.5 KB (+512 B)",
+    );
+
+    expect(screen.queryByTestId("image-diff-data.bin")).not.toBeInTheDocument();
+    expect(screen.getByTestId("binary-data.bin")).toHaveTextContent("10 B");
+  });
+
   it("renders the empty state for an empty diff", () => {
     render(
       <DiffView files={[]} diffFiles={[]} diffStyle="unified" theme="light" />,

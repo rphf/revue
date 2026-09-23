@@ -7,10 +7,13 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/rphf/revue/internal/gitx"
 )
 
-// Image types the rich markdown view may embed. Anything else is refused,
-// so this stays an image endpoint rather than a file server.
+// Image types the rich markdown view may embed and the diff previews.
+// Anything else is refused, so these stay image endpoints rather than a
+// file server.
 var assetTypes = map[string]string{
 	".svg":  "image/svg+xml",
 	".png":  "image/png",
@@ -48,6 +51,49 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	writeImage(w, ctype, content)
+}
+
+// handleDiffImage serves one side of an image file in a diff, from the
+// diff itself rather than the checkout, so the old side and the files
+// of a commit range show too.
+func (s *Server) handleDiffImage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	side := q.Get("side")
+	if side != "old" && side != "new" {
+		httpError(w, http.StatusBadRequest, "validation", "side must be old or new")
+		return
+	}
+	p := q.Get("path")
+	ctype, ok := assetTypes[strings.ToLower(path.Ext(p))]
+	if !ok {
+		httpError(w, http.StatusUnsupportedMediaType, "unsupported_type", "only image files are served")
+		return
+	}
+	c, ok := s.captureFromQuery(w, queryArgs(r))
+	if !ok {
+		return
+	}
+	f := c.files[p]
+	if f == nil {
+		httpError(w, http.StatusNotFound, "not_found", "no such file in this diff")
+		return
+	}
+	content, err := gitx.ReadSide(s.repoRoot, f, side == "old")
+	if errors.Is(err, os.ErrNotExist) {
+		httpError(w, http.StatusNotFound, "not_found", "this side of the file does not exist")
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeImage(w, ctype, content)
+}
+
+// writeImage sends image bytes that can never act as a page: SVG may
+// carry script, so the response is sandboxed and never sniffed.
+func writeImage(w http.ResponseWriter, ctype string, content []byte) {
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")

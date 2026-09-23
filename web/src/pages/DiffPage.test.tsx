@@ -25,7 +25,7 @@ interface StubItem {
 interface StubOptions {
   onGutterUtilityClick?: (
     range: { start: number; end: number; side: string },
-    context: { item: { id: string } },
+    context: { item: { id: string; type: string } },
   ) => void;
 }
 vi.mock("@pierre/diffs/react", async () => {
@@ -56,7 +56,7 @@ vi.mock("@pierre/diffs/react", async () => {
           onClick={() =>
             options.onGutterUtilityClick?.(
               { start: 5, end: 5, side: "additions" },
-              { item: { id: "a.go" } },
+              { item: { id: "a.go", type: "diff" } },
             )
           }
         >

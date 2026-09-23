@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +35,11 @@ type File struct {
 	IsBinary   bool
 	OldContent []byte // nil for added or binary files
 	NewContent []byte // nil for deleted or binary files
+
+	// Binary files keep where each side lives instead of its bytes: the
+	// blob, or no blob when the new side is only in the working tree.
+	OldOID, NewOID   string
+	OldSize, NewSize int64
 }
 
 type Result struct {
@@ -176,7 +182,11 @@ func Capture(repoRoot string, args []string) (*Result, error) {
 		default: // M, T, and anything exotic
 			f.Status = StatusModified
 		}
-		if !f.IsBinary {
+		if f.IsBinary {
+			if err := binarySides(repoRoot, &f, e); err != nil {
+				return nil, err
+			}
+		} else {
 			if f.Status != StatusAdded && !isZeroOID(e.oldOID) {
 				content, err := git(repoRoot, "cat-file", "blob", e.oldOID)
 				if err != nil {
@@ -206,6 +216,57 @@ func Capture(repoRoot string, args []string) (*Result, error) {
 	}
 
 	return &Result{Patch: patch, Files: files}, nil
+}
+
+// binarySides records the blob and byte size of each side of a binary
+// file, so a side can be served later without holding it in memory.
+func binarySides(repoRoot string, f *File, e rawEntry) error {
+	if f.Status != StatusAdded && !isZeroOID(e.oldOID) {
+		size, err := blobSize(repoRoot, e.oldOID)
+		if err != nil {
+			return err
+		}
+		f.OldOID, f.OldSize = e.oldOID, size
+	}
+	if f.Status == StatusDeleted {
+		return nil
+	}
+	if !isZeroOID(e.newOID) {
+		if size, err := blobSize(repoRoot, e.newOID); err == nil {
+			f.NewOID, f.NewSize = e.newOID, size
+			return nil
+		}
+	}
+	info, err := os.Lstat(filepath.Join(repoRoot, f.Path))
+	if err != nil {
+		return err
+	}
+	f.NewSize = info.Size()
+	return nil
+}
+
+func blobSize(repoRoot, oid string) (int64, error) {
+	out, err := git(repoRoot, "cat-file", "-s", oid)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+}
+
+// ReadSide returns one side of a captured file: the old side from its
+// blob, the new side from its blob or, when it has none, from the
+// working tree.
+func ReadSide(repoRoot string, f *File, old bool) ([]byte, error) {
+	if old {
+		if f.OldOID == "" {
+			return nil, os.ErrNotExist
+		}
+		return git(repoRoot, "cat-file", "blob", f.OldOID)
+	}
+	if f.Status == StatusDeleted {
+		return nil, os.ErrNotExist
+	}
+	return newSideContent(repoRoot, f.NewOID, f.Path)
 }
 
 // newSideContent reads the post-image: from the object database when
@@ -300,7 +361,7 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 		}
 		patch.Write(filePatch)
 
-		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary}
+		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary, NewSize: info.Size()}
 		if !isBinary {
 			content, err := os.ReadFile(filepath.Join(repoRoot, p))
 			if err != nil {

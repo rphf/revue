@@ -284,6 +284,18 @@
   .rich-removed {
     @apply border-removed bg-removed/8 text-muted-foreground;
   }
+  /* A checkerboard behind image previews, so transparent pixels read as
+     transparent in both themes. */
+  .image-checker {
+    background-color: var(--background);
+    background-image: conic-gradient(
+      var(--muted) 25%,
+      transparent 0 50%,
+      var(--muted) 0 75%,
+      transparent 0
+    );
+    background-size: 16px 16px;
+  }
 }
 
 /* The live dot rings once when the page picks up a change on disk. */

@@ -58,6 +58,14 @@ export const api = {
     request<FileVersions>("GET", `/api/diff/file${argsQuery(args, { path })}`),
   // Image URL for the rich markdown view, served from the checkout.
   assetUrl: (path: string) => `/api/asset?path=${encodeURIComponent(path)}`,
+  // One side of an image file in this diff. The version changes the URL
+  // whenever the diff moves, so an edited image loads again.
+  diffImageUrl: (
+    args: string[],
+    path: string,
+    side: "old" | "new",
+    version: number,
+  ) => `/api/diff/image${argsQuery(args, { path, side, v: String(version) })}`,
   listThreads: () =>
     request<{ threads: Thread[] }>("GET", "/api/threads?drafts=1"),
   getSnapshot: (threadId: number) =>

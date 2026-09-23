@@ -111,6 +111,18 @@ describe("FileTree", () => {
 
     rerender(
       <FileTree
+        files={files}
+        viewed={new Set()}
+        onToggleViewed={noop}
+        onSelect={noop}
+      />,
+    );
+    expect(
+      screen.queryByLabelText(/added, .* removed lines/),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <FileTree
         files={[]}
         viewed={new Set()}
         onToggleViewed={noop}

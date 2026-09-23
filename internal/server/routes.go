@@ -34,6 +34,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/diff", s.handleDiff)
 	mux.HandleFunc("GET /api/diff/file", s.handleDiffFile)
+	mux.HandleFunc("GET /api/diff/image", s.handleDiffImage)
 	mux.HandleFunc("GET /api/asset", s.handleAsset)
 	mux.HandleFunc("GET /api/threads", s.handleListThreads)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)

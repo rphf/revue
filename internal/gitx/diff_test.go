@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -206,6 +207,28 @@ func TestBinaryFileFlaggedNoBlobs(t *testing.T) {
 	}
 	if !strings.Contains(res.Patch, "Binary files") {
 		t.Errorf("patch should carry the binary stat line:\n%s", res.Patch)
+	}
+	if f.OldSize != 4 || f.NewSize != 3 || f.OldOID == "" || f.NewOID != "" {
+		t.Errorf("sides: old %d %q, new %d %q; want 4 bytes in a blob, 3 on disk", f.OldSize, f.OldOID, f.NewSize, f.NewOID)
+	}
+
+	commitAll(t, repo, "c2")
+	res, err = Capture(repo, []string{"HEAD~1..HEAD"})
+	if err != nil {
+		t.Fatalf("Capture range: %v", err)
+	}
+	f = fileByPath(res, "img.dat")
+	if f == nil || f.NewOID == "" {
+		t.Fatalf("range: got %+v, want the new side in a blob", f)
+	}
+	for _, side := range []struct {
+		old  bool
+		want []byte
+	}{{true, []byte{0x00, 0x01, 0xFF, 0xFE}}, {false, []byte{0x00, 0xAA, 0xBB}}} {
+		got, err := ReadSide(repo, f, side.old)
+		if err != nil || !bytes.Equal(got, side.want) {
+			t.Errorf("ReadSide(old=%v) = %v, %v; want %v", side.old, got, err, side.want)
+		}
 	}
 }
 

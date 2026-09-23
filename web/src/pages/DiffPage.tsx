@@ -276,6 +276,11 @@ export default function DiffPage({
     diff?.patch ?? null,
   );
   const richByFile = useRichDocs(args, version, richPaths);
+  const imageUrl = useCallback(
+    (path: string, side: "old" | "new") =>
+      api.diffImageUrl(args, path, side, version ?? 0),
+    [args, version],
+  );
 
   const draftCount = useMemo(
     () => threads.flatMap((t) => t.comments).filter((c) => c.draft).length,
@@ -610,6 +615,7 @@ export default function DiffPage({
                       onExpandContext={requestUpgrade}
                       richByFile={richByFile}
                       onToggleRich={toggleRich}
+                      imageUrl={imageUrl}
                     />
                   )}
                 </ResizablePanel>

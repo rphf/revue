@@ -142,12 +142,25 @@ type fileView struct {
 	OldPath  string `json:"oldPath,omitempty"`
 	Status   string `json:"status"`
 	IsBinary bool   `json:"isBinary"`
+	OldSize  *int64 `json:"oldSize,omitempty"`
+	NewSize  *int64 `json:"newSize,omitempty"`
 }
 
+// fileViews lists the files; a binary file also carries the byte size
+// of each side it has, since no diff describes it.
 func (c *capture) fileViews() []fileView {
 	out := make([]fileView, 0, len(c.result.Files))
 	for _, f := range c.result.Files {
-		out = append(out, fileView{Path: f.Path, OldPath: f.OldPath, Status: f.Status, IsBinary: f.IsBinary})
+		v := fileView{Path: f.Path, OldPath: f.OldPath, Status: f.Status, IsBinary: f.IsBinary}
+		if f.IsBinary {
+			if f.OldOID != "" {
+				v.OldSize = &f.OldSize
+			}
+			if f.Status != gitx.StatusDeleted {
+				v.NewSize = &f.NewSize
+			}
+		}
+		out = append(out, v)
 	}
 	return out
 }
