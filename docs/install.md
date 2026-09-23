@@ -19,4 +19,9 @@ curl -fsSL "https://github.com/rphf/revue/releases/latest/download/revue_darwin_
 If the repository is private for you, download with the GitHub CLI instead:
 `gh release download -R rphf/revue -p 'revue_linux_arm64.tar.gz'`.
 
+To upgrade later, run `revue update`. It replaces the binary where it is and
+restarts the running servers on the new version. It needs write access to the
+binary's directory, so for `/usr/local/bin` run it as the owner of that
+directory.
+
 To build from source, see [development.md](development.md).

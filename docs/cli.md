@@ -21,6 +21,7 @@ revue open abc123 def456      # two commits
 | `revue serve` | Run the server in the foreground, as the entry point of a container or a service. On a laptop nobody types it: every other command starts the server in the background, and it stops after 30 minutes idle. |
 | `revue servers [--json]` | List the running servers, one per repository, with the repository, port, PID, and URL. It starts no server. |
 | `revue stop [--all]` | Stop the server of the repository you are in. Each repository has its own server, so `--all` also stops the ones for your other repositories: everything `revue servers` lists. When no server is running, it says so and exits 0. A stopped server keeps its port and token, so open tabs work again once any command starts it. |
+| `revue update [--check] [--force]` | Replace the running binary with the latest release, then restart the running servers on it with the same port and token. It works wherever the binary is, including behind a symlink. It downloads the archive for this platform, checks it against `checksums.txt`, runs it once, and renames it over the old binary, so any failure leaves the old binary in place. `--check` only prints the current and latest versions. A local build (`dev`, `-dirty`, or commits past a tag) is replaced only with `--force`, which also reinstalls the current version. It exits 1 when it cannot download or write, for example when the binary's directory belongs to another user. |
 | `revue version` | Print the version. |
 
 ## Agent commands

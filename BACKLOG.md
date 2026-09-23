@@ -44,35 +44,6 @@ Outside revue, in the instructions the agent reads (whatever harness runs it):
 Not decided: whether the reviewer can comment on the note itself as a thread
 without a line anchor.
 
-## `revue update` (2026-09-23)
-
-Upgrading today means downloading the release archive by hand and replacing
-the binary, then running any command so the server restarts on the new build.
-In a long-lived sandbox that is several manual steps for a one-word intent.
-
-Design sketch:
-
-- `revue update` downloads `revue_<os>_<arch>.tar.gz` from
-  `releases/latest/download`, verifies it against the release's
-  `checksums.txt`, writes the new binary next to `os.Executable()` and
-  renames it over the old one, which is safe while the old one runs.
-- It then runs `server.Ensure` for the current repository, so a running
-  server from the old build is replaced on the same port with the same token.
-- `revue update --check` only reports the current and latest versions.
-- Exit codes follow docs/cli.md: 0 updated or already current, 1 on a
-  download, checksum, or write failure.
-
-Edges to handle:
-
-- No write access to the binary's directory (a root-owned `/usr/local/bin`
-  for a non-root user): fail with a message that names the path and the
-  command to run as its owner, and change nothing.
-- A binary installed by a package manager (Homebrew or similar): detect the
-  path and point at that manager instead of overwriting its files.
-- No network access to GitHub: a clear error, not a hang.
-- A development build (version `dev` or a `-dirty` stamp): refuse unless
-  forced, so a local build is not replaced by accident.
-
 ## PR description draft (2026-09-23)
 
 The agent note covers one round; a pull request needs a description of the

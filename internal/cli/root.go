@@ -43,6 +43,8 @@ Human commands:
   revue servers [--json]        list the running servers, one per repository
   revue stop [--all]            stop this repository's server; --all also stops
                                 the servers of your other repositories
+  revue update [--check]        replace this binary with the latest release and
+                                restart the running servers on it
 
 Agent commands (JSON output; exit codes in docs/cli.md):
   feedback [--since C]            unresolved threads with quoted code, plus what happened since C
@@ -93,6 +95,8 @@ func Main(args []string) int {
 		return cmdServers(rest, os.Stdout, os.Stderr)
 	case "stop":
 		return cmdStop(rest, os.Stdout, os.Stderr)
+	case "update":
+		return cmdUpdate(rest, os.Stdout, os.Stderr)
 	}
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		_, _ = fmt.Fprint(os.Stdout, usage)
