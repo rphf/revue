@@ -1,7 +1,7 @@
 # Running revue in an agentbox sandbox
 
-Read this before deciding how to run revue or its tests here. Machine-level facts and the review protocol are in
-`~/AGENTBOX.md`; the project's own rules (review before commit, toolchain) are in `AGENTS.md` at the repo root.
+Read this before deciding how to run revue or its tests here. Machine-level facts are in `~/AGENTBOX.md`, the
+review protocol in `~/.claude/CLAUDE.md`; the project's own rules (review before commit, toolchain) are in `AGENTS.md` at the repo root.
 
 ## Toolchain
 
@@ -63,5 +63,5 @@ close it — there is no idle timeout, so `browser_close` when you finish a piec
 
 ## Handing work back
 
-`~/AGENTBOX.md` has the outbox and the review protocol. `.agentbox/AGENT.md` and `.mcp.json` are copied from the
+`~/AGENTBOX.md` has the outbox, `~/.claude/CLAUDE.md` the review protocol. `.agentbox/AGENT.md` and `.mcp.json` are copied from the
 human's checkout on every start and are excluded from git; they are not yours to commit.
