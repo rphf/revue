@@ -82,7 +82,7 @@ func (v *view) refresh(repoRoot string, force bool) (bool, error) {
 	if !force && v.cur != nil && time.Since(v.checked) < refreshInterval {
 		return false, nil
 	}
-	fp, err := gitx.Fingerprint(repoRoot, v.args)
+	fp, patch, err := gitx.Fingerprint(repoRoot, v.args)
 	if err != nil {
 		return false, err
 	}
@@ -90,7 +90,7 @@ func (v *view) refresh(repoRoot string, force bool) (bool, error) {
 	if v.cur != nil && fp == v.fingerprint {
 		return false, nil
 	}
-	result, err := gitx.Capture(repoRoot, v.args)
+	result, err := gitx.Capture(repoRoot, v.args, patch)
 	if err != nil {
 		return false, err
 	}

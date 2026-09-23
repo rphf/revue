@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked, type Token, type TokensList } from "marked";
-import { api } from "../api";
+import type { FileDiffMetadata } from "@pierre/diffs";
+import { api, errorMessage } from "../api";
 
 // Rich diff of a markdown file, the way GitHub shows one: the new
 // document rendered, with the blocks that changed marked. Blocks are
@@ -143,27 +144,57 @@ export function diffBlocks(
   return out;
 }
 
+interface RichEntry {
+  // The parsed diff the document was rendered for.
+  file: FileDiffMetadata;
+  doc: RichDoc;
+}
+
 // Fetches both versions of every path the reviewer switched to rich
-// view, from the round's frozen snapshot, and keeps the rendered blocks
-// per review and round. Rounds never change, so nothing here goes stale.
+// view and renders its blocks. A document belongs to one parsed diff of
+// its file: the diff page hands back the same metadata object while a
+// file's section of the patch is unchanged, so a refresh refetches only
+// the files that moved, and the previous document stays on screen until
+// the new one lands. Paths that left the rich set or the diff are
+// dropped.
 export function useRichDocs(
   args: string[],
-  version: number | null,
+  files: FileDiffMetadata[] | null,
   paths: ReadonlySet<string>,
 ): ReadonlyMap<string, RichDoc> {
-  const scope = `${JSON.stringify(args)}:${version}`;
-  const [docs, setDocs] = useState<Map<string, RichDoc>>(new Map());
-  const requested = useRef<Set<string>>(new Set());
+  const [entries, setEntries] = useState<ReadonlyMap<string, RichEntry>>(
+    new Map(),
+  );
+  // The parsed diff each path was last requested for; a response for
+  // an older one is dropped.
+  const requested = useRef(new Map<string, FileDiffMetadata>());
+  const revs = useRef(0);
+
+  const byPath = useMemo(
+    () => new Map((files ?? []).map((f) => [f.name, f])),
+    [files],
+  );
 
   useEffect(() => {
-    if (version === null) return;
+    if (files === null) return;
+    for (const path of requested.current.keys()) {
+      if (!paths.has(path) || !byPath.has(path)) requested.current.delete(path);
+    }
     for (const path of paths) {
-      const key = `${scope}:${path}`;
-      if (requested.current.has(key)) continue;
-      requested.current.add(key);
-      setDocs((prev) =>
-        new Map(prev).set(key, { rev: `${key}:loading`, status: "loading" }),
-      );
+      const file = byPath.get(path);
+      if (!file || requested.current.get(path) === file) continue;
+      requested.current.set(path, file);
+      // Each document that lands also drops the ones no longer wanted.
+      const put = (doc: RichDoc) => {
+        if (requested.current.get(path) !== file) return;
+        const wanted = new Set(requested.current.keys());
+        setEntries((prev) => {
+          const next = new Map(
+            [...prev].filter(([p]) => wanted.has(p) && p !== path),
+          );
+          return next.set(path, { file, doc });
+        });
+      };
       const resolveImage = (src: string) => {
         const repoPath = resolveRepoPath(path, src);
         return repoPath === null ? src : api.assetUrl(repoPath);
@@ -171,36 +202,36 @@ export function useRichDocs(
       api
         .getDiffFile(args, path)
         .then((v) => {
-          setDocs((prev) =>
-            new Map(prev).set(key, {
-              rev: `${key}:ready`,
-              status: "ready",
-              blocks: diffBlocks(v.oldContent, v.newContent, { resolveImage }),
-            }),
-          );
+          revs.current += 1;
+          put({
+            rev: `${path}:${revs.current}`,
+            status: "ready",
+            blocks: diffBlocks(v.oldContent, v.newContent, { resolveImage }),
+          });
         })
         .catch((e: unknown) => {
-          requested.current.delete(key);
-          setDocs((prev) =>
-            new Map(prev).set(key, {
-              rev: `${key}:error`,
-              status: "error",
-              message: e instanceof Error ? e.message : String(e),
-            }),
-          );
+          revs.current += 1;
+          put({
+            rev: `${path}:${revs.current}`,
+            status: "error",
+            message: errorMessage(e),
+          });
         });
     }
-  }, [args, version, scope, paths]);
+  }, [args, files, byPath, paths]);
 
   // Stable across renders while nothing changed: the diff pane keys
   // its item versions on this map's contents, not its identity, but the
   // library still wants the same file object back for the same layout.
   return useMemo(() => {
-    const byPath = new Map<string, RichDoc>();
+    const docs = new Map<string, RichDoc>();
     for (const path of paths) {
-      const doc = docs.get(`${scope}:${path}`);
-      if (doc) byPath.set(path, doc);
+      if (!byPath.has(path)) continue;
+      docs.set(
+        path,
+        entries.get(path)?.doc ?? { rev: `${path}:loading`, status: "loading" },
+      );
     }
-    return byPath;
-  }, [docs, scope, paths]);
+    return docs;
+  }, [entries, byPath, paths]);
 }

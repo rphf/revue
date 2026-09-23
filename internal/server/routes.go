@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -177,7 +178,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"args":    args,
 		"branch":  c.branch,
-		"repo":    gitx.RepoName(s.repoRoot),
+		"repo":    s.repoName,
 		"version": c.version,
 		"patch":   c.result.Patch,
 		"files":   c.fileViews(),
@@ -243,18 +244,29 @@ func threadViews(st *store.Store, includeDrafts, withQuotes, unresolvedOnly bool
 	if err != nil {
 		return nil, err
 	}
+	if unresolvedOnly {
+		threads = slices.DeleteFunc(threads, func(t *store.Thread) bool { return t.Resolved })
+	}
+	return viewsOf(st, threads, includeDrafts, withQuotes)
+}
+
+// viewsOf attaches comments, and quotes when asked, to threads with one
+// comments query and one blob read per distinct snapshot.
+func viewsOf(st *store.Store, threads []*store.Thread, includeDrafts, withQuotes bool) ([]*threadView, error) {
+	ids := make([]int64, len(threads))
+	for i, t := range threads {
+		ids[i] = t.ID
+	}
+	comments, err := st.CommentsForThreads(ids, includeDrafts)
+	if err != nil {
+		return nil, err
+	}
+	blobs := map[string][]byte{}
 	views := make([]*threadView, 0, len(threads))
 	for _, t := range threads {
-		if unresolvedOnly && t.Resolved {
-			continue
-		}
-		comments, err := st.CommentsForThread(t.ID, includeDrafts)
-		if err != nil {
-			return nil, err
-		}
-		v := &threadView{Thread: t, Comments: comments}
+		v := &threadView{Thread: t, Comments: comments[t.ID]}
 		if withQuotes {
-			q, err := quoteFor(st, t)
+			q, err := quoteFor(st, t, blobs)
 			if err == nil && q != nil {
 				v.Quote = q
 			}
@@ -265,8 +277,9 @@ func threadViews(st *store.Store, includeDrafts, withQuotes, unresolvedOnly bool
 }
 
 // quoteFor slices the anchored line range out of the thread's snapshot
-// (new side for additions, old side for deletions).
-func quoteFor(st *store.Store, t *store.Thread) (*quote, error) {
+// (new side for additions, old side for deletions). blobs caches
+// snapshot contents by hash across calls.
+func quoteFor(st *store.Store, t *store.Thread, blobs map[string][]byte) (*quote, error) {
 	hash := t.NewBlob
 	if t.Side == store.SideDeletions {
 		hash = t.OldBlob
@@ -274,9 +287,13 @@ func quoteFor(st *store.Store, t *store.Thread) (*quote, error) {
 	if hash == "" {
 		return nil, nil
 	}
-	content, err := st.Blob(hash)
-	if err != nil {
-		return nil, err
+	content, ok := blobs[hash]
+	if !ok {
+		var err error
+		if content, err = st.Blob(hash); err != nil {
+			return nil, err
+		}
+		blobs[hash] = content
 	}
 	lines := strings.Split(string(content), "\n")
 	start := t.Line
@@ -369,16 +386,16 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		"path": t.Path, "oldPath": t.OldPath, "status": t.Status,
 		"oldContent": nil, "newContent": nil, "createdAt": t.CreatedAt,
 	}
-	for hash, key := range map[string]string{t.OldBlob: "oldContent", t.NewBlob: "newContent"} {
-		if hash == "" {
+	for _, side := range []struct{ hash, key string }{{t.OldBlob, "oldContent"}, {t.NewBlob, "newContent"}} {
+		if side.hash == "" {
 			continue
 		}
-		content, err := s.store.Blob(hash)
+		content, err := s.store.Blob(side.hash)
 		if err != nil {
 			internalError(w, err)
 			return
 		}
-		resp[key] = string(content)
+		resp[side.key] = string(content)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -535,17 +552,12 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		views, err := threadViews(tx, false, false, false)
+		threads, err := tx.ThreadsInSend(send.ID)
 		if err != nil {
 			return err
 		}
-		for _, v := range views {
-			for _, c := range v.Comments {
-				if c.SendID != nil && *c.SendID == send.ID {
-					published = append(published, v)
-					break
-				}
-			}
+		if published, err = viewsOf(tx, threads, false, false); err != nil {
+			return err
 		}
 		_, err = tx.AppendEvent(eventSent, map[string]any{"send": send, "threads": published})
 		return err

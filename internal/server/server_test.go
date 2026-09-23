@@ -11,12 +11,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rphf/revue/internal/gittest"
 	"github.com/rphf/revue/internal/store"
 )
 
@@ -45,25 +46,11 @@ func fixtureContent(changed map[int]string) string {
 // edit at the top fall in different hunks.
 func initRepo(t *testing.T) string {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.email", "test@test")
-	mustGit(t, dir, "config", "user.name", "test")
+	dir := gittest.Init(t)
 	writeFile(t, dir, "a.txt", fixtureContent(nil))
-	mustGit(t, dir, "add", "-A")
-	mustGit(t, dir, "commit", "-q", "-m", "c1")
+	gittest.Git(t, dir, "add", "-A")
+	gittest.Git(t, dir, "commit", "-q", "-m", "c1")
 	return dir
-}
-
-func mustGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
 }
 
 func writeFile(t *testing.T, dir, path, content string) {
@@ -511,6 +498,30 @@ func TestSnapshotKeepsTheFileAsItWas(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+func TestSnapshotServesBothSidesWhenTheyMatch(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	// A pure rename or mode change freezes the same blob on both sides.
+	same := []byte("unchanged\n")
+	th, _, err := ts.store.CreateThread(store.NewThread{
+		Path: "b.txt", OldPath: "a.txt", Status: store.FileRenamed, Side: store.SideAdditions, Line: 1,
+		OldContent: same, NewContent: same,
+	}, store.RoleReviewer, "why rename?", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap struct {
+		OldContent *string `json:"oldContent"`
+		NewContent *string `json:"newContent"`
+	}
+	ts.mustStatus(t, ts.do(t, "GET", fmt.Sprintf("/api/threads/%d/snapshot", th.ID), nil, &snap), http.StatusOK)
+	if snap.OldContent == nil || *snap.OldContent != string(same) {
+		t.Errorf("oldContent = %v, want %q", snap.OldContent, same)
+	}
+	if snap.NewContent == nil || *snap.NewContent != string(same) {
+		t.Errorf("newContent = %v, want %q", snap.NewContent, same)
+	}
+}
+
 // --- send and feedback ---
 
 func TestSendDeliversDraftsAtomically(t *testing.T) {
@@ -812,6 +823,53 @@ func TestSSEStreamsDiffChangesReplayAndLiveEvents(t *testing.T) {
 	_ = json.Unmarshal(changed.Payload, &notice)
 	if notice.Version != ts.getDiff(t).Version {
 		t.Errorf("changed version = %d, diff version = %d", notice.Version, ts.getDiff(t).Version)
+	}
+}
+
+func TestSSEResumesFromLastEventID(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	ts.draft(t, 15, "one")
+	ts.send(t, "")
+	cursor := ts.feedback(t, 0).Cursor
+	ts.draft(t, 16, "two")
+	second := ts.send(t, "second")
+
+	open := func(query, lastEventID string) <-chan sseFrame {
+		req, _ := http.NewRequest("GET", ts.URL()+"/api/events"+query, nil)
+		req.Header.Set("Authorization", "Bearer "+ts.Token())
+		if lastEventID != "" {
+			req.Header.Set("Last-Event-ID", lastEventID)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		frames := readFrames(t, resp.Body)
+		if f := nextFrame(t, frames, 3*time.Second); f.Type != eventDiffChanged {
+			t.Fatalf("first frame = %+v, want diff.changed", f)
+		}
+		return frames
+	}
+
+	// An EventSource reconnect names the last id it saw in the header.
+	frames := open("", strconv.FormatInt(cursor, 10))
+	f := nextFrame(t, frames, 3*time.Second)
+	var payload struct {
+		Send *store.Send `json:"send"`
+	}
+	_ = json.Unmarshal(f.Payload, &payload)
+	if f.Type != eventSent || payload.Send == nil || payload.Send.ID != second.ID {
+		t.Fatalf("resumed frame = %+v, want only the second send", f)
+	}
+
+	// ?since= wins over the header.
+	frames = open("?since=0", strconv.FormatInt(cursor, 10))
+	f = nextFrame(t, frames, 3*time.Second)
+	_ = json.Unmarshal(f.Payload, &payload)
+	if f.Type != eventSent || payload.Send == nil || payload.Send.ID == second.ID {
+		t.Fatalf("replay from since=0 = %+v, want the first send", f)
 	}
 }
 
@@ -1193,6 +1251,42 @@ func TestAssetServesImagesFromTheCheckout(t *testing.T) {
 	}
 }
 
+func TestAssetRefusesSymlinksOutOfTheRepo(t *testing.T) {
+	repo := initRepo(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.png"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "inside.png", "inside")
+	for link, target := range map[string]string{
+		"escape.png":   filepath.Join(outside, "secret.png"),
+		"relative.png": filepath.Join("..", filepath.Base(outside), "secret.png"),
+		"alias.png":    "inside.png",
+		"dir-link.png": outside,
+	} {
+		if err := os.Symlink(target, filepath.Join(repo, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := startServer(t, repo, 0)
+	for p, want := range map[string]int{
+		"escape.png":   http.StatusNotFound,
+		"relative.png": http.StatusNotFound,
+		"dir-link.png": http.StatusNotFound,
+		"alias.png":    http.StatusOK,
+	} {
+		resp := ts.do(t, "GET", "/api/asset?path="+url.QueryEscape(p), nil, nil)
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("%s: status = %d, want %d: %s", p, resp.StatusCode, want, body)
+		}
+		if want == http.StatusOK && string(body) != "inside" {
+			t.Errorf("%s: body = %q", p, body)
+		}
+	}
+}
+
 func TestDiffImageServesEachSideFromTheDiff(t *testing.T) {
 	repo := initRepo(t)
 	pngV1 := []byte{0x89, 'P', 'N', 'G', 0, 1}
@@ -1203,8 +1297,8 @@ func TestDiffImageServesEachSideFromTheDiff(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-q", "-m", "images")
+	gittest.Git(t, repo, "add", "-A")
+	gittest.Git(t, repo, "commit", "-q", "-m", "images")
 	if err := os.WriteFile(filepath.Join(repo, "pic.png"), pngV2, 0o644); err != nil {
 		t.Fatal(err)
 	}

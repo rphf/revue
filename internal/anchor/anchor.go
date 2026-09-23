@@ -139,14 +139,8 @@ func parseHunkHeader(line string) *Hunk {
 		return nil
 	}
 	parseStart := func(s string) int {
-		s = s[1:]
-		if i := strings.Index(s, ","); i >= 0 {
-			s = s[:i]
-		}
-		n, err := strconv.Atoi(s)
-		if err != nil {
-			return 0
-		}
+		start, _, _ := strings.Cut(s[1:], ",")
+		n, _ := strconv.Atoi(start)
 		return n
 	}
 	return &Hunk{OldStart: parseStart(fields[0]), NewStart: parseStart(fields[1])}

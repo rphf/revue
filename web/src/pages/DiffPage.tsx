@@ -5,7 +5,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
 import type {
@@ -26,6 +26,7 @@ import DiffView, {
   type PendingComment,
 } from "../components/DiffView";
 import FileTree from "../components/FileTree";
+import LoadingBlocks from "../components/LoadingBlocks";
 import RichMarkdown from "../components/RichMarkdown";
 import SendComposer from "../components/SendComposer";
 import SnapshotView from "../components/SnapshotView";
@@ -33,7 +34,8 @@ import Thread from "../components/Thread";
 import { FocusedThreadContext } from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
-import { loadedFiles, splitPatch } from "@/lib/patch";
+import { keyForArgs } from "@/lib/diffArgs";
+import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
 import { groupByRound } from "@/lib/rounds";
 import { threadRev } from "@/lib/threads";
@@ -43,7 +45,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export interface DiffPageProps {
@@ -85,13 +86,17 @@ function saveDiffStyle(style: DiffStyle): void {
 
 // parseFiles parses the patch and hands back the previous metadata
 // object for every file whose section did not change, so a refresh
-// re-renders only the files that moved.
+// re-renders only the files that moved. Each parse gets a fresh cache
+// key prefix; a kept file keeps its old key, and with it the worker
+// pool's highlight.
 function parseFiles(
   patch: string,
   prev: { patch: string; files: FileDiffMetadata[] } | null,
 ): FileDiffMetadata[] {
   if (patch.trim() === "") return [];
-  const parsed = parsePatchFiles(patch).flatMap((p) => p.files);
+  const parsed = parsePatchFiles(patch, freshCacheKey("patch")).flatMap(
+    (p) => p.files,
+  );
   if (prev === null) return parsed;
   const before = splitPatch(prev.patch);
   const after = splitPatch(patch);
@@ -108,15 +113,19 @@ export default function DiffPage({
   onToggleTheme,
   onNavigate,
 }: DiffPageProps) {
-  const argsKey = useMemo(() => JSON.stringify(args), [args]);
+  const argsKey = useMemo(() => keyForArgs(args), [args]);
   const [load, setLoad] = useState<DiffLoad | null>(null);
   const [fetchNonce, setFetchNonce] = useState(0);
   const [threads, setThreads] = useState<ThreadType[]>([]);
   const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
+  const togglePanel = useCallback(() => setShowPanel((v) => !v), []);
+  const closePanel = useCallback(() => setShowPanel(false), []);
   // The note for the next send outlives the panel, so closing it to
-  // look at the diff loses nothing.
+  // look at the diff loses nothing. The composer owns the text while it
+  // is open and hands it back when it closes, so typing re-renders the
+  // composer alone.
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -126,7 +135,10 @@ export default function DiffPage({
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(0);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(loadDiffStyle);
-  useEffect(() => saveDiffStyle(diffStyle), [diffStyle]);
+  const changeDiffStyle = useCallback((style: DiffStyle) => {
+    setDiffStyle(style);
+    saveDiffStyle(style);
+  }, []);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
   // Markdown files shown rendered instead of as source (GitHub's rich
@@ -159,21 +171,51 @@ export default function DiffPage({
   });
 
   // Threads and the sends that group them into rounds load together,
-  // so a Send never shows its threads under the wrong round.
+  // so a Send never shows its threads under the wrong round. Calls
+  // coalesce: one fetch at a time, and any number of calls while it is
+  // in flight make one more after it, so a burst of events (a replay on
+  // connect, a send and its event) costs at most two fetches. Only the
+  // latest request's answer lands; one overtaken by a later call is
+  // dropped.
+  const threadsLoad = useRef({ seq: 0, inFlight: false, again: false });
   const loadThreads = useCallback(() => {
-    Promise.all([api.listThreads(), api.listSends()])
-      .then(([t, s]) => {
-        setThreads(t.threads);
-        setSends(s.sends);
-        setThreadsError(null);
-      })
-      .catch((e) => setThreadsError(String(e)));
+    const state = threadsLoad.current;
+    if (state.inFlight) {
+      state.again = true;
+      state.seq += 1;
+      return;
+    }
+    const run = () => {
+      state.inFlight = true;
+      state.again = false;
+      const seq = ++state.seq;
+      Promise.all([api.listThreads(), api.listSends()])
+        .then(
+          ([t, s]) => {
+            if (seq !== state.seq) return;
+            setThreads(t.threads);
+            setSends(s.sends);
+            setThreadsError(null);
+          },
+          (e: unknown) => {
+            if (seq === state.seq) setThreadsError(errorMessage(e));
+          },
+        )
+        .finally(() => {
+          state.inFlight = false;
+          if (state.again) run();
+        });
+    };
+    run();
   }, []);
   const rounds = useMemo(() => groupByRound(threads, sends), [threads, sends]);
   useEffect(loadThreads, [loadThreads]);
 
   // The diff on screen, refetched whenever the server says it moved.
   const shown = load?.argsKey === argsKey ? load : null;
+  // The latest diff.changed notice. One that comes while the first
+  // fetch for these arguments is in flight is answered when it lands.
+  const notice = useRef<{ argsKey: string; version?: number } | null>(null);
   useEffect(() => {
     let cancelled = false;
     api
@@ -190,10 +232,22 @@ export default function DiffPage({
           );
           return { argsKey, diff, files, error: null };
         });
+        const seen = notice.current;
+        if (
+          seen?.argsKey === argsKey &&
+          seen.version !== undefined &&
+          seen.version > diff.version
+        )
+          setFetchNonce((n) => n + 1);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!cancelled)
-          setLoad({ argsKey, diff: null, files: null, error: String(e) });
+          setLoad({
+            argsKey,
+            diff: null,
+            files: null,
+            error: errorMessage(e),
+          });
       });
     return () => {
       cancelled = true;
@@ -211,10 +265,14 @@ export default function DiffPage({
   // Live updates: thread events refetch the threads; a diff.changed
   // notice with a version other than the one on screen refetches the
   // diff. The notice also opens every stream, so a reconnect catches
-  // up on anything missed.
+  // up on anything missed. Before a diff for these arguments is on
+  // screen there is nothing to compare, and the fetch in flight
+  // answers it.
   const connection = useEvents(args, (e) => {
     if (e.type === "diff.changed") {
       const next = (e.payload as { version?: number } | null)?.version;
+      notice.current = { argsKey, version: next };
+      if (shown === null) return;
       if (next === undefined || next !== version) {
         setFetchNonce((n) => n + 1);
         setPulse((p) => p + 1);
@@ -330,7 +388,7 @@ export default function DiffPage({
     async (path: string) => loadedFiles(await api.getDiffFile(args, path)),
     [args],
   );
-  const richByFile = useRichDocs(args, version, richPaths);
+  const richByFile = useRichDocs(args, parsedFiles, richPaths);
   const imageUrl = useCallback(
     (path: string, side: "old" | "new") =>
       api.diffImageUrl(args, path, side, version ?? 0),
@@ -417,8 +475,9 @@ export default function DiffPage({
                 pendingBody.current = "";
                 setPending(null);
                 diffViewRef.current?.clearSelection();
+                // The diff on screen places the new thread at its
+                // origin until the next fetch, so no refetch here.
                 loadThreads();
-                setFetchNonce((n) => n + 1);
               }}
               onCancel={() => {
                 pendingBody.current = "";
@@ -517,6 +576,14 @@ export default function DiffPage({
   );
   const snapshotIndex = outdated.findIndex((t) => t.id === snapshotId);
   const snapshotThread = snapshotIndex >= 0 ? outdated[snapshotIndex] : null;
+  const prevSnapshot = useCallback(
+    () => openSnapshot(outdated[snapshotIndex - 1].id),
+    [openSnapshot, outdated, snapshotIndex],
+  );
+  const nextSnapshot = useCallback(
+    () => openSnapshot(outdated[snapshotIndex + 1].id),
+    [openSnapshot, outdated, snapshotIndex],
+  );
 
   const openComposer = useCallback(() => {
     setShowPanel(true);
@@ -527,22 +594,24 @@ export default function DiffPage({
   // the top bar's, drafts only. A failed quick send opens the composer,
   // where the error shows.
   const sendRound = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<boolean> => {
       setSending(true);
       setSendError(null);
       try {
         await api.send(text);
-        if (text !== "") setNote("");
         loadThreads();
+        return true;
       } catch (e) {
-        setSendError(e instanceof Error ? e.message : String(e));
+        setSendError(errorMessage(e));
         if (text === "") openComposer();
+        return false;
       } finally {
         setSending(false);
       }
     },
     [loadThreads, openComposer],
   );
+  const sendNow = useCallback(() => void sendRound(""), [sendRound]);
 
   return (
     <TooltipProvider>
@@ -557,13 +626,13 @@ export default function DiffPage({
             pulse={pulse}
             threadCount={threads.length}
             panelOpen={showPanel}
-            onTogglePanel={() => setShowPanel((v) => !v)}
+            onTogglePanel={togglePanel}
             draftCount={draftCount}
-            onSendNow={() => void sendRound("")}
+            onSendNow={sendNow}
             onCompose={openComposer}
             sending={sending}
             diffStyle={diffStyle}
-            onDiffStyleChange={setDiffStyle}
+            onDiffStyleChange={changeDiffStyle}
             theme={theme}
             onToggleTheme={onToggleTheme}
           />
@@ -662,20 +731,20 @@ export default function DiffPage({
                       </Button>
                     </div>
                   ) : parsedFiles === null ? (
-                    <div
-                      className="flex-1 space-y-3 p-4"
+                    <LoadingBlocks
+                      className="flex-1 p-4"
                       data-testid="diff-loading"
-                      aria-busy="true"
-                    >
-                      <span className="sr-only">Loading diff…</span>
-                      <Skeleton className="h-9 w-full" />
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-4 w-2/3" />
-                      <Skeleton className="h-4 w-4/5" />
-                      <Skeleton className="mt-6 h-9 w-full" />
-                      <Skeleton className="h-4 w-1/2" />
-                      <Skeleton className="h-4 w-3/5" />
-                    </div>
+                      label="Loading diff…"
+                      bars={[
+                        "h-9 w-full",
+                        "h-4 w-3/4",
+                        "h-4 w-2/3",
+                        "h-4 w-4/5",
+                        "mt-6 h-9 w-full",
+                        "h-4 w-1/2",
+                        "h-4 w-3/5",
+                      ]}
+                    />
                   ) : (
                     <DiffView
                       ref={diffViewRef}
@@ -705,8 +774,8 @@ export default function DiffPage({
                     thread={snapshotThread}
                     index={snapshotIndex}
                     total={outdated.length}
-                    onPrev={() => openSnapshot(outdated[snapshotIndex - 1].id)}
-                    onNext={() => openSnapshot(outdated[snapshotIndex + 1].id)}
+                    onPrev={prevSnapshot}
+                    onNext={nextSnapshot}
                     diffStyle={diffStyle}
                     theme={theme}
                     onChanged={loadThreads}
@@ -730,13 +799,13 @@ export default function DiffPage({
                     positions={positions}
                     onJump={jumpToThread}
                     activeId={snapshotThread?.id ?? focusedId}
-                    onClose={() => setShowPanel(false)}
+                    onClose={closePanel}
                     footer={
                       <SendComposer
                         draftCount={draftCount}
-                        note={note}
-                        onNoteChange={setNote}
-                        onSend={() => void sendRound(note)}
+                        initialNote={note}
+                        onKeepNote={setNote}
+                        onSend={sendRound}
                         sending={sending}
                         error={sendError}
                         focusSignal={composerFocus}

@@ -49,9 +49,24 @@ describe("loadedFiles", () => {
         newContent: "b\n",
       }),
     ).toEqual({
-      oldFile: { name: "old.go", contents: "a\n" },
-      newFile: { name: "new.go", contents: "b\n" },
+      oldFile: expect.objectContaining({ name: "old.go", contents: "a\n" }),
+      newFile: expect.objectContaining({ name: "new.go", contents: "b\n" }),
     });
+  });
+
+  it("keys each load apart for the highlight cache", () => {
+    const v = {
+      path: "a.go",
+      status: "modified" as const,
+      isBinary: false,
+      oldContent: "a\n",
+      newContent: "b\n",
+    };
+    const first = loadedFiles(v);
+    const second = loadedFiles(v);
+    expect(first.oldFile?.cacheKey).toBeTruthy();
+    expect(first.newFile.cacheKey).not.toBe(first.oldFile?.cacheKey);
+    expect(second.newFile.cacheKey).not.toBe(first.newFile.cacheKey);
   });
 
   it("uses the path for both sides of a change", () => {

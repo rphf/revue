@@ -1,24 +1,42 @@
-// treePathCompare orders leaf paths exactly as @pierre/trees lays them
-// out with its default sort: at the first differing component,
-// directories come before files, dot-prefixed names before the rest,
-// then a case-insensitive locale compare (case-sensitive as the tie
-// break). The diff pane sorts its file cards with this so tree order
-// and diff order always match.
-export function treePathCompare(a: string, b: string): number {
-  const as = a.split("/");
-  const bs = b.split("/");
-  const n = Math.min(as.length, bs.length);
+// Revue's one definition of file order: the sidebar tree sorts with
+// treeEntryCompare and the diff pane sorts its file cards with
+// treePathCompare, so both panes always list files the same way. At the
+// first differing component, directories come before files,
+// dot-prefixed names before the rest, then a case-insensitive locale
+// compare (case-sensitive as the tie break).
+
+export interface TreeSortEntry {
+  segments: readonly string[];
+  isDirectory: boolean;
+}
+
+export function treeEntryCompare(a: TreeSortEntry, b: TreeSortEntry): number {
+  const n = Math.min(a.segments.length, b.segments.length);
   for (let i = 0; i < n; i++) {
-    if (as[i] === bs[i]) continue;
-    const aIsDir = i < as.length - 1;
-    const bIsDir = i < bs.length - 1;
+    const as = a.segments[i];
+    const bs = b.segments[i];
+    if (as === bs) continue;
+    const aIsDir = i < a.segments.length - 1 || a.isDirectory;
+    const bIsDir = i < b.segments.length - 1 || b.isDirectory;
     if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-    const aIsDot = as[i].startsWith(".");
-    const bIsDot = bs[i].startsWith(".");
+    const aIsDot = as.startsWith(".");
+    const bIsDot = bs.startsWith(".");
     if (aIsDot !== bIsDot) return aIsDot ? -1 : 1;
-    const folded = as[i].toLowerCase().localeCompare(bs[i].toLowerCase());
+    const folded = as.toLowerCase().localeCompare(bs.toLowerCase());
     if (folded !== 0) return folded;
-    return as[i].localeCompare(bs[i]);
+    return as.localeCompare(bs);
   }
-  return as.length - bs.length;
+  if (a.segments.length !== b.segments.length) {
+    return a.segments.length - b.segments.length;
+  }
+  if (a.isDirectory === b.isDirectory) return 0;
+  return a.isDirectory ? -1 : 1;
+}
+
+// Orders leaf file paths.
+export function treePathCompare(a: string, b: string): number {
+  return treeEntryCompare(
+    { segments: a.split("/"), isDirectory: false },
+    { segments: b.split("/"), isDirectory: false },
+  );
 }

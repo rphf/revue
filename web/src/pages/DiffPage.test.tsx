@@ -8,7 +8,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiffLineAnnotation } from "@pierre/diffs";
 import type { AnnotationMeta } from "../components/DiffView";
-import type { Comment, DiffResponse, Thread } from "../types";
+import type { DiffResponse, Thread } from "../types";
+import { comment, FakeEventSource, thread } from "../test/fixtures";
 
 // Mock the diff renderer but keep the annotation wiring real: the
 // stub CodeView invokes renderAnnotation for every item annotation,
@@ -16,7 +17,8 @@ import type { Comment, DiffResponse, Thread } from "../types";
 // containers are keyed by item version, so a changed file remounts
 // them the way the real virtualizer does. Like the real one, the stub
 // keeps an item it has seen until its version changes. Each scrollTo is
-// recorded with whether its item was collapsed at that moment.
+// recorded with whether its item was collapsed at that moment, and so
+// is each clearing of the line selection.
 interface StubItem {
   id: string;
   type: "diff" | "file";
@@ -25,6 +27,7 @@ interface StubItem {
   annotations?: DiffLineAnnotation<AnnotationMeta>[];
 }
 const scrolls: { id: string; type: string; collapsed?: boolean }[] = [];
+const selectionClears: number[] = [];
 interface StubOptions {
   onGutterUtilityClick?: (
     range: { start: number; end: number; side: string },
@@ -61,6 +64,7 @@ vi.mock("@pierre/diffs/react", async () => {
     useImperativeHandle(ref, () => ({
       scrollTo: (t: { id: string; type: string }) =>
         scrolls.push({ ...t, collapsed: seen.current.get(t.id)?.collapsed }),
+      clearSelectedLines: () => selectionClears.push(1),
       getInstance: () => null,
     }));
     return (
@@ -106,9 +110,8 @@ vi.mock("@pierre/diffs", () => ({
   parseDiffFromFile: () => ({ name: "a.go" }),
 }));
 
-vi.mock("../api", () => ({
-  argsQuery: (args: string[]) =>
-    args.length === 0 ? "" : "?arg=" + args.join("&arg="),
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
   api: {
     getDiff: vi.fn(),
     listThreads: vi.fn(),
@@ -128,32 +131,19 @@ vi.mock("../api", () => ({
 import { api } from "../api";
 import DiffPage from "./DiffPage";
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((m: { data: string }) => void) | null = null;
-  constructor(public url: string) {
-    FakeEventSource.instances.push(this);
-  }
-  close() {}
-}
-
 function pushEvent(data: unknown) {
-  const es = FakeEventSource.instances[0];
-  act(() => es.onmessage?.({ data: JSON.stringify(data) }));
+  act(() => FakeEventSource.latest().emit(data));
 }
 
-function makeThread(comments: Comment[]): Thread {
-  return {
-    id: 1,
-    path: "a.go",
-    side: "additions",
-    line: 5,
-    resolved: false,
-    createdAt: "2026-09-20T10:00:00Z",
-    comments,
-  };
+// Thread 1, with its comments.
+const makeThread = (comments: Parameters<typeof thread>[0]) =>
+  thread(comments, { createdAt: "2026-09-20T10:00:00Z" });
+
+// A promise the test settles by hand.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
 }
 
 function makeDiff(
@@ -172,23 +162,18 @@ function makeDiff(
   };
 }
 
-const reviewerComment: Comment = {
+const reviewerComment = comment({
   id: 100,
-  threadId: 1,
-  authorRole: "reviewer",
   body: "please rename this",
-  draft: false,
   createdAt: "",
-};
+});
 
-const agentReply: Comment = {
+const agentReply = comment({
   id: 101,
-  threadId: 1,
   authorRole: "agent",
   body: "renamed it",
-  draft: false,
   createdAt: "",
-};
+});
 
 function renderPage() {
   return render(
@@ -486,6 +471,159 @@ describe("DiffPage live updates", () => {
         "please rename this",
       ),
     );
+  });
+});
+
+describe("DiffPage refreshes", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 10)));
+
+  it("folds a burst of thread events into one more fetch", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("please rename this")).toBeInTheDocument(),
+    );
+    expect(api.listThreads).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      for (let id = 1; id <= 5; id++)
+        FakeEventSource.latest().emit({ id, type: "thread.replied" });
+    });
+    await settle();
+    // One fetch for the first event, one for everything after it.
+    expect(api.listThreads).toHaveBeenCalledTimes(3);
+  });
+
+  it("ends a burst on the answer to the last fetch", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("please rename this")).toBeInTheDocument(),
+    );
+    const first = deferred<{ threads: Thread[] }>();
+    vi.mocked(api.listThreads)
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({
+        threads: [makeThread([reviewerComment, agentReply])],
+      });
+    pushEvent({ id: 1, type: "thread.replied" });
+    pushEvent({ id: 2, type: "thread.replied" });
+    // The overtaken answer never shows.
+    await act(async () => first.resolve({ threads: [] }));
+    expect(screen.getByText("please rename this")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("renamed it")).toBeInTheDocument(),
+    );
+    expect(api.listThreads).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves a diff.changed notice to the first fetch still in flight", async () => {
+    const initial = deferred<DiffResponse>();
+    vi.mocked(api.getDiff).mockReturnValueOnce(initial.promise);
+    renderPage();
+    pushEvent({ type: "diff.changed", payload: { version: 1 } });
+    await settle();
+    expect(api.getDiff).toHaveBeenCalledTimes(1);
+
+    await act(async () => initial.resolve(makeDiff(1)));
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    await settle();
+    expect(api.getDiff).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByTestId("live-dot").querySelector(".live-pulse"),
+    ).toBeNull();
+  });
+
+  it("refetches once the first fetch lands older than a notice", async () => {
+    const initial = deferred<DiffResponse>();
+    vi.mocked(api.getDiff).mockReturnValueOnce(initial.promise);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(2));
+    renderPage();
+    pushEvent({ type: "diff.changed", payload: { version: 2 } });
+    await act(async () => initial.resolve(makeDiff(1)));
+    await waitFor(() => expect(api.getDiff).toHaveBeenCalledTimes(2));
+  });
+
+  it("pulses and refetches for a new version once a diff is on screen", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(2));
+    pushEvent({ type: "diff.changed", payload: { version: 2 } });
+    await waitFor(() => expect(api.getDiff).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByTestId("live-dot").querySelector(".live-pulse"),
+    ).not.toBeNull();
+  });
+});
+
+describe("DiffPage pending comment", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("clears the line selection when the form is cancelled", async () => {
+    selectionClears.length = 0;
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "select-line" }));
+    await screen.findByPlaceholderText("Comment on line 5");
+    expect(selectionClears).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.queryByPlaceholderText("Comment on line 5"),
+    ).not.toBeInTheDocument();
+    expect(selectionClears).toHaveLength(1);
+  });
+
+  it("starts a thread without refetching the diff, placed at its line", async () => {
+    selectionClears.length = 0;
+    vi.mocked(api.createThread).mockResolvedValue(undefined as never);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "select-line" }));
+    const box = await screen.findByPlaceholderText("Comment on line 5");
+    fireEvent.change(box, { target: { value: "new thread" } });
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [
+        {
+          ...makeThread([{ ...reviewerComment, body: "new thread" }]),
+          id: 7,
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start thread" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("new thread")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("annotation-a.go-5")).toHaveTextContent(
+      "new thread",
+    );
+    expect(selectionClears).toHaveLength(1);
+    expect(api.getDiff).toHaveBeenCalledTimes(1);
   });
 });
 

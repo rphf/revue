@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -171,7 +171,7 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
@@ -253,6 +253,24 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// queryAll runs query and scans every row with scan, in order.
+func queryAll[T any](q dbtx, scan func(rowScanner) (T, error), query string, args ...any) ([]T, error) {
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []T
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func scanThread(row rowScanner) (*Thread, error) {
 	var t Thread
 	var start sql.NullInt64
@@ -295,23 +313,15 @@ func (s *Store) CreateThread(nt NewThread, role, body string, draft bool) (*Thre
 	if nt.StartLine != nil {
 		start = sql.NullInt64{Int64: int64(*nt.StartLine), Valid: true}
 	}
-	res, err := s.q.Exec(
+	t, err := scanThread(s.q.QueryRow(
 		`INSERT INTO threads (path, old_path, status, side, start_line, line, hunk_hash, hunk_start, old_blob, new_blob, resolved, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING `+threadCols,
 		nt.Path, nt.OldPath, nt.Status, nt.Side, start, nt.Line, nt.HunkHash, nt.HunkStart, oldHash, newHash, now(),
-	)
+	))
 	if err != nil {
 		return nil, nil, err
 	}
-	threadID, err := res.LastInsertId()
-	if err != nil {
-		return nil, nil, err
-	}
-	c, err := s.AddComment(threadID, role, body, draft)
-	if err != nil {
-		return nil, nil, err
-	}
-	t, err := s.GetThread(threadID)
+	c, err := s.AddComment(t.ID, role, body, draft)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -330,20 +340,13 @@ func (s *Store) ListThreads(includeDrafts bool) ([]*Thread, error) {
 	if !includeDrafts {
 		visible += " WHERE draft = 0"
 	}
-	rows, err := s.q.Query("SELECT " + threadCols + " FROM threads WHERE id IN (" + visible + ") ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*Thread
-	for rows.Next() {
-		t, err := scanThread(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return queryAll(s.q, scanThread, "SELECT "+threadCols+" FROM threads WHERE id IN ("+visible+") ORDER BY id")
+}
+
+// ThreadsInSend returns the threads with a comment published by the
+// given send, oldest first.
+func (s *Store) ThreadsInSend(sendID int64) ([]*Thread, error) {
+	return queryAll(s.q, scanThread, "SELECT "+threadCols+" FROM threads WHERE id IN (SELECT thread_id FROM comments WHERE send_id = ?) ORDER BY id", sendID)
 }
 
 func (s *Store) SetThreadResolved(id int64, resolved bool) error {
@@ -364,18 +367,10 @@ func (s *Store) SetThreadResolved(id int64, resolved bool) error {
 // --- Comments ---
 
 func (s *Store) AddComment(threadID int64, role, body string, draft bool) (*Comment, error) {
-	res, err := s.q.Exec(
-		"INSERT INTO comments (thread_id, author_role, body, draft, created_at) VALUES (?, ?, ?, ?, ?)",
+	return scanComment(s.q.QueryRow(
+		"INSERT INTO comments (thread_id, author_role, body, draft, created_at) VALUES (?, ?, ?, ?, ?) RETURNING "+commentCols,
 		threadID, role, body, draft, now(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-	return s.GetComment(id)
+	))
 }
 
 const commentCols = "id, thread_id, author_role, body, draft, send_id, created_at"
@@ -447,20 +442,33 @@ func (s *Store) CommentsForThread(threadID int64, includeDrafts bool) ([]*Commen
 	if !includeDrafts {
 		q += " AND draft = 0"
 	}
-	rows, err := s.q.Query(q+" ORDER BY id", threadID)
+	return queryAll(s.q, scanComment, q+" ORDER BY id", threadID)
+}
+
+// CommentsForThreads returns the comments of every listed thread, keyed
+// by thread id, each in creation order. Drafts are included only when
+// includeDrafts is set.
+func (s *Store) CommentsForThreads(threadIDs []int64, includeDrafts bool) (map[int64][]*Comment, error) {
+	out := make(map[int64][]*Comment, len(threadIDs))
+	if len(threadIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(threadIDs))
+	for i, id := range threadIDs {
+		args[i] = id
+	}
+	q := "SELECT " + commentCols + " FROM comments WHERE thread_id IN (?" + strings.Repeat(", ?", len(threadIDs)-1) + ")"
+	if !includeDrafts {
+		q += " AND draft = 0"
+	}
+	comments, err := queryAll(s.q, scanComment, q+" ORDER BY thread_id, id", args...)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	var out []*Comment
-	for rows.Next() {
-		c, err := scanComment(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
+	for _, c := range comments {
+		out[c.ThreadID] = append(out[c.ThreadID], c)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DraftCount is the number of reviewer comments not yet sent.
@@ -483,21 +491,17 @@ func (s *Store) Send(note string) (*Send, error) {
 	if drafts == 0 && strings.TrimSpace(note) == "" {
 		return nil, ErrNothingToSend
 	}
-	res, err := s.q.Exec("INSERT INTO sends (note, created_at) VALUES (?, ?)", note, now())
-	if err != nil {
-		return nil, err
-	}
-	id, err := res.LastInsertId()
+	sd, err := scanSend(s.q.QueryRow("INSERT INTO sends (note, created_at) VALUES (?, ?) RETURNING "+sendCols, note, now()))
 	if err != nil {
 		return nil, err
 	}
 	if _, err := s.q.Exec(
 		"UPDATE comments SET draft = 0, send_id = ? WHERE draft = 1 AND author_role = ?",
-		id, RoleReviewer,
+		sd.ID, RoleReviewer,
 	); err != nil {
 		return nil, err
 	}
-	return s.GetSend(id)
+	return sd, nil
 }
 
 const sendCols = "id, note, created_at"
@@ -531,23 +535,27 @@ func (s *Store) LastSend() (*Send, error) {
 
 // ListSends returns every send, oldest first.
 func (s *Store) ListSends() ([]*Send, error) {
-	rows, err := s.q.Query("SELECT " + sendCols + " FROM sends ORDER BY id")
-	if err != nil {
-		return nil, err
+	sends, err := queryAll(s.q, scanSend, "SELECT "+sendCols+" FROM sends ORDER BY id")
+	if sends == nil && err == nil {
+		sends = []*Send{}
 	}
-	defer func() { _ = rows.Close() }()
-	sends := []*Send{}
-	for rows.Next() {
-		sd, err := scanSend(rows)
-		if err != nil {
-			return nil, err
-		}
-		sends = append(sends, sd)
-	}
-	return sends, rows.Err()
+	return sends, err
 }
 
 // --- Events ---
+
+const eventCols = "id, type, payload, created_at"
+
+func scanEvent(row rowScanner) (*Event, error) {
+	var e Event
+	var created, payload string
+	if err := row.Scan(&e.ID, &e.Type, &payload, &created); err != nil {
+		return nil, err
+	}
+	e.Payload = json.RawMessage(payload)
+	e.CreatedAt = parseTime(created)
+	return &e, nil
+}
 
 // AppendEvent appends to the monotonic event log and returns the
 // stored event with its cursor id.
@@ -556,45 +564,13 @@ func (s *Store) AppendEvent(eventType string, payload any) (*Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.q.Exec(
-		"INSERT INTO events (type, payload, created_at) VALUES (?, ?, ?)",
+	return scanEvent(s.q.QueryRow(
+		"INSERT INTO events (type, payload, created_at) VALUES (?, ?, ?) RETURNING "+eventCols,
 		eventType, string(data), now(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-	var e Event
-	var created, payloadStr string
-	if err := s.q.QueryRow("SELECT id, type, payload, created_at FROM events WHERE id = ?", id).
-		Scan(&e.ID, &e.Type, &payloadStr, &created); err != nil {
-		return nil, err
-	}
-	e.Payload = json.RawMessage(payloadStr)
-	e.CreatedAt = parseTime(created)
-	return &e, nil
+	))
 }
 
 // EventsSince returns the events with id > since, oldest first.
 func (s *Store) EventsSince(since int64) ([]*Event, error) {
-	rows, err := s.q.Query("SELECT id, type, payload, created_at FROM events WHERE id > ? ORDER BY id", since)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*Event
-	for rows.Next() {
-		var e Event
-		var created, payload string
-		if err := rows.Scan(&e.ID, &e.Type, &payload, &created); err != nil {
-			return nil, err
-		}
-		e.Payload = json.RawMessage(payload)
-		e.CreatedAt = parseTime(created)
-		out = append(out, &e)
-	}
-	return out, rows.Err()
+	return queryAll(s.q, scanEvent, "SELECT "+eventCols+" FROM events WHERE id > ? ORDER BY id", since)
 }

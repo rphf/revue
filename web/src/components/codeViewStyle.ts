@@ -29,3 +29,15 @@ export const UNSAFE_CSS = `
 :host { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: clip; }
 [data-additions-count] { order: -1; }
 `;
+
+// The options the diff pane and the snapshot view share. Long lines
+// soft-wrap inside their column instead of clipping behind a horizontal
+// scrollbar; prose and 80-column docs read whole in split view.
+export const BASE_OPTIONS = {
+  stickyHeaders: true,
+  overflow: "wrap",
+  expansionLineCount: 20,
+  layout: LAYOUT,
+  unsafeCSS: UNSAFE_CSS,
+  theme: THEMES,
+} as const;

@@ -3,23 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEvents } from "./useEvents";
 import type { RevueEvent } from "./types";
 import ConnectionBanner from "./components/ConnectionBanner";
-
-// Deterministic EventSource stand-in.
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  url: string;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((m: { data: string }) => void) | null = null;
-  closed = false;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  close() {
-    this.closed = true;
-  }
-}
+import { FakeEventSource } from "./test/fixtures";
 
 function Harness({
   args = [],
@@ -103,6 +87,27 @@ describe("useEvents + ConnectionBanner", () => {
       "diff.changed",
     ]);
     expect(events[1].id).toBeUndefined();
+  });
+
+  it("resumes from the last event seen when the diff changes", () => {
+    const { rerender } = render(<Harness onEvent={() => {}} />);
+    const first = FakeEventSource.instances[0];
+    act(() => {
+      first.emit({ id: 7, type: "thread.created", payload: {} });
+      first.emit({ type: "diff.changed", payload: { version: 2 } });
+    });
+
+    rerender(<Harness args={["--staged"]} onEvent={() => {}} />);
+    expect(first.closed).toBe(true);
+    expect(FakeEventSource.latest().url).toBe(
+      "/api/events?arg=--staged&since=7",
+    );
+  });
+
+  it("keeps the stream while the arguments stay the same", () => {
+    const { rerender } = render(<Harness args={["main"]} onEvent={() => {}} />);
+    rerender(<Harness args={["main"]} onEvent={() => {}} />);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 
   it("closes the stream on unmount", () => {

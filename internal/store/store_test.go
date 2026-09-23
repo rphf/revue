@@ -371,3 +371,52 @@ func TestWithTxRollsBackOnError(t *testing.T) {
 		t.Error("nested WithTx should fail")
 	}
 }
+
+func TestCommentsForThreadsAndThreadsInSend(t *testing.T) {
+	s, _ := openTemp(t)
+	a, _ := mustThread(t, s, mainThread(1), RoleReviewer, "a1", true)
+	b, _ := mustThread(t, s, mainThread(2), RoleAgent, "b1", false)
+	c, _ := mustThread(t, s, mainThread(3), RoleReviewer, "c1", true)
+	if _, err := s.AddComment(a.ID, RoleAgent, "a2", false); err != nil {
+		t.Fatal(err)
+	}
+	sd, err := s.Send("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddComment(b.ID, RoleReviewer, "b2 draft", true); err != nil {
+		t.Fatal(err)
+	}
+
+	sent, err := s.ThreadsInSend(sd.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 2 || sent[0].ID != a.ID || sent[1].ID != c.ID {
+		t.Fatalf("ThreadsInSend = %+v", sent)
+	}
+
+	byThread, err := s.CommentsForThreads([]int64{a.ID, b.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := byThread[a.ID]; len(got) != 2 || got[0].Body != "a1" || got[1].Body != "a2" {
+		t.Errorf("thread a comments = %+v", got)
+	}
+	if got := byThread[b.ID]; len(got) != 1 || got[0].Body != "b1" {
+		t.Errorf("thread b comments without drafts = %+v", got)
+	}
+	if _, ok := byThread[c.ID]; ok {
+		t.Errorf("unrequested thread c returned")
+	}
+	withDrafts, err := s.CommentsForThreads([]int64{b.ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := withDrafts[b.ID]; len(got) != 2 || got[1].Body != "b2 draft" {
+		t.Errorf("thread b comments with drafts = %+v", got)
+	}
+	if empty, err := s.CommentsForThreads(nil, true); err != nil || len(empty) != 0 {
+		t.Errorf("CommentsForThreads(nil) = %+v, %v", empty, err)
+	}
+}

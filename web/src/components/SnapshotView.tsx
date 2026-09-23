@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { parseDiffFromFile } from "@pierre/diffs";
-import type {
-  CodeViewItem,
-  DiffLineAnnotation,
-  FileDiffMetadata,
-} from "@pierre/diffs";
+import type { CodeViewItem, FileDiffMetadata } from "@pierre/diffs";
 import {
   CodeView,
   type CodeViewHandle,
@@ -17,26 +20,21 @@ import {
   CircleAlertIcon,
   HistoryIcon,
 } from "lucide-react";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import type { Theme } from "../theme";
 import type { Thread as ThreadType } from "../types";
 import { threadRev } from "@/lib/threads";
 import { timeAgo } from "@/lib/time";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  LAYOUT,
-  LINE_SCROLL_OFFSET,
-  THEMES,
-  UNSAFE_CSS,
-} from "./codeViewStyle";
+import { BASE_OPTIONS, LAYOUT, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import type { AnnotationMeta, DiffStyle } from "./DiffView";
+import LoadingBlocks from "./LoadingBlocks";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import Thread from "./Thread";
 
@@ -128,22 +126,27 @@ export default function SnapshotView({
       .getSnapshot(thread.id)
       .then((s) => {
         if (cancelled) return;
+        // A snapshot never changes, so its highlight is cached under
+        // the thread it belongs to.
+        const key = `snapshot-${thread.id}-${s.createdAt}`;
         const file = parseDiffFromFile(
           s.oldContent !== null
-            ? { name: s.oldPath || s.path, contents: s.oldContent }
+            ? {
+                name: s.oldPath || s.path,
+                contents: s.oldContent,
+                cacheKey: `${key}:old`,
+              }
             : null,
           s.newContent !== null
-            ? { name: s.path, contents: s.newContent }
+            ? { name: s.path, contents: s.newContent, cacheKey: `${key}:new` }
             : null,
         );
+        // One missing side leaves the diff unkeyed.
+        file.cacheKey ??= key;
         setSnap({ status: "ready", file, createdAt: s.createdAt });
       })
       .catch((e: unknown) => {
-        if (!cancelled)
-          setSnap({
-            status: "error",
-            message: e instanceof Error ? e.message : String(e),
-          });
+        if (!cancelled) setSnap({ status: "error", message: errorMessage(e) });
       });
     return () => {
       cancelled = true;
@@ -153,19 +156,22 @@ export default function SnapshotView({
   const hasPrev = index > 0;
   const hasNext = index >= 0 && index < total - 1;
 
+  // One listener for the life of the view; it reads the current
+  // handlers when a key comes in.
+  const onKey = useEffectEvent((e: KeyboardEvent) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTyping(e.target)) return;
+    if (e.key === "Escape") onClose();
+    else if (e.key === "k" && hasPrev) onPrev();
+    else if (e.key === "j" && hasNext) onNext();
+    else return;
+    e.preventDefault();
+  });
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTyping(e.target)) return;
-      if (e.key === "Escape") onClose();
-      else if (e.key === "k" && hasPrev) onPrev();
-      else if (e.key === "j" && hasNext) onNext();
-      else return;
-      e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [hasPrev, hasNext, onPrev, onNext, onClose]);
+    const listener = (e: KeyboardEvent) => onKey(e);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, []);
 
   // CodeView re-renders an item only when its version changes, so a
   // reply or a resolve bumps it through the thread's fingerprint.
@@ -221,16 +227,22 @@ export default function SnapshotView({
 
   const options = useMemo<CodeViewReactOptions<AnnotationMeta, undefined>>(
     () => ({
+      ...BASE_OPTIONS,
       diffStyle,
-      stickyHeaders: true,
-      overflow: "wrap",
-      expansionLineCount: 20,
       layout: { ...LAYOUT, paddingBottom: 24 },
-      unsafeCSS: UNSAFE_CSS,
-      theme: THEMES,
       themeType: theme,
     }),
     [diffStyle, theme],
+  );
+
+  const renderAnnotation = useCallback(
+    (annotation: { metadata?: AnnotationMeta }) => {
+      const meta = annotation.metadata;
+      return meta?.kind === "thread" && meta.thread ? (
+        <Thread thread={meta.thread} onChanged={onChanged} />
+      ) : null;
+    },
+    [onChanged],
   );
 
   return (
@@ -294,11 +306,10 @@ export default function SnapshotView({
         )}
       </div>
       {snap.status === "loading" ? (
-        <div className="space-y-3 p-4" aria-busy="true">
-          <Skeleton className="h-9 w-full" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
+        <LoadingBlocks
+          className="p-4"
+          bars={["h-9 w-full", "h-4 w-3/4", "h-4 w-2/3"]}
+        />
       ) : snap.status === "error" ? (
         <p className="flex items-center gap-2 p-4 text-sm text-destructive">
           <CircleAlertIcon className="size-4" />
@@ -314,13 +325,7 @@ export default function SnapshotView({
           className="diff-scroll min-h-0 flex-1"
           items={items}
           options={options}
-          renderAnnotation={(annotation) => {
-            const meta = (annotation as DiffLineAnnotation<AnnotationMeta>)
-              .metadata;
-            return meta?.kind === "thread" && meta.thread ? (
-              <Thread thread={meta.thread} onChanged={onChanged} />
-            ) : null;
-          }}
+          renderAnnotation={renderAnnotation}
         />
       )}
     </section>

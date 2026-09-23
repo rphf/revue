@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -61,34 +60,36 @@ Environment (read when a server starts; see docs/configuration.md):
 // env carries everything a command needs, so tests can inject a
 // client pointed at a test server.
 type env struct {
-	client    *Client
-	publicURL string
-	repoRoot  string
-	stdout    io.Writer
-	stderr    io.Writer
-	openURL   func(string) error
-}
-
-func (e *env) authURL(next string) string {
-	return fmt.Sprintf("%s/auth?token=%s&next=%s", e.publicURL, e.client.Token, url.QueryEscape(next))
+	client   *Client
+	state    *server.State
+	repoRoot string
+	stdout   io.Writer
+	stderr   io.Writer
+	openURL  func(string) error
 }
 
 // Main is the CLI entry point; it returns the process exit code. A
 // bare `revue`, or one that starts with a flag or a pathspec
 // separator, is `revue open`.
 func Main(args []string) int {
+	// Help and version come first: they must work outside a repository,
+	// and their flag forms would otherwise read as `revue open`.
+	if len(args) > 0 {
+		switch args[0] {
+		case "help", "-h", "--help":
+			_, _ = fmt.Fprint(os.Stdout, usage)
+			return ExitOK
+		case "version", "--version":
+			_, _ = fmt.Fprintln(os.Stdout, Version)
+			return ExitOK
+		}
+	}
 	cmd, rest := "open", args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, rest = args[0], args[1:]
 	}
 
 	switch cmd {
-	case "help", "-h", "--help":
-		_, _ = fmt.Fprint(os.Stdout, usage)
-		return ExitOK
-	case "version", "--version":
-		_, _ = fmt.Fprintln(os.Stdout, Version)
-		return ExitOK
 	case "serve", "__serve":
 		return cmdServe(rest)
 	case "servers":
@@ -97,10 +98,6 @@ func Main(args []string) int {
 		return cmdStop(rest, os.Stdout, os.Stderr)
 	case "update":
 		return cmdUpdate(rest, os.Stdout, os.Stderr)
-	}
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		_, _ = fmt.Fprint(os.Stdout, usage)
-		return ExitOK
 	}
 
 	e, code := connect(os.Stdout, os.Stderr)
@@ -142,12 +139,12 @@ func connect(stdout, stderr io.Writer) (*env, int) {
 		return nil, ExitError
 	}
 	return &env{
-		client:    &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},
-		publicURL: st.PublicBaseURL(),
-		repoRoot:  repoRoot,
-		stdout:    stdout,
-		stderr:    stderr,
-		openURL:   openInBrowser,
+		client:   &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},
+		state:    st,
+		repoRoot: repoRoot,
+		stdout:   stdout,
+		stderr:   stderr,
+		openURL:  openInBrowser,
 	}, ExitOK
 }
 
@@ -192,27 +189,20 @@ type APIError struct {
 
 func (e *APIError) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Message) }
 
-func (c *Client) newRequest(method, path string) (*http.Request, error) {
-	req, err := http.NewRequest(method, c.BaseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	return req, nil
-}
-
-func (c *Client) do(method, path string, body any, out any) error {
+// raw sends an authenticated request, with body as JSON when set, and
+// returns the response body. A 4xx or 5xx answer is an *APIError.
+func (c *Client) raw(method, path string, body any) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		reader = bytes.NewReader(data)
 	}
 	req, err := http.NewRequest(method, c.BaseURL+path, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	if body != nil {
@@ -220,22 +210,28 @@ func (c *Client) do(method, path string, body any, out any) error {
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		apiErr := &APIError{Status: resp.StatusCode, Code: "unknown", Message: string(data)}
 		_ = json.Unmarshal(data, apiErr)
-		return apiErr
+		return nil, apiErr
 	}
-	if out != nil {
-		return json.Unmarshal(data, out)
+	return data, nil
+}
+
+// do is raw with the JSON response decoded into out, when set.
+func (c *Client) do(method, path string, body any, out any) error {
+	data, err := c.raw(method, path, body)
+	if err != nil || out == nil {
+		return err
 	}
-	return nil
+	return json.Unmarshal(data, out)
 }
 
 // --- output and error mapping ---

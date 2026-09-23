@@ -22,11 +22,7 @@ func viewOf(st *server.State) serverView {
 		// Servers started by an older build did not record their repo.
 		repo = "(unknown)"
 	}
-	url := st.PublicURL
-	if url == "" {
-		url = st.BaseURL()
-	}
-	return serverView{Repo: repo, Port: st.Port, PID: st.PID, URL: url}
+	return serverView{Repo: repo, Port: st.Port, PID: st.PID, URL: st.PublicBaseURL()}
 }
 
 // cmdServers lists the revue servers running for this user, one per

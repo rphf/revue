@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -80,11 +81,18 @@ var configOverrides = []string{
 	"-c", "core.quotepath=false",
 }
 
+// forcedDiffFlags keep external diff drivers, textconv filters, and
+// the user's rename setting out of every diff revue reads.
+var forcedDiffFlags = []string{"--no-ext-diff", "--no-textconv", "--find-renames"}
+
 func git(repoRoot string, args ...string) ([]byte, error) {
-	return gitStdin(repoRoot, nil, args...)
+	return runGit(repoRoot, nil, false, args...)
 }
 
-func gitStdin(repoRoot string, stdin []byte, args ...string) ([]byte, error) {
+// runGit runs git with the config overrides, feeding stdin when set.
+// With exit1OK, exit status 1 is success: a --no-index diff uses it to
+// mean "differences found".
+func runGit(repoRoot string, stdin []byte, exit1OK bool, args ...string) ([]byte, error) {
 	full := append(append([]string{}, configOverrides...), args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = repoRoot
@@ -92,25 +100,10 @@ func gitStdin(repoRoot string, stdin []byte, args ...string) ([]byte, error) {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.Bytes(), nil
-}
-
-// gitDiffExit1OK runs a git diff variant where exit status 1 just
-// means "differences found".
-func gitDiffExit1OK(repoRoot string, args ...string) ([]byte, error) {
-	full := append(append([]string{}, configOverrides...), args...)
-	cmd := exec.Command("git", full...)
-	cmd.Dir = repoRoot
-	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if exit1OK && errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return stdout.Bytes(), nil
 		}
 		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
@@ -118,14 +111,12 @@ func gitDiffExit1OK(repoRoot string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-func isZeroOID(s string) bool {
-	for _, c := range s {
-		if c != '0' {
-			return false
-		}
-	}
-	return true
+// patchArgs is the diff command whose output is the patch revue serves.
+func patchArgs(args []string) []string {
+	return append(append([]string{"diff", "--no-color", "--full-index"}, forcedDiffFlags...), args...)
 }
+
+func isZeroOID(s string) bool { return strings.Trim(s, "0") == "" }
 
 type rawEntry struct {
 	oldOID, newOID string
@@ -136,36 +127,34 @@ type rawEntry struct {
 // Capture turns a git-diff expression into patch text, file metadata,
 // and old/new contents. Working-tree captures (no revisions, not
 // staged) also include untracked non-ignored files as added files.
-func Capture(repoRoot string, args []string) (*Result, error) {
+// patch is the tracked-file patch Fingerprint returned for the same
+// args; nil runs the diff here.
+func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {
 	if err := ValidateArgs(args); err != nil {
 		return nil, err
 	}
 
-	forced := []string{"--no-ext-diff", "--no-textconv", "--find-renames"}
-	patchArgs := append(append([]string{"diff", "--no-color", "--full-index"}, forced...), args...)
-	patchOut, err := git(repoRoot, patchArgs...)
+	if patch == nil {
+		var err error
+		if patch, err = git(repoRoot, patchArgs(args)...); err != nil {
+			return nil, err
+		}
+	}
+
+	listArgs := append(append([]string{"diff", "--raw", "--numstat", "-z", "--abbrev=64"}, forcedDiffFlags...), args...)
+	listOut, err := git(repoRoot, listArgs...)
+	if err != nil {
+		return nil, err
+	}
+	entries, binaryPaths, err := parseRawNumstatZ(listOut)
 	if err != nil {
 		return nil, err
 	}
 
-	rawArgs := append(append([]string{"diff", "--raw", "-z", "--abbrev=64"}, forced...), args...)
-	rawOut, err := git(repoRoot, rawArgs...)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := parseRawZ(rawOut)
-	if err != nil {
-		return nil, err
-	}
-
-	numstatArgs := append(append([]string{"diff", "--numstat", "-z"}, forced...), args...)
-	numstatOut, err := git(repoRoot, numstatArgs...)
-	if err != nil {
-		return nil, err
-	}
-	binaryPaths := parseNumstatBinaries(numstatOut)
-
-	var files []File
+	files := make([]File, 0, len(entries))
+	// Text sides are read whole, binary sides only sized: one cat-file
+	// call each for the whole capture.
+	var contentOIDs, sizeOIDs []string
 	for _, e := range entries {
 		f := File{Path: e.path, OldPath: e.oldPath, IsBinary: binaryPaths[e.path]}
 		switch e.status {
@@ -182,29 +171,53 @@ func Capture(repoRoot string, args []string) (*Result, error) {
 		default: // M, T, and anything exotic
 			f.Status = StatusModified
 		}
+		oids := &contentOIDs
 		if f.IsBinary {
-			if err := binarySides(repoRoot, &f, e); err != nil {
-				return nil, err
-			}
-		} else {
-			if f.Status != StatusAdded && !isZeroOID(e.oldOID) {
-				content, err := git(repoRoot, "cat-file", "blob", e.oldOID)
-				if err != nil {
-					return nil, err
-				}
-				f.OldContent = content
-			}
-			if f.Status != StatusDeleted {
-				f.NewContent, err = newSideContent(repoRoot, e.newOID, e.path)
-				if err != nil {
-					return nil, err
-				}
-			}
+			oids = &sizeOIDs
+		}
+		if hasOldBlob(&f, e) {
+			*oids = append(*oids, e.oldOID)
+		}
+		if f.Status != StatusDeleted && !isZeroOID(e.newOID) {
+			*oids = append(*oids, e.newOID)
 		}
 		files = append(files, f)
 	}
+	contents, err := catFile(repoRoot, contentOIDs, true)
+	if err != nil {
+		return nil, err
+	}
+	sizes, err := catFile(repoRoot, sizeOIDs, false)
+	if err != nil {
+		return nil, err
+	}
+	for i, e := range entries {
+		f := &files[i]
+		if f.IsBinary {
+			if err := binarySides(repoRoot, f, e, sizes); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if hasOldBlob(f, e) {
+			obj, ok := contents[e.oldOID]
+			if !ok {
+				return nil, fmt.Errorf("gitx: blob %s of %s is missing", e.oldOID, f.Path)
+			}
+			f.OldContent = obj.content
+		}
+		if f.Status == StatusDeleted {
+			continue
+		}
+		// A new side git has no blob for is read from the working tree.
+		if obj, ok := contents[e.newOID]; ok {
+			f.NewContent = obj.content
+		} else if f.NewContent, err = readWorktree(filepath.Join(repoRoot, e.path)); err != nil {
+			return nil, err
+		}
+	}
 
-	patch := joinTypeChanges(string(patchOut))
+	out := joinTypeChanges(string(patch))
 
 	if isWorkingTreeCapture(args) {
 		untracked, upatch, err := captureUntracked(repoRoot, pathspecs(args))
@@ -212,30 +225,32 @@ func Capture(repoRoot string, args []string) (*Result, error) {
 			return nil, err
 		}
 		files = append(files, untracked...)
-		patch += upatch
+		out += upatch
 	}
 
-	return &Result{Patch: patch, Files: files}, nil
+	return &Result{Patch: out, Files: files}, nil
+}
+
+func hasOldBlob(f *File, e rawEntry) bool {
+	return f.Status != StatusAdded && !isZeroOID(e.oldOID)
 }
 
 // binarySides records the blob and byte size of each side of a binary
 // file, so a side can be served later without holding it in memory.
-func binarySides(repoRoot string, f *File, e rawEntry) error {
-	if f.Status != StatusAdded && !isZeroOID(e.oldOID) {
-		size, err := blobSize(repoRoot, e.oldOID)
-		if err != nil {
-			return err
+func binarySides(repoRoot string, f *File, e rawEntry, sizes map[string]object) error {
+	if hasOldBlob(f, e) {
+		obj, ok := sizes[e.oldOID]
+		if !ok {
+			return fmt.Errorf("gitx: blob %s of %s is missing", e.oldOID, f.Path)
 		}
-		f.OldOID, f.OldSize = e.oldOID, size
+		f.OldOID, f.OldSize = e.oldOID, obj.size
 	}
 	if f.Status == StatusDeleted {
 		return nil
 	}
-	if !isZeroOID(e.newOID) {
-		if size, err := blobSize(repoRoot, e.newOID); err == nil {
-			f.NewOID, f.NewSize = e.newOID, size
-			return nil
-		}
+	if obj, ok := sizes[e.newOID]; ok {
+		f.NewOID, f.NewSize = e.newOID, obj.size
+		return nil
 	}
 	info, err := os.Lstat(filepath.Join(repoRoot, f.Path))
 	if err != nil {
@@ -245,12 +260,62 @@ func binarySides(repoRoot string, f *File, e rawEntry) error {
 	return nil
 }
 
-func blobSize(repoRoot, oid string) (int64, error) {
-	out, err := git(repoRoot, "cat-file", "-s", oid)
-	if err != nil {
-		return 0, err
+// object is one blob read by catFile; content is nil for a size-only
+// read.
+type object struct {
+	size    int64
+	content []byte
+}
+
+// catFile reads blobs with one `git cat-file` call: whole contents with
+// --batch, sizes only with --batch-check. Objects that are missing or
+// not blobs are absent from the result.
+func catFile(repoRoot string, oids []string, contents bool) (map[string]object, error) {
+	objs := map[string]object{}
+	if len(oids) == 0 {
+		return objs, nil
 	}
-	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	oids = slices.Compact(slices.Sorted(slices.Values(oids)))
+	mode := "--batch-check"
+	if contents {
+		mode = "--batch"
+	}
+	out, err := runGit(repoRoot, []byte(strings.Join(oids, "\n")+"\n"), false, "cat-file", mode)
+	if err != nil {
+		return nil, err
+	}
+	// Each frame is "<oid> <type> <size>\n", followed with --batch by
+	// the content and a newline; an unknown name is "<oid> missing\n".
+	for len(out) > 0 {
+		header, rest, ok := bytes.Cut(out, []byte("\n"))
+		if !ok {
+			return nil, fmt.Errorf("gitx: truncated cat-file header %q", header)
+		}
+		out = rest
+		fields := strings.Fields(string(header))
+		if len(fields) == 2 {
+			continue // missing or ambiguous
+		}
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("gitx: unexpected cat-file header %q", header)
+		}
+		size, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("gitx: unexpected cat-file header %q", header)
+		}
+		obj := object{size: size}
+		if contents {
+			if int64(len(out)) < size+1 {
+				return nil, fmt.Errorf("gitx: truncated cat-file content for %s", fields[0])
+			}
+			obj.content = out[:size:size]
+			out = out[size+1:]
+		}
+		if fields[1] == "blob" {
+			objs[fields[0]] = obj
+		}
+	}
+	return objs, nil
 }
 
 // ReadSide returns one side of a captured file: the old side from its
@@ -349,16 +414,13 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 			files = append(files, f)
 			continue
 		}
-		numstat, err := gitDiffExit1OK(repoRoot, "diff", "--no-index", "--no-ext-diff", "--numstat", "--", os.DevNull, p)
+		// One call prints the numstat line, a blank line, then the patch.
+		out, err := runGit(repoRoot, nil, true, "diff", "--no-index", "--no-ext-diff", "--no-color", "--full-index", "--numstat", "-p", "--", os.DevNull, p)
 		if err != nil {
 			return nil, "", err
 		}
-		isBinary := strings.HasPrefix(strings.TrimSpace(string(numstat)), "-\t-\t")
-
-		filePatch, err := gitDiffExit1OK(repoRoot, "diff", "--no-index", "--no-ext-diff", "--no-color", "--full-index", "--", os.DevNull, p)
-		if err != nil {
-			return nil, "", err
-		}
+		numstat, filePatch, _ := bytes.Cut(out, []byte("\n\n"))
+		isBinary := bytes.HasPrefix(numstat, []byte("-\t-\t"))
 		patch.Write(filePatch)
 
 		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary, NewSize: info.Size()}
@@ -493,48 +555,57 @@ func joinTypeChange(first, second string) (string, bool) {
 	return b.String(), true
 }
 
-// parseRawZ parses `git diff --raw -z` output:
-// :oldmode newmode oldsha newsha status\0path\0  (or \0old\0new\0 for R/C)
-func parseRawZ(out []byte) ([]rawEntry, error) {
+// parseRawNumstatZ parses `git diff --raw --numstat -z` output: every
+// raw entry first, then every numstat entry. It returns the raw entries
+// and the set of paths numstat reports as binary.
+func parseRawNumstatZ(out []byte) ([]rawEntry, map[string]bool, error) {
 	fields := strings.Split(string(out), "\x00")
+	entries, rest, err := parseRawZ(fields)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entries, parseNumstatBinaries(rest), nil
+}
+
+// parseRawZ parses the raw entries at the start of fields:
+// :oldmode newmode oldsha newsha status\0path\0  (or \0old\0new\0 for R/C)
+// and returns the fields after them.
+func parseRawZ(fields []string) ([]rawEntry, []string, error) {
 	var entries []rawEntry
-	for i := 0; i < len(fields); {
+	i := 0
+	for i < len(fields) {
 		meta := fields[i]
-		if meta == "" {
-			break
-		}
 		if !strings.HasPrefix(meta, ":") {
-			return nil, fmt.Errorf("gitx: unexpected raw entry %q", meta)
+			break
 		}
 		parts := strings.Fields(meta[1:])
 		if len(parts) < 5 {
-			return nil, fmt.Errorf("gitx: short raw entry %q", meta)
+			return nil, nil, fmt.Errorf("gitx: short raw entry %q", meta)
 		}
 		e := rawEntry{oldOID: parts[2], newOID: parts[3], status: parts[4][0]}
 		switch e.status {
 		case 'R', 'C':
 			if i+2 >= len(fields) {
-				return nil, fmt.Errorf("gitx: truncated rename entry %q", meta)
+				return nil, nil, fmt.Errorf("gitx: truncated rename entry %q", meta)
 			}
 			e.oldPath, e.path = fields[i+1], fields[i+2]
 			i += 3
 		default:
 			if i+1 >= len(fields) {
-				return nil, fmt.Errorf("gitx: truncated entry %q", meta)
+				return nil, nil, fmt.Errorf("gitx: truncated entry %q", meta)
 			}
 			e.path = fields[i+1]
 			i += 2
 		}
 		entries = append(entries, e)
 	}
-	return entries, nil
+	return entries, fields[i:], nil
 }
 
 // parseNumstatBinaries returns the set of paths git reports as binary
-// ("-" line counts) in `git diff --numstat -z` output.
-func parseNumstatBinaries(out []byte) map[string]bool {
+// ("-" line counts) in `git diff --numstat -z` fields.
+func parseNumstatBinaries(fields []string) map[string]bool {
 	binaries := map[string]bool{}
-	fields := strings.Split(string(out), "\x00")
 	for i := 0; i < len(fields); {
 		entry := fields[i]
 		if entry == "" {
@@ -572,7 +643,7 @@ func untrackedSymlink(repoRoot, path, full string) (File, string, error) {
 	if err != nil {
 		return File{}, "", err
 	}
-	oid, err := gitStdin(repoRoot, []byte(target), "hash-object", "--stdin")
+	oid, err := runGit(repoRoot, []byte(target), false, "hash-object", "--stdin")
 	if err != nil {
 		return File{}, "", err
 	}
@@ -585,18 +656,18 @@ func untrackedSymlink(repoRoot, path, full string) (File, string, error) {
 // Fingerprint identifies the state a Capture of args would see, at a
 // fraction of its cost: the raw patch git prints, plus the untracked
 // files with their sizes and mtimes when the working tree is the new
-// side. Two equal fingerprints mean nothing changed for this diff.
-func Fingerprint(repoRoot string, args []string) (string, error) {
+// side. Two equal fingerprints mean nothing changed for this diff. The
+// patch is returned too, for Capture to reuse.
+func Fingerprint(repoRoot string, args []string) (string, []byte, error) {
 	if err := ValidateArgs(args); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	h := sha256.New()
-	diffArgs := append([]string{"diff", "--no-color", "--full-index", "--no-ext-diff", "--no-textconv", "--find-renames"}, args...)
-	out, err := git(repoRoot, diffArgs...)
+	patch, err := git(repoRoot, patchArgs(args)...)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	h.Write(out)
+	h.Write(patch)
 	if isWorkingTreeCapture(args) {
 		lsArgs := []string{"ls-files", "--others", "--exclude-standard", "-z"}
 		if paths := pathspecs(args); len(paths) > 0 {
@@ -604,7 +675,7 @@ func Fingerprint(repoRoot string, args []string) (string, error) {
 		}
 		out, err := git(repoRoot, lsArgs...)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		for _, p := range strings.Split(string(out), "\x00") {
 			if p == "" {
@@ -617,7 +688,7 @@ func Fingerprint(repoRoot string, args []string) (string, error) {
 			_, _ = fmt.Fprintf(h, "\x00%s\x00%d\x00%d", p, info.Size(), info.ModTime().UnixNano())
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(h.Sum(nil)), patch, nil
 }
 
 // Branch names the checked-out branch, or "HEAD" when detached.

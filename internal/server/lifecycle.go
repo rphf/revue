@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -98,16 +99,26 @@ func Running() ([]*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []*State
-	for _, e := range entries {
+	// Probe every server at once; each slot keeps the directory order.
+	found := make([]*State, len(entries))
+	var wg sync.WaitGroup
+	for i, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		st, err := ReadState(filepath.Join(base, e.Name()))
-		if err != nil || !Healthy(st) {
-			continue
+		wg.Go(func() {
+			st, err := ReadState(filepath.Join(base, e.Name()))
+			if err == nil && Healthy(st) {
+				found[i] = st
+			}
+		})
+	}
+	wg.Wait()
+	var out []*State
+	for _, st := range found {
+		if st != nil {
+			out = append(out, st)
 		}
-		out = append(out, st)
 	}
 	return out, nil
 }

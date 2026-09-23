@@ -6,7 +6,7 @@ import {
   ReplyIcon,
   UserIcon,
 } from "lucide-react";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import type { Thread as ThreadType } from "../types";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -37,7 +37,7 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
         setActionError(null);
         onChanged();
       },
-      (e) => setActionError(e instanceof Error ? e.message : String(e)),
+      (e) => setActionError(errorMessage(e)),
     );
 
   const deleteComment = (id: number) => {

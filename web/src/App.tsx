@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DiffPage from "./pages/DiffPage";
-import { argsFromSearch } from "./lib/diffArgs";
+import { argsForKey, argsFromSearch, keyForArgs } from "./lib/diffArgs";
 import { loadTheme, saveTheme, type Theme } from "./theme";
 
 export interface NavigateOptions {
@@ -28,16 +28,17 @@ function useLocation() {
 export default function App() {
   const { href, navigate } = useLocation();
   const [theme, setTheme] = useState<Theme>(loadTheme);
-  useEffect(() => saveTheme(theme), [theme]);
+  const toggleTheme = useCallback(() => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    saveTheme(next);
+  }, [theme]);
 
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
-
+  // The arguments keep their identity while the URL names the same
+  // list, so a navigation that changes nothing refetches nothing.
   const search = href.includes("?") ? href.slice(href.indexOf("?")) : "";
-  const argsKey = argsFromSearch(search).join("\u0000");
-  const args = useMemo(
-    () => (argsKey === "" ? [] : argsKey.split("\u0000")),
-    [argsKey],
-  );
+  const argsKey = keyForArgs(argsFromSearch(search));
+  const args = useMemo(() => argsForKey(argsKey), [argsKey]);
 
   return (
     <DiffPage

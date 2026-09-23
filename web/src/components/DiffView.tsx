@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  memo,
+  useCallback,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -11,6 +13,7 @@ import type {
   FileContents,
   FileDiffLoadedFiles,
   FileDiffMetadata,
+  LineAnnotation,
   SelectedLineRange,
 } from "@pierre/diffs";
 import {
@@ -32,12 +35,7 @@ import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  LAYOUT,
-  LINE_SCROLL_OFFSET,
-  THEMES,
-  UNSAFE_CSS,
-} from "./codeViewStyle";
+import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import { treePathCompare } from "./treePath";
@@ -169,8 +167,9 @@ const pathFromItemId = (id: string) =>
 // measuring — and rows paint as plain text while highlighting streams
 // in. Items render in tree order, binary files as one-line file items
 // in place (R24), images previewed; an empty diff renders the empty
-// state.
-export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
+// state. Memoized: the page re-renders for reasons of its own (a
+// thread refresh, the panel), and the list re-renders only on props.
+const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   {
     files,
     diffFiles,
@@ -223,9 +222,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           behavior: "instant",
         });
       },
-      clearSelection: () => {
-        codeView.current?.getInstance()?.setSelectedLines(null);
-      },
+      clearSelection: () => codeView.current?.clearSelectedLines(),
     }),
     [],
   );
@@ -369,16 +366,9 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   // as the library asks; a new object would re-configure the viewer.
   const options = useMemo<CodeViewReactOptions<AnnotationMeta, undefined>>(
     () => ({
+      ...BASE_OPTIONS,
       diffStyle,
-      stickyHeaders: true,
-      // Long lines soft-wrap inside their column instead of clipping
-      // behind a horizontal scrollbar; prose and 80-column docs read
-      // whole in split view.
-      overflow: "wrap",
-      expansionLineCount: 20,
       loadDiffFiles: loadFile && ((fileDiff) => loadFile(fileDiff.name)),
-      layout: LAYOUT,
-      unsafeCSS: UNSAFE_CSS,
       // The library's own gutter "+" carries the GitHub gesture: a click
       // selects that line, a drag from it selects a range, and both land
       // in onGutterUtilityClick; a custom-rendered button would lose the
@@ -400,10 +390,116 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
               onLineSelect(context.item.id, range);
           }
         : undefined,
-      theme: THEMES,
       themeType: theme,
     }),
     [diffStyle, theme, onLineSelect, loadFile],
+  );
+
+  // The render callbacks change only with what they draw, so the
+  // library re-renders its slots when the viewed or collapsed state
+  // moves, and not on every render of the page.
+  const renderItemAnnotation = useCallback(
+    (
+      annotation:
+        DiffLineAnnotation<AnnotationMeta> | LineAnnotation<AnnotationMeta>,
+      item: CodeViewItem<AnnotationMeta>,
+    ) => {
+      const meta = annotation.metadata as AnnotationMeta | undefined;
+      if (meta?.kind === "image" && meta.image) {
+        return <ImageDiff {...meta.image} diffStyle={diffStyle} />;
+      }
+      return renderAnnotation?.(
+        annotation as DiffLineAnnotation<AnnotationMeta>,
+        pathFromItemId(item.id),
+      );
+    },
+    [diffStyle, renderAnnotation],
+  );
+
+  const renderHeaderPrefix = useMemo(
+    () =>
+      onToggleCollapsed &&
+      ((item: CodeViewItem<AnnotationMeta>) => {
+        const path = pathFromItemId(item.id);
+        const isCollapsed = collapsed?.has(path) ?? false;
+        return (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="-ml-1 text-muted-foreground hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground aria-expanded:hover:bg-muted aria-expanded:hover:text-foreground"
+            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${path}`}
+            aria-expanded={!isCollapsed}
+            onClick={() => onToggleCollapsed(path)}
+          >
+            {isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+          </Button>
+        );
+      }),
+    [collapsed, onToggleCollapsed],
+  );
+
+  const renderHeaderMetadata = useCallback(
+    (item: CodeViewItem<AnnotationMeta>) => {
+      const path = pathFromItemId(item.id);
+      const viewedToggle = onToggleViewed && (
+        <label className="flex h-6 cursor-pointer items-center gap-1.5 rounded-[min(var(--radius-md),10px)] px-2 font-sans text-xs font-medium text-muted-foreground transition-colors select-none hover:bg-muted hover:text-foreground has-data-checked:text-foreground dark:hover:bg-muted/50">
+          <Checkbox
+            className="size-3.5 [&_svg]:size-3!"
+            checked={viewed?.has(path) ?? false}
+            onCheckedChange={() => onToggleViewed(path)}
+            aria-label={`Viewed ${path}`}
+          />
+          Viewed
+        </label>
+      );
+      const binary = binaryByPath.get(path);
+      if (binary) {
+        return (
+          <span className="flex items-center gap-1 font-sans">
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid={`binary-${path}`}
+            >
+              {binarySummary(binary.oldSize, binary.newSize) ||
+                `Binary file (${binary.status})`}
+            </span>
+            {viewedToggle}
+          </span>
+        );
+      }
+      const rich = richByFile?.has(path) ?? false;
+      return (
+        <span className="flex items-center gap-1 font-sans">
+          {isMarkdownPath(path) && onToggleRich && (
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              spacing={0}
+              value={rich ? "rich" : "source"}
+              onValueChange={(v) => {
+                if (v && (v === "rich") !== rich) onToggleRich(path);
+              }}
+              aria-label="Markdown view"
+            >
+              <ToggleGroupItem
+                value="source"
+                aria-label="Source"
+                title="Source"
+              >
+                <CodeIcon />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="rich" aria-label="Rich" title="Rich">
+                <BookOpenTextIcon />
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
+          {viewedToggle}
+        </span>
+      );
+    },
+    [viewed, onToggleViewed, binaryByPath, richByFile, onToggleRich],
   );
 
   if (items.length === 0) {
@@ -424,95 +520,11 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       className="diff-scroll"
       items={items}
       options={options}
-      renderAnnotation={(annotation, item) => {
-        const meta = annotation.metadata as AnnotationMeta | undefined;
-        if (meta?.kind === "image" && meta.image) {
-          return <ImageDiff {...meta.image} diffStyle={diffStyle} />;
-        }
-        return renderAnnotation?.(
-          annotation as DiffLineAnnotation<AnnotationMeta>,
-          pathFromItemId(item.id),
-        );
-      }}
-      renderHeaderPrefix={
-        onToggleCollapsed &&
-        ((item) => {
-          const path = pathFromItemId(item.id);
-          const isCollapsed = collapsed?.has(path) ?? false;
-          return (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="-ml-1 text-muted-foreground hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground aria-expanded:hover:bg-muted aria-expanded:hover:text-foreground"
-              aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${path}`}
-              aria-expanded={!isCollapsed}
-              onClick={() => onToggleCollapsed(path)}
-            >
-              {isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
-            </Button>
-          );
-        })
-      }
-      renderHeaderMetadata={(item) => {
-        const path = pathFromItemId(item.id);
-        const viewedToggle = onToggleViewed && (
-          <label className="flex h-6 cursor-pointer items-center gap-1.5 rounded-[min(var(--radius-md),10px)] px-2 font-sans text-xs font-medium text-muted-foreground transition-colors select-none hover:bg-muted hover:text-foreground has-data-checked:text-foreground dark:hover:bg-muted/50">
-            <Checkbox
-              className="size-3.5 [&_svg]:size-3!"
-              checked={viewed?.has(path) ?? false}
-              onCheckedChange={() => onToggleViewed(path)}
-              aria-label={`Viewed ${path}`}
-            />
-            Viewed
-          </label>
-        );
-        const binary = binaryByPath.get(path);
-        if (binary) {
-          return (
-            <span className="flex items-center gap-1 font-sans">
-              <span
-                className="text-xs text-muted-foreground"
-                data-testid={`binary-${path}`}
-              >
-                {binarySummary(binary.oldSize, binary.newSize) ||
-                  `Binary file (${binary.status})`}
-              </span>
-              {viewedToggle}
-            </span>
-          );
-        }
-        const rich = richByFile?.has(path) ?? false;
-        return (
-          <span className="flex items-center gap-1 font-sans">
-            {isMarkdownPath(path) && onToggleRich && (
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="sm"
-                spacing={0}
-                value={rich ? "rich" : "source"}
-                onValueChange={(v) => {
-                  if (v && (v === "rich") !== rich) onToggleRich(path);
-                }}
-                aria-label="Markdown view"
-              >
-                <ToggleGroupItem
-                  value="source"
-                  aria-label="Source"
-                  title="Source"
-                >
-                  <CodeIcon />
-                </ToggleGroupItem>
-                <ToggleGroupItem value="rich" aria-label="Rich" title="Rich">
-                  <BookOpenTextIcon />
-                </ToggleGroupItem>
-              </ToggleGroup>
-            )}
-            {viewedToggle}
-          </span>
-        );
-      }}
+      renderAnnotation={renderItemAnnotation}
+      renderHeaderPrefix={renderHeaderPrefix}
+      renderHeaderMetadata={renderHeaderMetadata}
     />
   );
 });
+
+export default memo(DiffView);

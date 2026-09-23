@@ -1,15 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import SendComposer, { type SendComposerProps } from "./SendComposer";
 
 function setup(props: Partial<SendComposerProps> = {}) {
-  const onSend = vi.fn();
-  const onNoteChange = vi.fn();
-  render(
+  const onSend = vi.fn(async () => true);
+  const onKeepNote = vi.fn();
+  const view = render(
     <SendComposer
       draftCount={0}
-      note=""
-      onNoteChange={onNoteChange}
+      onKeepNote={onKeepNote}
       onSend={onSend}
       sending={false}
       error={null}
@@ -17,7 +16,7 @@ function setup(props: Partial<SendComposerProps> = {}) {
       {...props}
     />,
   );
-  return { onSend, onNoteChange };
+  return { onSend, onKeepNote, ...view };
 }
 
 describe("SendComposer", () => {
@@ -32,23 +31,44 @@ describe("SendComposer", () => {
   });
 
   it("sends a note alone, from the button or Cmd+Enter", () => {
-    const { onSend } = setup({ note: "LGTM, commit it" });
+    const onSend = vi.fn(async () => false);
+    setup({ initialNote: "LGTM, commit it", onSend });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     fireEvent.keyDown(screen.getByLabelText("Note to the agent"), {
       key: "Enter",
       ctrlKey: true,
     });
     expect(onSend).toHaveBeenCalledTimes(2);
+    expect(onSend).toHaveBeenCalledWith("LGTM, commit it");
   });
 
-  it("sends drafts without a note and passes edits up", () => {
-    const { onSend, onNoteChange } = setup({ draftCount: 3 });
-    fireEvent.change(screen.getByLabelText("Note to the agent"), {
-      target: { value: "fix these" },
-    });
-    expect(onNoteChange).toHaveBeenCalledWith("fix these");
+  it("sends drafts with the typed note and clears it once sent", async () => {
+    const { onSend } = setup({ draftCount: 3 });
+    const box = screen.getByLabelText("Note to the agent");
+    fireEvent.change(box, { target: { value: "fix these" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onSend).toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledWith("fix these");
+    await waitFor(() => expect(box).toHaveValue(""));
+  });
+
+  it("keeps the note when the send fails", async () => {
+    const onSend = vi.fn(async () => false);
+    setup({ draftCount: 1, onSend });
+    const box = screen.getByLabelText("Note to the agent");
+    fireEvent.change(box, { target: { value: "fix these" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSend).toHaveBeenCalled());
+    expect(box).toHaveValue("fix these");
+  });
+
+  it("hands the note back when it closes", () => {
+    const { onKeepNote, unmount } = setup({ initialNote: "half" });
+    fireEvent.change(screen.getByLabelText("Note to the agent"), {
+      target: { value: "half written" },
+    });
+    expect(onKeepNote).not.toHaveBeenCalled();
+    unmount();
+    expect(onKeepNote).toHaveBeenCalledWith("half written");
   });
 
   it("disables sending in flight and shows errors", () => {

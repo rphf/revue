@@ -310,4 +310,26 @@ describe("treePathCompare", () => {
       "zz.md",
     ]);
   });
+
+  it("is the order the tree itself renders", async () => {
+    const { treePathCompare } = await import("./treePath");
+    const paths = [
+      "src/file10.ts",
+      "src/file2.ts",
+      "src/lib/x.ts",
+      "b.md",
+      ".env",
+      "A.md",
+    ];
+    const { container } = render(
+      <FileTree
+        files={paths.map((p) => file(p))}
+        viewed={new Set()}
+        onToggleViewed={noop}
+        onSelect={noop}
+      />,
+    );
+    const leaves = rowPaths(container).filter((p) => !p.endsWith("/"));
+    expect(leaves).toEqual([...paths].sort(treePathCompare));
+  });
 });

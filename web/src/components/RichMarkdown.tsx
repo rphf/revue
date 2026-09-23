@@ -1,19 +1,17 @@
 import { CircleAlertIcon } from "lucide-react";
 import type { RichDoc } from "@/lib/richDiff";
 import { cn } from "@/lib/utils";
-import { Skeleton } from "@/components/ui/skeleton";
+import LoadingBlocks from "./LoadingBlocks";
 
 // The rendered side of a markdown file: sanitized HTML per block, with
 // the changed blocks marked in the diff colors.
 export default function RichMarkdown({ doc }: { doc: RichDoc }) {
   if (doc.status === "loading") {
     return (
-      <div className="space-y-3 px-6 py-5" aria-busy="true">
-        <Skeleton className="h-6 w-1/3" />
-        <Skeleton className="h-4 w-11/12" />
-        <Skeleton className="h-4 w-4/5" />
-        <Skeleton className="h-4 w-2/3" />
-      </div>
+      <LoadingBlocks
+        className="px-6 py-5"
+        bars={["h-6 w-1/3", "h-4 w-11/12", "h-4 w-4/5", "h-4 w-2/3"]}
+      />
     );
   }
   if (doc.status === "error") {

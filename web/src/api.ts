@@ -7,15 +7,13 @@ import type {
   Snapshot,
   Thread,
 } from "./types";
+import { argsQuery } from "./lib/diffArgs";
 
-export class ApiError extends Error {
-  code: string;
-  status: number;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
+export class ApiError extends Error {}
+
+// The text to show for anything a request or a parse threw.
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 async function request<T>(
@@ -32,23 +30,9 @@ async function request<T>(
   if (resp.status === 204) return undefined as T;
   const data = await resp.json().catch(() => null);
   if (!resp.ok) {
-    throw new ApiError(
-      resp.status,
-      data?.error ?? "unknown",
-      data?.message ?? resp.statusText,
-    );
+    throw new ApiError(data?.message ?? resp.statusText);
   }
   return data as T;
-}
-
-// Diff arguments travel as a repeated `arg` query parameter, one per
-// argument, so pathspecs with spaces survive the round trip.
-export function argsQuery(args: string[], extra?: Record<string, string>) {
-  const q = new URLSearchParams();
-  for (const a of args) q.append("arg", a);
-  for (const [k, v] of Object.entries(extra ?? {})) q.set(k, v);
-  const s = q.toString();
-  return s === "" ? "" : `?${s}`;
 }
 
 export const api = {

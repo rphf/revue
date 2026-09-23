@@ -44,7 +44,7 @@ function BrandMark() {
   );
 }
 
-export function Brand() {
+function Brand() {
   return (
     <div className="flex items-center gap-2 pl-1 font-medium tracking-tight">
       <BrandMark />
@@ -53,7 +53,7 @@ export function Brand() {
   );
 }
 
-export function TopBarShell({ children }: { children: ReactNode }) {
+function TopBarShell({ children }: { children: ReactNode }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3">
       {children}

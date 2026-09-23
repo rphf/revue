@@ -51,7 +51,7 @@ func (b *bus) notify() {
 const diffPollInterval = time.Second
 
 // handleEvents streams the event log over SSE, replaying from ?since=
-// first, and tells the page when the diff for its `arg` parameters
+// (or, on an EventSource reconnect, the Last-Event-ID header) first, and tells the page when the diff for its `arg` parameters
 // changed. Open streams block idle shutdown.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
@@ -64,7 +64,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "validation", err.Error())
 		return
 	}
-	since := parseInt64(r.URL.Query().Get("since"))
+	since := r.URL.Query().Get("since")
+	if since == "" {
+		since = r.Header.Get("Last-Event-ID")
+	}
 
 	s.activity.connOpen()
 	defer s.activity.connClose()
@@ -86,32 +89,38 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cursor := since
+	cursor := parseInt64(since)
 	poll := time.NewTicker(diffPollInterval)
 	defer poll.Stop()
 	// Keep-alive comments let proxies and clients detect dead streams.
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
 
+	// The log only grows on a bus wake, so it is re-read then and on
+	// the first pass, not on poll or keep-alive ticks.
+	pending := true
 	for {
-		events, err := s.store.EventsSince(cursor)
-		if err != nil {
-			return
-		}
-		for _, e := range events {
-			data, err := json.Marshal(e)
+		if pending {
+			pending = false
+			events, err := s.store.EventsSince(cursor)
 			if err != nil {
 				return
 			}
-			// No `event:` field: named SSE events bypass
-			// EventSource.onmessage, and the type is already in the
-			// JSON payload.
-			if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, data); err != nil {
-				return
+			for _, e := range events {
+				data, err := json.Marshal(e)
+				if err != nil {
+					return
+				}
+				// No `event:` field: named SSE events bypass
+				// EventSource.onmessage, and the type is already in the
+				// JSON payload.
+				if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", e.ID, data); err != nil {
+					return
+				}
+				cursor = e.ID
 			}
-			cursor = e.ID
+			flusher.Flush()
 		}
-		flusher.Flush()
 
 		select {
 		case <-r.Context().Done():
@@ -119,6 +128,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-wake:
+			pending = true
 		case <-poll.C:
 			changed, err := v.refresh(s.repoRoot, false)
 			if err != nil || !changed {

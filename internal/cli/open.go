@@ -74,7 +74,7 @@ func (e *env) cmdOpen(args []string) int {
 	if err := e.client.do("GET", "/api/diff"+argsQuery(diffArgs), nil, &diff); err != nil {
 		return e.failText(err)
 	}
-	link := e.authURL(pagePath(diffArgs))
+	link := e.state.AuthURL(pagePath(diffArgs))
 	_, _ = fmt.Fprintln(e.stdout, link)
 	if !*noBrowser {
 		if err := e.openURL(link); err != nil {
@@ -103,7 +103,7 @@ func (e *env) cmdURL(args []string) int {
 		_, _ = fmt.Fprintln(e.stderr, err)
 		return ExitValidation
 	}
-	_, _ = fmt.Fprintln(e.stdout, e.authURL("/"))
+	_, _ = fmt.Fprintln(e.stdout, e.state.AuthURL("/"))
 	return ExitOK
 }
 
@@ -143,22 +143,11 @@ func (e *env) cmdExport(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return e.failValidation(err.Error())
 	}
-	req, err := e.client.newRequest("GET", "/api/export")
+	md, err := e.client.raw("GET", "/api/export", nil)
 	if err != nil {
 		return e.fail(err)
 	}
-	resp, err := e.client.HTTP.Do(req)
-	if err != nil {
-		return e.fail(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		apiErr := &APIError{Status: resp.StatusCode, Code: "unknown", Message: string(data)}
-		unmarshalAPIError(data, apiErr)
-		return e.fail(apiErr)
-	}
-	if _, err := io.Copy(e.stdout, resp.Body); err != nil {
+	if _, err := e.stdout.Write(md); err != nil {
 		return ExitError
 	}
 	return ExitOK

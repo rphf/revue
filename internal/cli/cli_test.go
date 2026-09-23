@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rphf/revue/internal/gittest"
 	"github.com/rphf/revue/internal/server"
 )
 
@@ -20,25 +20,11 @@ import (
 
 func initRepo(t *testing.T) string {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.email", "test@test")
-	mustGit(t, dir, "config", "user.name", "test")
+	dir := gittest.Init(t)
 	writeFile(t, dir, "main.go", "package main\n\nfunc main() {\n\tprintln(\"v1\")\n}\n")
-	mustGit(t, dir, "add", "-A")
-	mustGit(t, dir, "commit", "-q", "-m", "c1")
+	gittest.Git(t, dir, "add", "-A")
+	gittest.Git(t, dir, "commit", "-q", "-m", "c1")
 	return dir
-}
-
-func mustGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
 }
 
 func writeFile(t *testing.T, dir, path, content string) {
@@ -73,11 +59,11 @@ func newHarness(t *testing.T) *harness {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	h := &harness{t: t, repo: repo, srv: srv, out: out, errOut: errOut}
 	h.env = &env{
-		client:    &Client{BaseURL: srv.URL(), Token: srv.Token(), HTTP: &http.Client{}},
-		publicURL: srv.PublicURL(),
-		repoRoot:  repo,
-		stdout:    out,
-		stderr:    errOut,
+		client:   &Client{BaseURL: srv.URL(), Token: srv.Token(), HTTP: &http.Client{}},
+		state:    &server.State{Token: srv.Token(), PublicURL: srv.PublicURL()},
+		repoRoot: repo,
+		stdout:   out,
+		stderr:   errOut,
 		openURL: func(u string) error {
 			h.opened = append(h.opened, u)
 			return nil
@@ -364,5 +350,16 @@ func TestExportPrintsMarkdown(t *testing.T) {
 	}
 	if strings.Contains(out, "unsent draft") {
 		t.Errorf("draft leaked into export:\n%s", out)
+	}
+}
+
+// Help and version answer anywhere, not only inside a repository: their
+// flag forms must not fall through to `revue open`.
+func TestHelpAndVersionWorkOutsideARepo(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, args := range [][]string{{"--version"}, {"version"}, {"-h"}, {"--help"}, {"help"}} {
+		if code := Main(args); code != ExitOK {
+			t.Errorf("revue %v exited %d, want %d", args, code, ExitOK)
+		}
 	}
 }

@@ -1,8 +1,8 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Comment, Thread as ThreadType } from "../types";
 
-vi.mock("../api", () => ({
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
   api: {
     reply: vi.fn(async () => ({})),
     editComment: vi.fn(async () => ({})),
@@ -13,43 +13,16 @@ vi.mock("../api", () => ({
 
 import { api } from "../api";
 import Thread from "./Thread";
-
-let nextId = 1;
-function comment(
-  role: Comment["authorRole"],
-  body: string,
-  draft = false,
-): Comment {
-  return {
-    id: nextId++,
-    threadId: 1,
-    authorRole: role,
-    body,
-    draft,
-    createdAt: "2026-07-03T10:00:00Z",
-  };
-}
-
-function thread(comments: Comment[], resolved = false): ThreadType {
-  return {
-    id: 1,
-    path: "a.go",
-    side: "additions",
-    line: 5,
-    resolved,
-    createdAt: "",
-    comments,
-  };
-}
+import { comment, thread } from "../test/fixtures";
 
 describe("Thread", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("renders replies in order with author roles", () => {
     const t = thread([
-      comment("reviewer", "first: why this loop?"),
-      comment("agent", "second: because of batching"),
-      comment("reviewer", "third: fair enough"),
+      comment({ body: "first: why this loop?" }),
+      comment({ authorRole: "agent", body: "second: because of batching" }),
+      comment({ body: "third: fair enough" }),
     ]);
     render(<Thread thread={t} onChanged={() => {}} />);
 
@@ -64,10 +37,10 @@ describe("Thread", () => {
 
   it("renders script tags in comment bodies inertly (sanitized markdown)", () => {
     const t = thread([
-      comment(
-        "agent",
-        'before <script>window.__pwned = true</script> <img src=x onerror="window.__pwned=true"> after',
-      ),
+      comment({
+        authorRole: "agent",
+        body: 'before <script>window.__pwned = true</script> <img src=x onerror="window.__pwned=true"> after',
+      }),
     ]);
     render(<Thread thread={t} onChanged={() => {}} />);
     expect(document.querySelector("script")).toBeNull();
@@ -82,7 +55,7 @@ describe("Thread", () => {
 
   it("supports the draft edit and delete cycle", async () => {
     const onChanged = vi.fn();
-    const draft = comment("reviewer", "draft body", true);
+    const draft = comment({ body: "draft body", draft: true });
     const t = thread([draft]);
     render(<Thread thread={t} onChanged={onChanged} />);
 
@@ -110,7 +83,7 @@ describe("Thread", () => {
   });
 
   it("hides edit/delete on submitted comments", () => {
-    const t = thread([comment("reviewer", "published", false)]);
+    const t = thread([comment({ body: "published" })]);
     render(<Thread thread={t} onChanged={() => {}} />);
     expect(
       screen.queryByRole("button", { name: "Edit" }),
@@ -121,7 +94,7 @@ describe("Thread", () => {
   });
 
   it("replies through the api", async () => {
-    const t = thread([comment("reviewer", "question")]);
+    const t = thread([comment({ body: "question" })]);
     render(<Thread thread={t} onChanged={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Reply" }));
     fireEvent.change(screen.getByRole("textbox"), {
@@ -132,7 +105,7 @@ describe("Thread", () => {
   });
 
   it("resolves and unresolves", async () => {
-    const t = thread([comment("reviewer", "x")]);
+    const t = thread([comment({ body: "x" })]);
     const { rerender } = render(<Thread thread={t} onChanged={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
     await waitFor(() =>
@@ -141,7 +114,7 @@ describe("Thread", () => {
 
     rerender(
       <Thread
-        thread={thread([comment("reviewer", "x")], true)}
+        thread={thread([comment({ body: "x" })], { resolved: true })}
 
         onChanged={() => {}}
       />,

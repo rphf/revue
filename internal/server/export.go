@@ -2,9 +2,10 @@ package server
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/rphf/revue/internal/store"
@@ -47,12 +48,7 @@ func renderExport(st *store.Store, repo string) (string, error) {
 	for _, v := range views {
 		byFile[v.Path] = append(byFile[v.Path], v)
 	}
-	paths := make([]string, 0, len(byFile))
-	for path := range byFile {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
+	for _, path := range slices.Sorted(maps.Keys(byFile)) {
 		fmt.Fprintf(&b, "\n## %s\n", path)
 		for _, v := range byFile[path] {
 			writeThread(&b, v)

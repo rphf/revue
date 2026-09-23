@@ -1,13 +1,6 @@
 package cli
 
-import (
-	"encoding/json"
-	"fmt"
-)
-
-func unmarshalAPIError(data []byte, apiErr *APIError) {
-	_ = json.Unmarshal(data, apiErr)
-}
+import "fmt"
 
 // cmdFeedback is the agent's cursor read: everything since --since
 // (events; drafts never appear), every unresolved thread with its sent

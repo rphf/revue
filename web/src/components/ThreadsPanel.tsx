@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export type PanelFilter = "all" | "live" | "outdated" | "resolved";
+type PanelFilter = "all" | "live" | "outdated" | "resolved";
 type ThreadState = Exclude<PanelFilter, "all">;
 
 const FILTERS: PanelFilter[] = ["all", "live", "outdated", "resolved"];
@@ -66,24 +66,29 @@ export default function ThreadsPanel({
     new Map(),
   );
 
-  const sections = useMemo(
-    () =>
-      rounds.map((round) => ({
-        round,
-        rows: round.threads.map((t): Row => {
-          const position = positions.get(t.id);
-          const state: ThreadState = t.resolved
-            ? "resolved"
-            : position?.state === "live"
-              ? "live"
-              : "outdated";
-          return { thread: t, position, state };
-        }),
-      })),
-    [rounds, positions],
-  );
-  const allRows = sections.flatMap((s) => s.rows);
-  const count = (s: PanelFilter) => allRows.filter((r) => r.state === s).length;
+  const { sections, counts } = useMemo(() => {
+    const counts: Record<PanelFilter, number> = {
+      all: 0,
+      live: 0,
+      outdated: 0,
+      resolved: 0,
+    };
+    const sections = rounds.map((round) => ({
+      round,
+      rows: round.threads.map((t): Row => {
+        const position = positions.get(t.id);
+        const state: ThreadState = t.resolved
+          ? "resolved"
+          : position?.state === "live"
+            ? "live"
+            : "outdated";
+        counts.all++;
+        counts[state]++;
+        return { thread: t, position, state };
+      }),
+    }));
+    return { sections, counts };
+  }, [rounds, positions]);
   const latestSend = rounds.find((r) => r.kind === "send")?.key;
 
   const visibleSections = sections
@@ -107,7 +112,7 @@ export default function ThreadsPanel({
         <MessageSquareTextIcon className="size-4 text-muted-foreground" />
         <span className="font-medium">Threads</span>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {allRows.length}
+          {counts.all}
         </span>
         <Button
           variant="ghost"
@@ -137,7 +142,7 @@ export default function ThreadsPanel({
               {f}
               {f !== "all" && (
                 <span className="text-muted-foreground tabular-nums">
-                  {count(f)}
+                  {counts[f]}
                 </span>
               )}
             </TabsTrigger>

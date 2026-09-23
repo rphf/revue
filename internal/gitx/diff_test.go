@@ -4,35 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rphf/revue/internal/gittest"
 )
-
-// initRepo builds a fixture repo in a temp dir, isolated from the
-// developer's git config.
-func initRepo(t *testing.T) string {
-	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
-	dir := t.TempDir()
-	mustGit(t, dir, "init", "-q", "-b", "main")
-	mustGit(t, dir, "config", "user.email", "test@test")
-	mustGit(t, dir, "config", "user.name", "test")
-	return dir
-}
-
-func mustGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return string(out)
-}
 
 func write(t *testing.T, dir, path, content string) {
 	t.Helper()
@@ -47,8 +24,8 @@ func write(t *testing.T, dir, path, content string) {
 
 func commitAll(t *testing.T, dir, msg string) {
 	t.Helper()
-	mustGit(t, dir, "add", "-A")
-	mustGit(t, dir, "commit", "-q", "-m", msg)
+	gittest.Git(t, dir, "add", "-A")
+	gittest.Git(t, dir, "commit", "-q", "-m", msg)
 }
 
 func fileByPath(res *Result, path string) *File {
@@ -61,12 +38,12 @@ func fileByPath(res *Result, path string) *File {
 }
 
 func TestWorkingTreeDiff(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "one\ntwo\nthree\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "a.txt", "one\nTWO\nthree\n")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -86,15 +63,15 @@ func TestWorkingTreeDiff(t *testing.T) {
 }
 
 func TestStagedDiff(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "v1\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "a.txt", "v2\n")
-	mustGit(t, repo, "add", "a.txt")
+	gittest.Git(t, repo, "add", "a.txt")
 	// A further unstaged edit must NOT appear in a staged capture.
 	write(t, repo, "a.txt", "v3-unstaged\n")
 
-	res, err := Capture(repo, []string{"--staged"})
+	res, err := Capture(repo, []string{"--staged"}, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -111,7 +88,7 @@ func TestStagedDiff(t *testing.T) {
 }
 
 func TestCommitRange(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "first\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "a.txt", "second\n")
@@ -119,7 +96,7 @@ func TestCommitRange(t *testing.T) {
 	// Worktree noise must not leak into a range capture.
 	write(t, repo, "a.txt", "worktree-noise\n")
 
-	res, err := Capture(repo, []string{"HEAD~1..HEAD"})
+	res, err := Capture(repo, []string{"HEAD~1..HEAD"}, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -136,15 +113,15 @@ func TestCommitRange(t *testing.T) {
 }
 
 func TestBranchToBranch(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "base\n")
 	commitAll(t, repo, "c1")
-	mustGit(t, repo, "checkout", "-q", "-b", "feature")
+	gittest.Git(t, repo, "checkout", "-q", "-b", "feature")
 	write(t, repo, "a.txt", "feature-change\n")
 	commitAll(t, repo, "c2")
-	mustGit(t, repo, "checkout", "-q", "main")
+	gittest.Git(t, repo, "checkout", "-q", "main")
 
-	res, err := Capture(repo, []string{"main..feature"})
+	res, err := Capture(repo, []string{"main..feature"}, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -155,17 +132,17 @@ func TestBranchToBranch(t *testing.T) {
 }
 
 func TestRenameWithUnchangedContentCarriesMetadata(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	content := strings.Repeat("stable line\n", 20)
 	write(t, repo, "old/name.txt", content)
 	commitAll(t, repo, "c1")
 	if err := os.MkdirAll(filepath.Join(repo, "new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustGit(t, repo, "mv", "old/name.txt", "new/name.txt")
+	gittest.Git(t, repo, "mv", "old/name.txt", "new/name.txt")
 	commitAll(t, repo, "c2")
 
-	res, err := Capture(repo, []string{"HEAD~1..HEAD"})
+	res, err := Capture(repo, []string{"HEAD~1..HEAD"}, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -182,7 +159,7 @@ func TestRenameWithUnchangedContentCarriesMetadata(t *testing.T) {
 }
 
 func TestBinaryFileFlaggedNoBlobs(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	if err := os.WriteFile(filepath.Join(repo, "img.dat"), []byte{0x00, 0x01, 0xFF, 0xFE}, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +168,7 @@ func TestBinaryFileFlaggedNoBlobs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -213,7 +190,7 @@ func TestBinaryFileFlaggedNoBlobs(t *testing.T) {
 	}
 
 	commitAll(t, repo, "c2")
-	res, err = Capture(repo, []string{"HEAD~1..HEAD"})
+	res, err = Capture(repo, []string{"HEAD~1..HEAD"}, nil)
 	if err != nil {
 		t.Fatalf("Capture range: %v", err)
 	}
@@ -233,11 +210,11 @@ func TestBinaryFileFlaggedNoBlobs(t *testing.T) {
 }
 
 func TestEmptyDiff(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "content\n")
 	commitAll(t, repo, "c1")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -247,12 +224,12 @@ func TestEmptyDiff(t *testing.T) {
 }
 
 func TestNoTrailingNewlineRoundTrips(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "with newline\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "a.txt", "no newline at end")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -266,14 +243,14 @@ func TestNoTrailingNewlineRoundTrips(t *testing.T) {
 }
 
 func TestUntrackedFileAppearsAsAdded(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "tracked\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "brand-new.txt", "hello\nworld\n")
 	write(t, repo, ".gitignore", "ignored.txt\n")
 	write(t, repo, "ignored.txt", "should not appear\n")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -298,7 +275,7 @@ func TestUntrackedFileAppearsAsAdded(t *testing.T) {
 }
 
 func TestUntrackedExcludedFromStagedAndRangeCaptures(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "v1\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "a.txt", "v2\n")
@@ -306,7 +283,7 @@ func TestUntrackedExcludedFromStagedAndRangeCaptures(t *testing.T) {
 	write(t, repo, "untracked.txt", "x\n")
 
 	for _, args := range [][]string{{"--staged"}, {"HEAD~1..HEAD"}} {
-		res, err := Capture(repo, args)
+		res, err := Capture(repo, args, nil)
 		if err != nil {
 			t.Fatalf("Capture %v: %v", args, err)
 		}
@@ -317,14 +294,14 @@ func TestUntrackedExcludedFromStagedAndRangeCaptures(t *testing.T) {
 }
 
 func TestFlagShapedArgRejected(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	for _, args := range [][]string{
 		{"--ext-diff"},
 		{"--output=/tmp/pwned"},
 		{"-O/tmp/orderfile"},
 		{"HEAD", "--no-index"},
 	} {
-		_, err := Capture(repo, args)
+		_, err := Capture(repo, args, nil)
 		if !errors.Is(err, ErrInvalidArg) {
 			t.Errorf("Capture(%v): want ErrInvalidArg, got %v", args, err)
 		}
@@ -343,7 +320,7 @@ func TestFlagShapedArgRejected(t *testing.T) {
 }
 
 func TestPathspecLimitsCapture(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "in/a.txt", "v1\n")
 	write(t, repo, "out/b.txt", "v1\n")
 	commitAll(t, repo, "c1")
@@ -352,7 +329,7 @@ func TestPathspecLimitsCapture(t *testing.T) {
 	write(t, repo, "in/new.txt", "untracked in scope\n")
 	write(t, repo, "out/new.txt", "untracked out of scope\n")
 
-	res, err := Capture(repo, []string{"--", "in"})
+	res, err := Capture(repo, []string{"--", "in"}, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -372,13 +349,13 @@ func symlink(t *testing.T, dir, target, path string) {
 }
 
 func TestUntrackedSymlinksCaptureAsLinkTargets(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "dir/f.txt", "v1\n")
 	commitAll(t, repo, "c1")
 	symlink(t, repo, "dir/f.txt", "file-link")
 	symlink(t, repo, "dir", "dir-link")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -400,7 +377,7 @@ func TestUntrackedSymlinksCaptureAsLinkTargets(t *testing.T) {
 }
 
 func TestModifiedTrackedSymlinkReadsLinkTarget(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "a\n")
 	write(t, repo, "b.txt", "b\n")
 	symlink(t, repo, "a.txt", "link")
@@ -410,7 +387,7 @@ func TestModifiedTrackedSymlinkReadsLinkTarget(t *testing.T) {
 	}
 	symlink(t, repo, "b.txt", "link")
 
-	res, err := Capture(repo, nil)
+	res, err := Capture(repo, nil, nil)
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
@@ -421,39 +398,39 @@ func TestModifiedTrackedSymlinkReadsLinkTarget(t *testing.T) {
 }
 
 func TestFingerprintFollowsTrackedAndUntrackedChanges(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "one\ntwo\n")
 	commitAll(t, repo, "c1")
-	fp1, err := Fingerprint(repo, nil)
+	fp1, _, err := Fingerprint(repo, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fp1b, _ := Fingerprint(repo, nil)
+	fp1b, _, _ := Fingerprint(repo, nil)
 	if fp1 != fp1b {
 		t.Fatal("fingerprint not stable on an unchanged tree")
 	}
 
 	write(t, repo, "a.txt", "changed\n")
-	fp2, _ := Fingerprint(repo, nil)
+	fp2, _, _ := Fingerprint(repo, nil)
 	if fp2 == fp1 {
 		t.Error("tracked edit did not move the fingerprint")
 	}
 
 	write(t, repo, "new.txt", "hello\n")
-	fp3, _ := Fingerprint(repo, nil)
+	fp3, _, _ := Fingerprint(repo, nil)
 	if fp3 == fp2 {
 		t.Error("untracked file did not move the fingerprint")
 	}
 
 	// The untracked file is not part of a staged capture.
-	s1, _ := Fingerprint(repo, []string{"--staged"})
+	s1, _, _ := Fingerprint(repo, []string{"--staged"})
 	write(t, repo, "new.txt", "hello again\n")
-	s2, _ := Fingerprint(repo, []string{"--staged"})
+	s2, _, _ := Fingerprint(repo, []string{"--staged"})
 	if s1 != s2 {
 		t.Error("staged fingerprint moved on an untracked edit")
 	}
 
-	if _, err := Fingerprint(repo, []string{"--ext-diff"}); !errors.Is(err, ErrInvalidArg) {
+	if _, _, err := Fingerprint(repo, []string{"--ext-diff"}); !errors.Is(err, ErrInvalidArg) {
 		t.Errorf("flag arg err = %v, want ErrInvalidArg", err)
 	}
 	if Branch(repo) != "main" {
@@ -494,13 +471,13 @@ func TestTypeChangeIsOneSection(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := initRepo(t)
+			repo := gittest.Init(t)
 			write(t, repo, "a.txt", "a\n")
 			tc.setup(t, repo)
 			commitAll(t, repo, "c1")
 			tc.change(t, repo)
 
-			res, err := Capture(repo, nil)
+			res, err := Capture(repo, nil, nil)
 			if err != nil {
 				t.Fatalf("Capture: %v", err)
 			}
@@ -521,20 +498,121 @@ func TestTypeChangeIsOneSection(t *testing.T) {
 }
 
 func TestRepoNameFollowsOrigin(t *testing.T) {
-	repo := initRepo(t)
+	repo := gittest.Init(t)
 	if got, want := RepoName(repo), filepath.Base(repo); got != want {
 		t.Errorf("without origin: got %q, want %q", got, want)
 	}
-	mustGit(t, repo, "remote", "add", "origin", "https://example.com/placeholder")
+	gittest.Git(t, repo, "remote", "add", "origin", "https://example.com/placeholder")
 	for _, url := range []string{
 		"git@github.com:rphf/revue.git",
 		"https://github.com/rphf/revue.git",
 		"https://github.com/rphf/revue/",
 		"/srv/git/revue",
 	} {
-		mustGit(t, repo, "remote", "set-url", "origin", url)
+		gittest.Git(t, repo, "remote", "set-url", "origin", url)
 		if got := RepoName(repo); got != "revue" {
 			t.Errorf("%s: got %q, want revue", url, got)
 		}
+	}
+}
+
+// One capture mixing every kind of entry: the raw and numstat records
+// share one listing, and every blob comes from one cat-file call.
+func TestMixedCaptureReadsEveryFile(t *testing.T) {
+	repo := gittest.Init(t)
+	long := strings.Repeat("line\n", 40)
+	write(t, repo, "moved.txt", long)
+	write(t, repo, "gone.txt", "bye\n")
+	write(t, repo, "same.txt", "one\n")
+	write(t, repo, "empty.txt", "")
+	if err := os.WriteFile(filepath.Join(repo, "img.bin"), []byte{0, 1, 2}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, repo, "c1")
+
+	gittest.Git(t, repo, "mv", "moved.txt", "renamed.txt")
+	write(t, repo, "renamed.txt", long+"tail\n")
+	gittest.Git(t, repo, "rm", "-q", "gone.txt")
+	write(t, repo, "same.txt", "two\n")
+	write(t, repo, "empty.txt", "filled\n")
+	if err := os.WriteFile(filepath.Join(repo, "img.bin"), []byte{0, 9}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write(t, repo, "fresh.txt", "new\n")
+	gittest.Git(t, repo, "add", "-A")
+
+	fp, patch, err := Fingerprint(repo, []string{"--staged"})
+	if err != nil || fp == "" {
+		t.Fatalf("Fingerprint: %q, %v", fp, err)
+	}
+	reused, err := Capture(repo, []string{"--staged"}, patch)
+	if err != nil {
+		t.Fatalf("Capture with patch: %v", err)
+	}
+	res, err := Capture(repo, []string{"--staged"}, nil)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if reused.Patch != res.Patch || len(reused.Files) != len(res.Files) {
+		t.Errorf("a reused patch changed the capture")
+	}
+
+	want := map[string]struct {
+		status, oldPath, oldContent, newContent string
+		binary                                  bool
+	}{
+		"renamed.txt": {StatusRenamed, "moved.txt", long, long + "tail\n", false},
+		"gone.txt":    {StatusDeleted, "", "bye\n", "", false},
+		"same.txt":    {StatusModified, "", "one\n", "two\n", false},
+		"empty.txt":   {StatusModified, "", "", "filled\n", false},
+		"fresh.txt":   {StatusAdded, "", "", "new\n", false},
+		"img.bin":     {StatusModified, "", "", "", true},
+	}
+	if len(res.Files) != len(want) {
+		t.Fatalf("files = %+v", res.Files)
+	}
+	for path, w := range want {
+		f := fileByPath(res, path)
+		if f == nil {
+			t.Errorf("%s missing", path)
+			continue
+		}
+		if f.Status != w.status || f.OldPath != w.oldPath || f.IsBinary != w.binary ||
+			string(f.OldContent) != w.oldContent || string(f.NewContent) != w.newContent {
+			t.Errorf("%s = %+v", path, f)
+		}
+	}
+	if f := fileByPath(res, "empty.txt"); f.OldContent == nil {
+		t.Error("an empty old side must read as empty, not absent")
+	}
+	if f := fileByPath(res, "gone.txt"); f.NewContent != nil {
+		t.Error("a deleted file has no new side")
+	}
+	if f := fileByPath(res, "img.bin"); f.OldSize != 3 || f.NewSize != 2 || f.OldOID == "" || f.NewOID == "" {
+		t.Errorf("binary sides = %+v", f)
+	}
+}
+
+func TestCatFileSkipsMissingObjects(t *testing.T) {
+	repo := gittest.Init(t)
+	write(t, repo, "a.txt", "hello\n")
+	commitAll(t, repo, "c1")
+	oid := strings.TrimSpace(gittest.Git(t, repo, "rev-parse", "HEAD:a.txt"))
+	missing := strings.Repeat("1", len(oid))
+	commit := strings.TrimSpace(gittest.Git(t, repo, "rev-parse", "HEAD"))
+
+	objs, err := catFile(repo, []string{oid, missing, oid, commit}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 1 || string(objs[oid].content) != "hello\n" || objs[oid].size != 6 {
+		t.Errorf("contents = %+v", objs)
+	}
+	sizes, err := catFile(repo, []string{missing, oid}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sizes) != 1 || sizes[oid].size != 6 || sizes[oid].content != nil {
+		t.Errorf("sizes = %+v", sizes)
 	}
 }

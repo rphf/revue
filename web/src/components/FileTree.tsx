@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type {
@@ -14,6 +15,7 @@ import type {
 import { FileTree as Tree, useFileTree } from "@pierre/trees/react";
 import { CopyIcon, EyeIcon, EyeOffIcon, InboxIcon } from "lucide-react";
 import type { DiffFile } from "../types";
+import { treeEntryCompare } from "./treePath";
 
 // The changed-file sidebar is a @pierre/trees model: virtualized rows,
 // flattened empty directory chains, sticky folders, keyboard navigation,
@@ -105,15 +107,18 @@ function FileTree({
   const viewedRef = useRef(viewed);
   const initialFiles = useRef(files);
 
-  const { model } = useFileTree({
+  // useFileTree reads its options only on the first render, so they are
+  // built once; the effects below push later changes into the model.
+  const [options] = useState(() => ({
     paths: files.map((f) => f.path),
     gitStatus: toGitStatus(files),
-    initialExpansion: "open",
+    sort: treeEntryCompare,
+    initialExpansion: "open" as const,
     flattenEmptyDirectories: true,
     stickyFolders: true,
     search: true,
-    density: "compact",
-    icons: { set: "standard", spriteSheet: SPRITE_SHEET },
+    density: "compact" as const,
+    icons: { set: "standard" as const, spriteSheet: SPRITE_SHEET },
     unsafeCSS: UNSAFE_CSS,
     renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
       if (item.kind !== "file") return null;
@@ -127,7 +132,8 @@ function FileTree({
         title: isViewed ? "Mark as not viewed" : "Mark as viewed",
       };
     },
-  });
+  }));
+  const { model } = useFileTree(options);
 
   // The model is created once; later diffs replace its paths in place.
   useEffect(() => {

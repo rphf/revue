@@ -16,6 +16,16 @@ export function splitPatch(patch: string): Map<string, string> {
   return sections;
 }
 
+let cacheSeq = 0;
+
+// A cache key no earlier parse or load used, for the worker pool's
+// highlight cache: text parsed under one key is never re-keyed, so a
+// fresh key per fetch keeps two different texts from sharing one.
+export function freshCacheKey(kind: string): string {
+  cacheSeq += 1;
+  return `${kind}-${cacheSeq}`;
+}
+
 // loadedFiles turns the server's two versions of a changed file into
 // what the diff renderer needs to expand hunk context. Only changed
 // and renamed files are loaded: added and deleted ones come whole.
@@ -23,10 +33,19 @@ export function loadedFiles(v: FileVersions): FileDiffLoadedFiles {
   if (v.newContent === null) {
     throw new Error(`${v.path}: no new version to expand context from`);
   }
-  const newFile = { name: v.path, contents: v.newContent };
+  const key = freshCacheKey("file");
+  const newFile = {
+    name: v.path,
+    contents: v.newContent,
+    cacheKey: `${key}:new`,
+  };
   if (v.oldContent === null) return { oldFile: null, newFile };
   return {
-    oldFile: { name: v.oldPath || v.path, contents: v.oldContent },
+    oldFile: {
+      name: v.oldPath || v.path,
+      contents: v.oldContent,
+      cacheKey: `${key}:old`,
+    },
     newFile,
   };
 }

@@ -5,11 +5,31 @@ export function argsFromSearch(search: string): string[] {
   return new URLSearchParams(search).getAll("arg");
 }
 
-export function pathForArgs(args: string[]): string {
+// One `arg` parameter per argument, so pathspecs with spaces survive the
+// round trip; the page URL and the API calls share the encoding.
+export function argsQuery(
+  args: string[],
+  extra?: Record<string, string>,
+): string {
   const q = new URLSearchParams();
   for (const a of args) q.append("arg", a);
+  for (const [k, v] of Object.entries(extra ?? {})) q.set(k, v);
   const s = q.toString();
-  return s === "" ? "/" : `/?${s}`;
+  return s === "" ? "" : `?${s}`;
+}
+
+export function pathForArgs(args: string[]): string {
+  return `/${argsQuery(args)}`;
+}
+
+// A string that names one list of arguments, for memo and effect keys:
+// equal lists give equal keys whatever their identity.
+export function keyForArgs(args: string[]): string {
+  return JSON.stringify(args);
+}
+
+export function argsForKey(key: string): string[] {
+  return JSON.parse(key) as string[];
 }
 
 // What the top bar calls a diff: the two presets by name, anything

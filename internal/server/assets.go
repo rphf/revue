@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path"
@@ -118,23 +119,20 @@ func cleanRepoPath(raw string) (string, bool) {
 // repoAsset reads the checked-out file at p. A symlink that leaves the
 // repository is treated as missing.
 func repoAsset(repoRoot, p string) ([]byte, error) {
-	root, err := filepath.EvalSymlinks(repoRoot)
+	root, err := os.OpenRoot(repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	full, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(p)))
-	if err != nil {
+	defer func() { _ = root.Close() }()
+	name := filepath.FromSlash(p)
+	info, err := root.Stat(name)
+	if errors.Is(err, fs.ErrPermission) {
 		return nil, err
 	}
-	if full != root && !strings.HasPrefix(full, root+string(filepath.Separator)) {
+	// Root reports an escaping symlink with an unexported error, so any
+	// other failure reads as a missing file.
+	if err != nil || !info.Mode().IsRegular() {
 		return nil, os.ErrNotExist
 	}
-	info, err := os.Stat(full)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, os.ErrNotExist
-	}
-	return os.ReadFile(full)
+	return root.ReadFile(name)
 }

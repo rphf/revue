@@ -15,11 +15,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rphf/revue/internal/gitx"
 	"github.com/rphf/revue/internal/store"
 )
 
@@ -78,6 +80,7 @@ func normalizePublicURL(raw string) (string, error) {
 type Server struct {
 	store     *store.Store
 	repoRoot  string
+	repoName  string
 	token     string
 	build     string
 	publicURL string
@@ -262,6 +265,7 @@ func Start(cfg Config) (*Server, error) {
 	s := &Server{
 		store:     st,
 		repoRoot:  cfg.RepoRoot,
+		repoName:  gitx.RepoName(cfg.RepoRoot),
 		token:     token,
 		build:     cfg.BuildStamp,
 		publicURL: publicURL,
@@ -326,11 +330,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // idleLoop shuts the server down after a quiet period with zero open
 // SSE streams or wait long-polls (KTD5).
 func (s *Server) idleLoop(timeout time.Duration) {
-	interval := timeout / 4
-	if interval < 10*time.Millisecond {
-		interval = 10 * time.Millisecond
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(max(timeout/4, 10*time.Millisecond))
 	defer ticker.Stop()
 	for {
 		select {
@@ -390,11 +390,8 @@ const authCookie = "revue_token"
 // server token in constant time.
 func (s *Server) authorized(r *http.Request) bool {
 	if h := r.Header.Get("Authorization"); h != "" {
-		const prefix = "Bearer "
-		if len(h) > len(prefix) && h[:len(prefix)] == prefix {
-			return subtle.ConstantTimeCompare([]byte(h[len(prefix):]), []byte(s.token)) == 1
-		}
-		return false
+		tok, ok := strings.CutPrefix(h, "Bearer ")
+		return ok && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
 	}
 	if c, err := r.Cookie(authCookie); err == nil {
 		return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1
@@ -420,12 +417,7 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 			allowed = append(allowed, u.Scheme+"://"+u.Host)
 		}
 	}
-	for _, a := range allowed {
-		if origin == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowed, origin)
 }
 
 // handleAuth exchanges a one-time ?token= for an HttpOnly cookie and
