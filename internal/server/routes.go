@@ -17,14 +17,15 @@ import (
 
 // Event types. Draft mutations are deliberately absent: drafts never
 // reach the event log, so no agent-facing read can see them before the
-// reviewer sends. diff.changed is a notice on the stream only, never
-// stored.
+// reviewer sends. diff.changed and focus are notices on the stream
+// only, never stored.
 const (
 	eventSent        = "sent"
 	eventReplied     = "thread.replied"
 	eventResolved    = "thread.resolved"
 	eventUnresolved  = "thread.unresolved"
 	eventDiffChanged = "diff.changed"
+	eventFocus       = "focus"
 )
 
 // Handler builds the full middleware + route stack.
@@ -50,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/feedback", s.handleFeedback)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/wait", s.handleWait)
+	mux.HandleFunc("POST /api/focus", s.handleFocus)
+	mux.HandleFunc("POST /api/raise", s.handleRaise)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 
 	mux.Handle("/", ui.Handler())

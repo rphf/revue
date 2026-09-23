@@ -35,7 +35,8 @@ func (b *bus) subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-func (b *bus) notify() {
+// notify wakes every subscriber and reports how many there are.
+func (b *bus) notify() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs {
@@ -44,6 +45,7 @@ func (b *bus) notify() {
 		default: // already pending; subscriber will re-query anyway
 		}
 	}
+	return len(b.subs)
 }
 
 // diffPollInterval is how often an open event stream checks whether
@@ -74,6 +76,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	wake, cancel := s.bus.subscribe()
 	defer cancel()
+	focus, stopFocus := v.pages.subscribe()
+	defer stopFocus()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -140,6 +144,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				}
 				flusher.Flush()
 			}
+		case <-focus:
+			if err := writeNotice(w, eventFocus, nil); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-keepalive.C:
 			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
@@ -150,15 +159,30 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeDiffChanged(w io.Writer, version int64) error {
-	data, err := json.Marshal(map[string]any{
-		"type":    eventDiffChanged,
-		"payload": map[string]any{"version": version},
-	})
+	return writeNotice(w, eventDiffChanged, map[string]any{"version": version})
+}
+
+// writeNotice writes a frame that is not in the event log: it has no
+// id, so a reconnect neither replays it nor resumes from it.
+func writeNotice(w io.Writer, typ string, payload any) error {
+	data, err := json.Marshal(map[string]any{"type": typ, "payload": payload})
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
 	return err
+}
+
+// handleFocus asks the pages open on a diff to bring themselves to the
+// user's attention, and reports how many there are. `revue open` opens
+// a new tab only when there are none.
+func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
+	v, err := s.views.get(queryArgs(r))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"pages": v.pages.notify()})
 }
 
 // waitOutcome is the long-poll result for the CLI's `revue wait`.

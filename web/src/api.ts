@@ -36,6 +36,8 @@ async function request<T>(
 }
 
 export const api = {
+  // Brings the browser app forward after a notification click (macOS).
+  raise: () => request<void>("POST", "/api/raise"),
   getDiff: (args: string[]) =>
     request<DiffResponse>("GET", `/api/diff${argsQuery(args)}`),
   getDiffFile: (args: string[], path: string) =>

@@ -826,6 +826,42 @@ func TestSSEStreamsDiffChangesReplayAndLiveEvents(t *testing.T) {
 	}
 }
 
+func TestFocusReachesThePagesOnThatDiff(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	focus := func(query string) int {
+		var out struct {
+			Pages int `json:"pages"`
+		}
+		ts.do(t, "POST", "/api/focus"+query, nil, &out)
+		return out.Pages
+	}
+	if n := focus(""); n != 0 {
+		t.Fatalf("focus with no page open = %d, want 0", n)
+	}
+
+	req, _ := http.NewRequest("GET", ts.URL()+"/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+ts.Token())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	frames := readFrames(t, resp.Body)
+	if f := nextFrame(t, frames, 3*time.Second); f.Type != eventDiffChanged {
+		t.Fatalf("first frame = %+v, want diff.changed", f)
+	}
+
+	if n := focus("?arg=--&arg=a.txt"); n != 0 {
+		t.Errorf("focus on another diff = %d, want 0", n)
+	}
+	if n := focus(""); n != 1 {
+		t.Fatalf("focus with the page open = %d, want 1", n)
+	}
+	if f := nextFrame(t, frames, 3*time.Second); f.Type != eventFocus || f.ID != nil {
+		t.Fatalf("frame = %+v, want an id-less focus", f)
+	}
+}
+
 func TestSSEResumesFromLastEventID(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)
@@ -1370,5 +1406,43 @@ func TestDiffImageServesEachSideFromTheDiff(t *testing.T) {
 		resp := get(tc.path, tc.side)
 		ts.mustStatus(t, resp, tc.want)
 		_ = resp.Body.Close()
+	}
+}
+
+func TestBuildStampIgnoresSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "revue")
+	writeFile(t, dir, "revue", "binary")
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(bin, link); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := stampOf(bin), stampOf(link); a != b {
+		t.Errorf("stamp through a symlink = %q, want %q", b, a)
+	}
+}
+
+func TestRaiseBringsTheBrowserForwardForALocalPage(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	raised := 0
+	ts.raise = func() error { raised++; return nil }
+	resp := ts.do(t, "POST", "/api/raise", nil, nil)
+	ts.mustStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+	if raised != 1 {
+		t.Errorf("raised %d times, want 1", raised)
+	}
+}
+
+func TestBrowserFromHandlersPicksTheHTTPSHandler(t *testing.T) {
+	data := []byte(`{"LSHandlers":[
+		{"LSHandlerContentType":"public.html","LSHandlerRoleAll":"com.example.editor"},
+		{"LSHandlerURLScheme":"http","LSHandlerRoleAll":"com.example.old"},
+		{"LSHandlerURLScheme":"https","LSHandlerRoleAll":"app.zen-browser.zen"}]}`)
+	if got := browserFromHandlers(data); got != "app.zen-browser.zen" {
+		t.Errorf("browser = %q, want the https handler", got)
+	}
+	if got := browserFromHandlers(nil); got != "com.apple.Safari" {
+		t.Errorf("browser with no handlers = %q, want Safari", got)
 	}
 }

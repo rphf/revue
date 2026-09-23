@@ -16,7 +16,7 @@ revue open abc123 def456      # two commits
 
 | Command | Effect |
 | --- | --- |
-| `revue [open] [git-diff args]` | Open the browser on that diff and print the login link. `--no-browser` only prints. A bad argument fails here, with git's message. An empty diff opens as "No changes". |
+| `revue [open] [git-diff args]` | Open the browser on that diff and print the login link. When a tab is already open on that diff, no new tab opens: that tab shows a notification that brings it forward (the page asks for the permission the first time). `--no-browser` only prints. A bad argument fails here, with git's message. An empty diff opens as "No changes". |
 | `revue url` | Print a login link for the default diff. |
 | `revue serve` | Run the server in the foreground, as the entry point of a container or a service. On a laptop nobody types it: every other command starts the server in the background, and it stops after 30 minutes idle. |
 | `revue servers [--json]` | List the running servers, one per repository, with the repository, port, PID, and URL. It starts no server. |

@@ -42,6 +42,16 @@ func BuildStamp() string {
 	if err != nil {
 		return "unknown"
 	}
+	return stampOf(exe)
+}
+
+// stampOf resolves symlinks first: a binary run through a link on PATH
+// and the same binary run by its own path must not replace each
+// other's server.
+func stampOf(exe string) string {
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
 	info, err := os.Stat(exe)
 	if err != nil {
 		return exe
@@ -87,6 +97,8 @@ type Server struct {
 	views     *views
 	bus       *bus
 	activity  *activity
+	// raise brings the browser to the front; tests replace it.
+	raise func() error
 
 	http    *http.Server
 	ln      net.Listener
@@ -268,6 +280,7 @@ func Start(cfg Config) (*Server, error) {
 		repoName:  gitx.RepoName(cfg.RepoRoot),
 		token:     token,
 		build:     cfg.BuildStamp,
+		raise:     raiseDefaultBrowser,
 		publicURL: publicURL,
 		views:     newViews(),
 		bus:       newBus(),

@@ -704,3 +704,58 @@ describe("DiffPage viewed files", () => {
     expect(card()).toHaveAttribute("data-collapsed", "true");
   });
 });
+
+describe("DiffPage focus notice", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it("asks for notifications when it cannot bring the tab forward", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    vi.stubGlobal(
+      "Notification",
+      Object.assign(vi.fn(), { permission: "default", requestPermission }),
+    );
+    renderPage();
+    await screen.findByRole("button", { name: "select-line" });
+
+    pushEvent({ type: "focus", payload: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    expect(requestPermission).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Allow" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(api.listThreads).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises a notification once permitted", async () => {
+    const shown: string[] = [];
+    vi.stubGlobal(
+      "Notification",
+      Object.assign(
+        function (this: object, title: string) {
+          shown.push(title);
+        },
+        { permission: "granted" },
+      ),
+    );
+    renderPage();
+    await screen.findByRole("button", { name: "select-line" });
+
+    pushEvent({ type: "focus", payload: null });
+    expect(shown).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+});

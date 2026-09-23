@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -181,6 +182,40 @@ func TestOpenPrintsALoginLinkForTheDiff(t *testing.T) {
 	}
 	if len(h.opened) != 1 || h.opened[0] != link {
 		t.Errorf("browser opened with %v, want %q", h.opened, link)
+	}
+}
+
+func TestOpenFocusesAPageAlreadyOnTheDiff(t *testing.T) {
+	h := newHarness(t)
+	req, _ := http.NewRequest("GET", h.srv.URL()+"/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+h.srv.Token())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// The first frame means the stream is registered with the server.
+	if _, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _ := h.run(h.cmdOpen); code != ExitOK {
+		t.Fatalf("open: exit %d, stderr %q", code, h.errOut.String())
+	}
+	if len(h.opened) != 0 {
+		t.Errorf("open with a page on the diff opened %v, want no new tab", h.opened)
+	}
+	if !strings.Contains(h.errOut.String(), "already open") {
+		t.Errorf("stderr = %q, want a note that the page is already open", h.errOut.String())
+	}
+
+	// Another diff has no page, so it gets a tab.
+	h.modify(v2)
+	if code, _ := h.run(h.cmdOpen, "--", "main.go"); code != ExitOK {
+		t.Fatalf("open -- main.go: exit %d", code)
+	}
+	if len(h.opened) != 1 {
+		t.Errorf("open on another diff opened %v, want one tab", h.opened)
 	}
 }
 

@@ -76,12 +76,30 @@ func (e *env) cmdOpen(args []string) int {
 	}
 	link := e.state.AuthURL(pagePath(diffArgs))
 	_, _ = fmt.Fprintln(e.stdout, link)
-	if !*noBrowser {
-		if err := e.openURL(link); err != nil {
-			_, _ = fmt.Fprintln(e.stderr, "could not open a browser:", err)
-		}
+	if *noBrowser {
+		return ExitOK
+	}
+	if e.focusOpenPage(diffArgs) {
+		_, _ = fmt.Fprintln(e.stderr, "revue is already open on this diff; its tab shows a notification that brings it forward.")
+		return ExitOK
+	}
+	if err := e.openURL(link); err != nil {
+		_, _ = fmt.Fprintln(e.stderr, "could not open a browser:", err)
 	}
 	return ExitOK
+}
+
+// focusOpenPage asks the pages already open on the diff to bring
+// themselves forward, and reports whether there was one. Any failure
+// reads as none, so the caller opens a tab as before.
+func (e *env) focusOpenPage(diffArgs []string) bool {
+	var out struct {
+		Pages int `json:"pages"`
+	}
+	if err := e.client.do("POST", "/api/focus"+argsQuery(diffArgs), nil, &out); err != nil {
+		return false
+	}
+	return out.Pages > 0
 }
 
 // splitAtDoubleDash separates the arguments before the first bare "--"

@@ -20,6 +20,8 @@ var refreshInterval = 500 * time.Millisecond
 // store anything: the capture is recomputed when the fingerprint moves.
 type view struct {
 	args []string
+	// pages wakes the event streams of the pages showing this diff.
+	pages *bus
 
 	mu          sync.Mutex
 	checked     time.Time
@@ -67,7 +69,7 @@ func (vs *views) get(args []string) (*view, error) {
 	defer vs.mu.Unlock()
 	v := vs.byKey[key]
 	if v == nil {
-		v = &view{args: append([]string{}, args...)}
+		v = &view{args: append([]string{}, args...), pages: newBus()}
 		vs.byKey[key] = v
 	}
 	return v, nil
