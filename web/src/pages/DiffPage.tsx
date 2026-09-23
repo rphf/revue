@@ -224,6 +224,26 @@ export default function DiffPage({
     loadThreads();
   });
 
+  // A viewed file collapses to its header, like on GitHub. The arrow in
+  // a header overrides that either way, and so does a jump into the file
+  // (a thread, the tree), which opens it; ticking the box drops the
+  // override, so the file follows its viewed state again.
+  const [collapseOverride, setCollapseOverride] = useState<
+    ReadonlyMap<string, boolean>
+  >(new Map());
+  const collapsed = useMemo(() => {
+    const next = new Set(viewed);
+    for (const [path, isCollapsed] of collapseOverride) {
+      if (isCollapsed) next.add(path);
+      else next.delete(path);
+    }
+    return next;
+  }, [viewed, collapseOverride]);
+  const overrideCollapse = useCallback((path: string, value: boolean) => {
+    setCollapseOverride((prev) =>
+      prev.get(path) === value ? prev : new Map(prev).set(path, value),
+    );
+  }, []);
   const toggleViewed = useCallback((path: string) => {
     setViewed((prev) => {
       const next = new Set(prev);
@@ -231,13 +251,46 @@ export default function DiffPage({
       else next.add(path);
       return next;
     });
+    setCollapseOverride((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Map(prev);
+      next.delete(path);
+      return next;
+    });
   }, []);
+  const toggleCollapsed = useCallback(
+    (path: string) => overrideCollapse(path, !collapsed.has(path)),
+    [collapsed, overrideCollapse],
+  );
 
   const diffViewRef = useRef<DiffViewHandle>(null);
-  const scrollToFile = useCallback((path: string) => {
-    setSelectedPath(path);
-    diffViewRef.current?.scrollToFile(path);
-  }, []);
+  // A jump runs after the render that opens its file, so it scrolls
+  // through the file's expanded layout.
+  const [jump, setJump] = useState<{
+    path: string;
+    side?: Side;
+    line?: number;
+  } | null>(null);
+  const reveal = useCallback(
+    (target: NonNullable<typeof jump>) => {
+      overrideCollapse(target.path, false);
+      setJump(target);
+    },
+    [overrideCollapse],
+  );
+  useEffect(() => {
+    if (!jump) return;
+    if (jump.side !== undefined && jump.line !== undefined)
+      diffViewRef.current?.scrollToLine(jump.path, jump.side, jump.line);
+    else diffViewRef.current?.scrollToFile(jump.path);
+  }, [jump]);
+  const scrollToFile = useCallback(
+    (path: string) => {
+      setSelectedPath(path);
+      reveal({ path });
+    },
+    [reveal],
+  );
 
   const diffFiles = useMemo(() => diff?.files ?? [], [diff]);
   const lineTotals = useMemo(() => {
@@ -419,16 +472,16 @@ export default function DiffPage({
       if (position?.state === "live") {
         setSnapshotId(null);
         setSelectedPath(position.path);
-        diffViewRef.current?.scrollToLine(
-          position.path,
-          position.side,
-          position.line,
-        );
+        reveal({
+          path: position.path,
+          side: position.side,
+          line: position.line,
+        });
       } else {
         setSnapshotId(thread.id);
       }
     },
-    [],
+    [reveal],
   );
   const openSnapshot = useCallback((id: number) => {
     setSnapshotId(id);
@@ -640,6 +693,10 @@ export default function DiffPage({
                       richByFile={richByFile}
                       onToggleRich={toggleRich}
                       imageUrl={imageUrl}
+                      viewed={viewed}
+                      onToggleViewed={toggleViewed}
+                      collapsed={collapsed}
+                      onToggleCollapsed={toggleCollapsed}
                     />
                   )}
                 </ResizablePanel>

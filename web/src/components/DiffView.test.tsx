@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { DiffFile } from "../types";
@@ -10,17 +10,21 @@ import type { DiffFile } from "../types";
 interface StubItem {
   id: string;
   type: "diff" | "file";
+  version?: number;
+  collapsed?: boolean;
   annotations?: unknown[];
 }
 vi.mock("@pierre/diffs/react", () => ({
   CodeView: ({
     items,
     renderAnnotation,
+    renderHeaderPrefix,
     renderHeaderMetadata,
     className,
   }: {
     items: StubItem[];
     renderAnnotation?: (a: unknown, item: StubItem) => React.ReactNode;
+    renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
     renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
     className?: string;
   }) => (
@@ -29,7 +33,10 @@ vi.mock("@pierre/diffs/react", () => ({
         <div
           key={item.id}
           data-testid={`${item.type === "diff" ? "filediff" : "fileitem"}-${item.id}`}
+          data-collapsed={item.collapsed ? "true" : undefined}
+          data-version={item.version}
         >
+          {renderHeaderPrefix?.(item)}
           {item.id}
           {renderHeaderMetadata?.(item)}
           {item.annotations?.map((a, i) => (
@@ -222,5 +229,73 @@ describe("DiffView ordering", () => {
       "binary-src/img.png",
       "filediff-zz.go",
     ]);
+  });
+});
+
+describe("DiffView viewed files", () => {
+  it("puts a Viewed checkbox in every file header, binary files included", () => {
+    const onToggleViewed = vi.fn();
+    render(
+      <DiffView
+        files={[meta("a.go")]}
+        diffFiles={[
+          diffFile("a.go"),
+          diffFile("img.png", { isBinary: true, status: "added" }),
+        ]}
+        diffStyle="unified"
+        theme="light"
+        viewed={new Set(["a.go"])}
+        onToggleViewed={onToggleViewed}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+    const binary = screen.getByRole("checkbox", { name: "Viewed img.png" });
+    expect(binary).not.toBeChecked();
+    fireEvent.click(binary);
+    expect(onToggleViewed).toHaveBeenCalledWith("img.png");
+  });
+
+  it("collapses the files it is told to, with a new item version each time", () => {
+    const props = {
+      files: [meta("a.go"), meta("b.go")],
+      diffFiles: [diffFile("a.go"), diffFile("b.go")],
+      diffStyle: "unified" as const,
+      theme: "light" as const,
+    };
+    const { rerender } = render(<DiffView {...props} />);
+    const a = () => screen.getByTestId("filediff-a.go");
+    const b = () => screen.getByTestId("filediff-b.go");
+    expect(a()).toHaveAttribute("data-version", "0");
+
+    rerender(<DiffView {...props} collapsed={new Set(["a.go"])} />);
+    expect(a()).toHaveAttribute("data-collapsed", "true");
+    expect(a()).toHaveAttribute("data-version", "1");
+    expect(b()).not.toHaveAttribute("data-collapsed");
+    expect(b()).toHaveAttribute("data-version", "0");
+
+    rerender(<DiffView {...props} collapsed={new Set()} />);
+    expect(a()).not.toHaveAttribute("data-collapsed");
+    expect(a()).toHaveAttribute("data-version", "2");
+  });
+
+  it("puts an arrow before the file name that reports its collapsed state", () => {
+    const onToggleCollapsed = vi.fn();
+    render(
+      <DiffView
+        files={[meta("a.go"), meta("b.go")]}
+        diffFiles={[diffFile("a.go"), diffFile("b.go")]}
+        diffStyle="unified"
+        theme="light"
+        collapsed={new Set(["a.go"])}
+        onToggleCollapsed={onToggleCollapsed}
+      />,
+    );
+    const expand = screen.getByRole("button", { name: "Expand a.go" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByRole("button", { name: "Collapse b.go" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(expand);
+    expect(onToggleCollapsed).toHaveBeenCalledWith("a.go");
   });
 });

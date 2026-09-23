@@ -221,7 +221,7 @@ export default function TopBar({
             <TooltipContent>
               {draftCount > 0
                 ? `Send ${draftCount} draft comment${draftCount === 1 ? "" : "s"} now`
-                : "Write a note to send"}
+                : "No drafts to send: opens the note to the agent"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

@@ -19,6 +19,8 @@ import {
 } from "@pierre/diffs/react";
 import {
   BookOpenTextIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CodeIcon,
   FileDiffIcon,
   UnfoldVerticalIcon,
@@ -28,6 +30,7 @@ import type { Theme } from "../theme";
 import { binarySummary, isImagePath } from "@/lib/binary";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   LAYOUT,
@@ -116,6 +119,11 @@ export interface DiffViewProps {
   onToggleRich?: (path: string) => void;
   // Where to load one side of an image file in this diff.
   imageUrl?: (path: string, side: "old" | "new") => string;
+  viewed?: ReadonlySet<string>;
+  onToggleViewed?: (path: string) => void;
+  // Files shown as their header only.
+  collapsed?: ReadonlySet<string>;
+  onToggleCollapsed?: (path: string) => void;
 }
 
 interface ItemMemo {
@@ -125,6 +133,7 @@ interface ItemMemo {
   // The rich variant's file object, kept across renders: the virtualizer
   // lays an item out from this object and refuses a different one later.
   richFile?: FileContents;
+  collapsed: boolean;
   version: number;
 }
 
@@ -140,6 +149,7 @@ const BINARY_CAPTION = "Binary file: no line diff.";
 interface BinaryMemo {
   file: FileContents;
   rev?: string;
+  collapsed: boolean;
   version: number;
 }
 
@@ -171,6 +181,10 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     richByFile,
     onToggleRich,
     imageUrl,
+    viewed,
+    onToggleViewed,
+    collapsed,
+    onToggleCollapsed,
   }: DiffViewProps,
   ref,
 ) {
@@ -236,6 +250,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     ].sort((a, b) => treePathCompare(a.path, b.path));
 
     return ordered.map(({ path, meta }) => {
+      const isCollapsed = collapsed?.has(path) ?? false;
       if (meta === null) {
         const binary = binaryByPath.get(path);
         const image =
@@ -261,11 +276,16 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           ? {
               ...prev,
               rev,
-              version: prev.rev === rev ? prev.version : prev.version + 1,
+              collapsed: isCollapsed,
+              version:
+                prev.rev === rev && prev.collapsed === isCollapsed
+                  ? prev.version
+                  : prev.version + 1,
             }
           : {
               file: { name: path, contents: BINARY_CAPTION, lang: "text" },
               rev,
+              collapsed: isCollapsed,
               version: 0,
             };
         binaryMemoRef.current.set(path, memo);
@@ -276,6 +296,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           annotations: image && [
             { lineNumber: 0, metadata: { kind: "image", rev, image } },
           ],
+          collapsed: isCollapsed,
           version: memo.version,
         } as CodeViewItem<AnnotationMeta>;
       }
@@ -299,6 +320,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         prev &&
         (prev.fileDiff !== meta ||
           prev.rich !== Boolean(richDoc) ||
+          prev.collapsed !== isCollapsed ||
           !annotationsEqual(prev.annotations, annotations))
       )
         version++;
@@ -314,6 +336,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         annotations,
         rich: Boolean(richDoc),
         richFile,
+        collapsed: isCollapsed,
         version,
       });
       if (richDoc && richFile) {
@@ -325,6 +348,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
             lineNumber,
             metadata,
           })),
+          collapsed: isCollapsed,
           version,
         } as CodeViewItem<AnnotationMeta>;
       }
@@ -333,10 +357,11 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         type: "diff",
         fileDiff: meta,
         annotations,
+        collapsed: isCollapsed,
         version,
       } as CodeViewItem<AnnotationMeta>;
     });
-  }, [files, binaryByPath, annotationsByFile, richByFile, imageUrl]);
+  }, [files, binaryByPath, annotationsByFile, richByFile, imageUrl, collapsed]);
 
   // The options object is stable across renders that do not change it,
   // as the library asks; a new object would re-configure the viewer.
@@ -406,17 +431,51 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           pathFromItemId(item.id),
         );
       }}
+      renderHeaderPrefix={
+        onToggleCollapsed &&
+        ((item) => {
+          const path = pathFromItemId(item.id);
+          const isCollapsed = collapsed?.has(path) ?? false;
+          return (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="-ml-1 text-muted-foreground hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground aria-expanded:hover:bg-muted aria-expanded:hover:text-foreground"
+              aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${path}`}
+              aria-expanded={!isCollapsed}
+              onClick={() => onToggleCollapsed(path)}
+            >
+              {isCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+            </Button>
+          );
+        })
+      }
       renderHeaderMetadata={(item) => {
         const path = pathFromItemId(item.id);
+        const viewedToggle = onToggleViewed && (
+          <label className="flex h-6 cursor-pointer items-center gap-1.5 rounded-[min(var(--radius-md),10px)] px-2 font-sans text-xs font-medium text-muted-foreground transition-colors select-none hover:bg-muted hover:text-foreground has-data-checked:text-foreground dark:hover:bg-muted/50">
+            <Checkbox
+              className="size-3.5 [&_svg]:size-3!"
+              checked={viewed?.has(path) ?? false}
+              onCheckedChange={() => onToggleViewed(path)}
+              aria-label={`Viewed ${path}`}
+            />
+            Viewed
+          </label>
+        );
         const binary = binaryByPath.get(path);
         if (binary) {
           return (
-            <span
-              className="font-sans text-xs text-muted-foreground"
-              data-testid={`binary-${path}`}
-            >
-              {binarySummary(binary.oldSize, binary.newSize) ||
-                `Binary file (${binary.status})`}
+            <span className="flex items-center gap-1 font-sans">
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid={`binary-${path}`}
+              >
+                {binarySummary(binary.oldSize, binary.newSize) ||
+                  `Binary file (${binary.status})`}
+              </span>
+              {viewedToggle}
             </span>
           );
         }
@@ -449,6 +508,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
             )}
             {item.type === "diff" &&
               item.fileDiff.isPartial &&
+              !collapsed?.has(path) &&
               onExpandContext && (
                 <Button
                   type="button"
@@ -462,6 +522,7 @@ export default forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
                   Expand context
                 </Button>
               )}
+            {viewedToggle}
           </span>
         );
       }}

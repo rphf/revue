@@ -15,13 +15,16 @@ import type { Comment, DiffResponse, Thread } from "../types";
 // so threads flow through the same path as in the browser. Annotation
 // containers are keyed by item version, so a changed file remounts
 // them the way the real virtualizer does. Like the real one, the stub
-// keeps an item it has seen until its version changes.
+// keeps an item it has seen until its version changes. Each scrollTo is
+// recorded with whether its item was collapsed at that moment.
 interface StubItem {
   id: string;
   type: "diff" | "file";
   version?: number;
+  collapsed?: boolean;
   annotations?: DiffLineAnnotation<AnnotationMeta>[];
 }
+const scrolls: { id: string; type: string; collapsed?: boolean }[] = [];
 interface StubOptions {
   onGutterUtilityClick?: (
     range: { start: number; end: number; side: string },
@@ -29,18 +32,24 @@ interface StubOptions {
   ) => void;
 }
 vi.mock("@pierre/diffs/react", async () => {
-  const { useRef } = await import("react");
+  const { useImperativeHandle, useRef } = await import("react");
   const CodeView = ({
+    ref,
     items: next,
     options,
     renderAnnotation,
+    renderHeaderPrefix,
+    renderHeaderMetadata,
   }: {
+    ref?: React.Ref<unknown>;
     items: StubItem[];
     options: StubOptions;
     renderAnnotation?: (
       a: DiffLineAnnotation<AnnotationMeta>,
       item: StubItem,
     ) => React.ReactNode;
+    renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
+    renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
   }) => {
     const seen = useRef(new Map<string, StubItem>());
     const items = next.map((item) => {
@@ -49,6 +58,11 @@ vi.mock("@pierre/diffs/react", async () => {
       seen.current.set(item.id, item);
       return item;
     });
+    useImperativeHandle(ref, () => ({
+      scrollTo: (t: { id: string; type: string }) =>
+        scrolls.push({ ...t, collapsed: seen.current.get(t.id)?.collapsed }),
+      getInstance: () => null,
+    }));
     return (
       <div>
         <button
@@ -66,7 +80,10 @@ vi.mock("@pierre/diffs/react", async () => {
           <div
             key={`${item.id}:${item.version ?? 0}`}
             data-testid={`filediff-${item.id}`}
+            data-collapsed={item.collapsed ? "true" : undefined}
           >
+            {renderHeaderPrefix?.(item)}
+            {renderHeaderMetadata?.(item)}
             {item.annotations?.map((a, i) => (
               <div
                 key={i}
@@ -207,6 +224,14 @@ describe("DiffPage send", () => {
     fireEvent.click(sendNow);
     await waitFor(() => expect(api.send).toHaveBeenCalledWith(""));
     expect(screen.queryByTestId("send-composer")).not.toBeInTheDocument();
+  });
+
+  it("opens the composer from Send when there are no drafts, without sending", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    renderPage();
+    fireEvent.click(await screen.findByTestId("send-now"));
+    expect(await screen.findByTestId("send-composer")).toBeInTheDocument();
+    expect(api.send).not.toHaveBeenCalled();
   });
 
   it("opens the threads panel on the composer to send with a note", async () => {
@@ -461,5 +486,83 @@ describe("DiffPage live updates", () => {
         "please rename this",
       ),
     );
+  });
+});
+
+describe("DiffPage viewed files", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    scrolls.length = 0;
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("collapses a file ticked as viewed in its header, and a jump to a thread in it opens it", async () => {
+    renderPage();
+    const box = await screen.findByRole("checkbox", { name: "Viewed a.go" });
+    expect(screen.getByTestId("filediff-a.go")).not.toHaveAttribute(
+      "data-collapsed",
+    );
+
+    fireEvent.click(box);
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+    expect(screen.getByTestId("filediff-a.go")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).not.toHaveAttribute(
+        "data-collapsed",
+      ),
+    );
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+    expect(scrolls.filter((s) => s.type === "line")).toEqual([
+      expect.objectContaining({ id: "a.go", collapsed: false }),
+    ]);
+
+    // Unticking and ticking again collapses it once more.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    expect(screen.getByTestId("filediff-a.go")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+  });
+
+  it("collapses and expands any file from the arrow in its header", async () => {
+    renderPage();
+    const card = () => screen.getByTestId("filediff-a.go");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Collapse a.go" }),
+    );
+    expect(card()).toHaveAttribute("data-collapsed", "true");
+    expect(
+      screen.getByRole("checkbox", { name: "Viewed a.go" }),
+    ).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand a.go" }));
+    expect(card()).not.toHaveAttribute("data-collapsed");
+
+    // A viewed file opened from its arrow stays viewed; ticking the box
+    // again follows the viewed state and collapses it.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    expect(card()).toHaveAttribute("data-collapsed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Expand a.go" }));
+    expect(card()).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    expect(card()).toHaveAttribute("data-collapsed", "true");
   });
 });
