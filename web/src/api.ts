@@ -88,6 +88,7 @@ export const api = {
       `/api/threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
       {},
     ),
+  listSends: () => request<{ sends: Send[] }>("GET", "/api/sends"),
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
 };

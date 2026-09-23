@@ -10,6 +10,7 @@ import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
 import type {
   DiffResponse,
+  Send,
   Side,
   Thread as ThreadType,
   ThreadPosition,
@@ -34,6 +35,7 @@ import { FocusedThreadContext } from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { useRichDocs } from "@/lib/richDiff";
+import { groupByRound } from "@/lib/rounds";
 import { threadRev } from "@/lib/threads";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,6 +112,7 @@ export default function DiffPage({
   const [load, setLoad] = useState<DiffLoad | null>(null);
   const [fetchNonce, setFetchNonce] = useState(0);
   const [threads, setThreads] = useState<ThreadType[]>([]);
+  const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
   const [showSend, setShowSend] = useState(false);
@@ -150,15 +153,18 @@ export default function DiffPage({
     panelIds: ["tree", "diff"],
   });
 
+  // Threads and the sends that group them into rounds load together,
+  // so a Send never shows its threads under the wrong round.
   const loadThreads = useCallback(() => {
-    api
-      .listThreads()
-      .then((r) => {
-        setThreads(r.threads);
+    Promise.all([api.listThreads(), api.listSends()])
+      .then(([t, s]) => {
+        setThreads(t.threads);
+        setSends(s.sends);
         setThreadsError(null);
       })
       .catch((e) => setThreadsError(String(e)));
   }, []);
+  const rounds = useMemo(() => groupByRound(threads, sends), [threads, sends]);
   useEffect(loadThreads, [loadThreads]);
 
   // The diff on screen, refetched whenever the server says it moved.
@@ -427,10 +433,12 @@ export default function DiffPage({
   // back meanwhile.
   const outdated = useMemo(
     () =>
-      threads.filter(
-        (t) => positions.get(t.id)?.state !== "live" || t.id === snapshotId,
-      ),
-    [threads, positions, snapshotId],
+      rounds
+        .flatMap((r) => r.threads)
+        .filter(
+          (t) => positions.get(t.id)?.state !== "live" || t.id === snapshotId,
+        ),
+    [rounds, positions, snapshotId],
   );
   const snapshotIndex = outdated.findIndex((t) => t.id === snapshotId);
   const snapshotThread = snapshotIndex >= 0 ? outdated[snapshotIndex] : null;
@@ -616,7 +624,7 @@ export default function DiffPage({
                   className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
                 >
                   <ThreadsPanel
-                    threads={threads}
+                    rounds={rounds}
                     positions={positions}
                     onJump={jumpToThread}
                     activeId={snapshotThread?.id ?? focusedId}

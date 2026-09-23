@@ -529,6 +529,24 @@ func (s *Store) LastSend() (*Send, error) {
 	return sd, err
 }
 
+// ListSends returns every send, oldest first.
+func (s *Store) ListSends() ([]*Send, error) {
+	rows, err := s.q.Query("SELECT " + sendCols + " FROM sends ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	sends := []*Send{}
+	for rows.Next() {
+		sd, err := scanSend(rows)
+		if err != nil {
+			return nil, err
+		}
+		sends = append(sends, sd)
+	}
+	return sends, rows.Err()
+}
+
 // --- Events ---
 
 // AppendEvent appends to the monotonic event log and returns the

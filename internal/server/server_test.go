@@ -586,6 +586,23 @@ func TestSendWithNothingIsRefusedAndNoteAloneIsNot(t *testing.T) {
 	}
 }
 
+func TestSendsListEverySendOldestFirst(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	var out struct {
+		Sends []*store.Send `json:"sends"`
+	}
+	ts.mustStatus(t, ts.do(t, "GET", "/api/sends", nil, &out), http.StatusOK)
+	if out.Sends == nil || len(out.Sends) != 0 {
+		t.Fatalf("sends before any send = %+v", out.Sends)
+	}
+	first := ts.send(t, "first")
+	second := ts.send(t, "second")
+	ts.mustStatus(t, ts.do(t, "GET", "/api/sends", nil, &out), http.StatusOK)
+	if len(out.Sends) != 2 || out.Sends[0].ID != first.ID || out.Sends[1].ID != second.ID || out.Sends[1].Note != "second" {
+		t.Errorf("sends = %+v", out.Sends)
+	}
+}
+
 func TestSinceReplayReturnsExactlyMissedEvents(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)

@@ -45,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/comments/{id}", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/comments/{id}", s.handleDeleteComment)
 	mux.HandleFunc("POST /api/send", s.handleSend)
+	mux.HandleFunc("GET /api/sends", s.handleListSends)
 	mux.HandleFunc("GET /api/feedback", s.handleFeedback)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/wait", s.handleWait)
@@ -559,6 +560,17 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	s.bus.notify()
 	writeJSON(w, http.StatusCreated, map[string]any{"send": send, "threads": published})
+}
+
+// handleListSends lists every send, oldest first, so the reviewer's
+// UI can group threads by the round they were last active in.
+func (s *Server) handleListSends(w http.ResponseWriter, r *http.Request) {
+	sends, err := s.store.ListSends()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sends": sends})
 }
 
 // handleFeedback is the agent's cursor read: events since the cursor

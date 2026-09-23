@@ -243,6 +243,26 @@ func TestSendRefusesNothing(t *testing.T) {
 	}
 }
 
+func TestListSendsOldestFirst(t *testing.T) {
+	s, _ := openTemp(t)
+	sends, err := s.ListSends()
+	if err != nil || len(sends) != 0 {
+		t.Fatalf("ListSends before any send = %+v, %v", sends, err)
+	}
+	for _, note := range []string{"first", "second"} {
+		if _, err := s.Send(note); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sends, err = s.ListSends()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sends) != 2 || sends[0].Note != "first" || sends[1].Note != "second" || sends[0].ID >= sends[1].ID {
+		t.Errorf("ListSends = %+v", sends)
+	}
+}
+
 func TestDraftEditAndDeleteRules(t *testing.T) {
 	s, _ := openTemp(t)
 	th, c := mustThread(t, s, mainThread(4), RoleReviewer, "first", true)

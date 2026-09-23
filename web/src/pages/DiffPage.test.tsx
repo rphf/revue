@@ -95,6 +95,7 @@ vi.mock("../api", () => ({
   api: {
     getDiff: vi.fn(),
     listThreads: vi.fn(),
+    listSends: vi.fn(() => Promise.resolve({ sends: [] })),
     getDiffFile: vi.fn(() => new Promise(() => {})),
     getSnapshot: vi.fn(),
     assetUrl: (path: string) => `/api/asset?path=${path}`,
