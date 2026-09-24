@@ -3,7 +3,7 @@ import { authenticate } from "./helpers/seed";
 
 // The button in the top bar collapses the file tree to nothing and
 // opens it back to the width it had; the choice survives a reload.
-// Dragging its edge does the same.
+// Dragging its edge and ⌘B do the same.
 test("the file tree collapses and opens back to its width", async ({
   page,
 }) => {
@@ -39,4 +39,18 @@ test("the file tree collapses and opens back to its width", async ({
   await page.mouse.up();
   await expect.poll(async () => (await tree.boundingBox())?.width).toBe(0);
   await expect(page.getByRole("button", { name: "Show files" })).toBeVisible();
+
+  // ⌘B toggles it from the keyboard and ⌘I the threads, from inside a
+  // text box too. The device's user agent is not a Mac's, so the page
+  // expects Ctrl.
+  await page.keyboard.press("Control+b");
+  await expect(page.getByRole("button", { name: "Hide files" })).toBeVisible();
+  await page.keyboard.press("Control+i");
+  const note = page.getByLabel("Note to the agent");
+  await note.fill("typing");
+  await note.press("Control+b");
+  await expect(page.getByRole("button", { name: "Show files" })).toBeVisible();
+  await expect(note).toHaveValue("typing");
+  await note.press("Control+i");
+  await expect(note).not.toBeVisible();
 });

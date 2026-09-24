@@ -43,6 +43,7 @@ import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { notifyPermission, requestAttention } from "@/lib/attention";
 import { keyForArgs } from "@/lib/diffArgs";
+import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
 import { groupByRound } from "@/lib/rounds";
@@ -253,6 +254,21 @@ export default function DiffPage({
     setShowTree(open);
     saveTreeOpen(open);
   }, []);
+
+  // ⌘B toggles the tree, like the side bar in editors, and ⌘I the
+  // threads. They work from inside a comment box too, as in an editor.
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => {
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "b") toggleTree();
+      else if (key === "i") togglePanel();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, [toggleTree, togglePanel]);
 
   // Threads and the sends that group them into rounds load together,
   // so a Send never shows its threads under the wrong round. Calls

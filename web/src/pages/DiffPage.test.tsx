@@ -326,6 +326,21 @@ describe("DiffPage live updates", () => {
     );
   });
 
+  it("toggles the threads panel with the I shortcut", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(window, { key: "i", ctrlKey: true, metaKey: true });
+    expect(
+      await screen.findByRole("button", { name: "Hide threads" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "i", ctrlKey: true, metaKey: true });
+    expect(
+      await screen.findByRole("button", { name: "Show threads" }),
+    ).toBeInTheDocument();
+  });
+
   it("outlines a live thread jumped to from the panel", async () => {
     renderPage();
     await waitFor(() =>

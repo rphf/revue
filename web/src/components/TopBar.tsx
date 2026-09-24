@@ -10,8 +10,10 @@ import {
 } from "lucide-react";
 import type { Theme } from "../theme";
 import type { DiffStyle } from "./DiffView";
+import { IS_MAC } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -90,6 +92,15 @@ function LiveDot({ pulse }: { pulse: number }) {
   );
 }
 
+function Shortcut({ letter }: { letter: string }) {
+  return (
+    <KbdGroup>
+      <Kbd>{IS_MAC ? "⌘" : "Ctrl"}</Kbd>
+      <Kbd>{letter}</Kbd>
+    </KbdGroup>
+  );
+}
+
 export interface TopBarProps {
   repo?: string;
   branch?: string;
@@ -149,7 +160,9 @@ export default function TopBar({
             <PanelLeftIcon />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Files</TooltipContent>
+        <TooltipContent>
+          Files <Shortcut letter="B" />
+        </TooltipContent>
       </Tooltip>
       <Brand />
       <Separator orientation="vertical" className="mx-1 h-5!" />
@@ -181,7 +194,9 @@ export default function TopBar({
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Threads</TooltipContent>
+          <TooltipContent>
+            Threads <Shortcut letter="I" />
+          </TooltipContent>
         </Tooltip>
 
         <ToggleGroup
