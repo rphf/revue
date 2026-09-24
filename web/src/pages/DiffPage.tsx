@@ -18,7 +18,11 @@ import type {
   ThreadPosition,
 } from "../types";
 import { CircleAlertIcon, XIcon } from "lucide-react";
-import { useDefaultLayout } from "react-resizable-panels";
+import {
+  type PanelSize,
+  useDefaultLayout,
+  usePanelRef,
+} from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import NotifyBanner from "../components/NotifyBanner";
@@ -71,6 +75,24 @@ interface DiffLoad {
 
 const DIFF_STYLE_KEY = "revue-diff-style";
 const DISMISSED_LANDED_KEY = "revue-landed-dismissed";
+const TREE_HIDDEN_KEY = "revue-tree-hidden";
+
+function loadTreeOpen(): boolean {
+  try {
+    return localStorage.getItem(TREE_HIDDEN_KEY) !== "1";
+  } catch {
+    return true;
+  }
+}
+
+function saveTreeOpen(open: boolean): void {
+  try {
+    if (open) localStorage.removeItem(TREE_HIDDEN_KEY);
+    else localStorage.setItem(TREE_HIDDEN_KEY, "1");
+  } catch {
+    // Not remembering the choice is fine.
+  }
+}
 
 function loadDismissedHead(): string {
   try {
@@ -203,6 +225,34 @@ export default function DiffPage({
     onlySaveAfterUserInteractions: true,
     panelIds: ["tree", "diff"],
   });
+
+  // The tree collapses rather than unmounts, from the top bar or by
+  // dragging it below its minimum. A collapse from the button is not a
+  // drag, so the layout store skips it and the choice is kept apart; a
+  // tree hidden at load opens back to its last stored width.
+  const treeRef = usePanelRef();
+  const [showTree, setShowTree] = useState(loadTreeOpen);
+  const [initialMainLayout] = useState(() => {
+    const stored = mainLayout.defaultLayout;
+    if (!showTree) return { tree: 0, diff: 100 };
+    return stored?.tree ? stored : undefined;
+  });
+  const storedTree = mainLayout.defaultLayout?.tree;
+  const treeOpenSize = useRef<string | number>(
+    storedTree ? `${storedTree}%` : 272,
+  );
+  const toggleTree = useCallback(() => {
+    const panel = treeRef.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) panel.resize(treeOpenSize.current);
+    else panel.collapse();
+  }, [treeRef]);
+  const onTreeResize = useCallback((size: PanelSize) => {
+    const open = size.asPercentage > 0;
+    if (open) treeOpenSize.current = `${size.asPercentage}%`;
+    setShowTree(open);
+    saveTreeOpen(open);
+  }, []);
 
   // Threads and the sends that group them into rounds load together,
   // so a Send never shows its threads under the wrong round. Calls
@@ -791,6 +841,8 @@ export default function DiffPage({
             threadCount={threads.length}
             panelOpen={showPanel}
             onTogglePanel={togglePanel}
+            treeOpen={showTree}
+            onToggleTree={toggleTree}
             draftCount={draftCount}
             onSendNow={sendNow}
             onCompose={openComposer}
@@ -852,11 +904,14 @@ export default function DiffPage({
               <ResizablePanelGroup
                 orientation="horizontal"
                 id="main-panes"
-                defaultLayout={mainLayout.defaultLayout}
+                defaultLayout={initialMainLayout}
                 onLayoutChanged={mainLayout.onLayoutChanged}
               >
                 <ResizablePanel
                   id="tree"
+                  panelRef={treeRef}
+                  onResize={onTreeResize}
+                  collapsible
                   defaultSize={272}
                   minSize={200}
                   maxSize="40"
@@ -872,7 +927,11 @@ export default function DiffPage({
                     selectedPath={selectedPath}
                   />
                 </ResizablePanel>
-                <ResizableHandle />
+                {/* A collapsed tree leaves no line; its edge can still
+                    be dragged to open it. */}
+                <ResizableHandle
+                  className={showTree ? undefined : "bg-transparent"}
+                />
                 <ResizablePanel
                   id="diff"
                   minSize={360}

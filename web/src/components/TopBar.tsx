@@ -4,6 +4,7 @@ import {
   Columns2Icon,
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
+  PanelLeftIcon,
   Rows3Icon,
   SendIcon,
 } from "lucide-react";
@@ -98,6 +99,8 @@ export interface TopBarProps {
   threadCount: number;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  treeOpen: boolean;
+  onToggleTree: () => void;
   draftCount: number;
   // Sends the drafts at once, without a note.
   onSendNow: () => void;
@@ -121,6 +124,8 @@ export default function TopBar({
   threadCount,
   panelOpen,
   onTogglePanel,
+  treeOpen,
+  onToggleTree,
   draftCount,
   onSendNow,
   onCompose,
@@ -132,6 +137,20 @@ export default function TopBar({
 }: TopBarProps) {
   return (
     <TopBarShell>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={treeOpen ? "secondary" : "ghost"}
+            size="icon-sm"
+            aria-label={`${treeOpen ? "Hide" : "Show"} files`}
+            aria-pressed={treeOpen}
+            onClick={onToggleTree}
+          >
+            <PanelLeftIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Files</TooltipContent>
+      </Tooltip>
       <Brand />
       <Separator orientation="vertical" className="mx-1 h-5!" />
       {repo && (
