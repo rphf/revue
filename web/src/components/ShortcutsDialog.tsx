@@ -53,6 +53,12 @@ const SECTIONS: Section[] = [
         label: "Submit the comment, or send with the note",
       },
       { keys: [["Esc"]], label: "Cancel the comment" },
+      { keys: [[MOD, "E"]], label: "Code" },
+      { keys: [[MOD, "K"]], label: "Link" },
+      { keys: [[MOD, SHIFT, "."]], label: "Quote" },
+      { keys: [[MOD, SHIFT, "8"]], label: "Bulleted list" },
+      { keys: [[MOD, SHIFT, "7"]], label: "Numbered list" },
+      { keys: [[MOD, SHIFT, "P"]], label: "Switch between Write and Preview" },
     ],
   },
   {

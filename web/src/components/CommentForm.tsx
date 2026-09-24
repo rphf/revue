@@ -1,9 +1,9 @@
 import { useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
-import { Textarea } from "@/components/ui/textarea";
 import { IS_MAC } from "@/lib/platform";
 import { errorMessage } from "../api";
+import MarkdownEditor from "./MarkdownEditor";
 
 export interface CommentFormProps {
   initial?: string;
@@ -70,17 +70,17 @@ export default function CommentForm({
 
   return (
     <div className="w-full font-sans">
-      <Textarea
+      <MarkdownEditor
         value={body}
         placeholder={placeholder}
         autoFocus={autoFocus}
-        onChange={(e) => {
-          setBody(e.target.value);
-          onChange?.(e.target.value);
+        onValueChange={(next) => {
+          setBody(next);
+          onChange?.(next);
         }}
         onKeyDown={onKeyDown}
         rows={3}
-        className="min-h-18 bg-background text-sm"
+        className="max-h-[50vh] min-h-18 text-sm"
       />
       {error && (
         <p className="mt-1.5 text-xs text-destructive" role="alert">
@@ -88,7 +88,7 @@ export default function CommentForm({
         </p>
       )}
       <div className="mt-2 flex items-center justify-end gap-1.5">
-        <span className="mr-auto hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
+        <span className="mr-auto hidden items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground sm:inline-flex">
           <KbdGroup>
             <Kbd>{IS_MAC ? "⌘" : "Ctrl"}</Kbd>
             <Kbd>↵</Kbd>

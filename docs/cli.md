@@ -32,7 +32,7 @@ Agent commands print JSON on stdout, except `export`, which prints markdown.
 | Command | Effect |
 | --- | --- |
 | `revue feedback [--since C]` | Every unresolved thread of the current branch with its sent comments and the code it was written on, the reviewer's last send with its note, and the events after cursor C. The output carries the new `cursor`, and `landed`: the ids of threads whose code was committed but that are not archived yet. |
-| `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent. |
+| `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent, which suits a reply over several lines. The text is GitHub-flavored markdown, rendered as the README describes. |
 | `revue wait [--since C] [--timeout D]` | Block until the reviewer sends comments. The default timeout is 5m. |
 | `revue export` | Print the threads as markdown, grouped by file, with quoted code and every sent comment. Drafts are excluded. |
 | `revue archive --thread N [--thread M]` | Archive these threads. |

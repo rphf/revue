@@ -2,8 +2,8 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { SendIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
-import { Textarea } from "@/components/ui/textarea";
 import { IS_MAC } from "@/lib/platform";
+import MarkdownEditor from "./MarkdownEditor";
 
 export interface SendComposerProps {
   draftCount: number;
@@ -55,13 +55,13 @@ export default function SendComposer({
       className="grid shrink-0 gap-2 border-t bg-background p-3"
       data-testid="send-composer"
     >
-      <Textarea
+      <MarkdownEditor
         ref={ref}
         aria-label="Note to the agent"
         placeholder="Note to the agent, optional: “LGTM, commit and push”"
         className="max-h-[40vh] min-h-24 resize-none"
         value={note}
-        onChange={(e) => setNote(e.target.value)}
+        onValueChange={setNote}
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();

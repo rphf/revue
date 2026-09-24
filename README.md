@@ -36,7 +36,7 @@ Comments are drafts until you send them, all at once, with an optional note. The
 
 Threads belong to the branch they were written on. A commit ends the conversation the way a merge does on GitHub: the threads whose code it contains land, the page offers to archive them (or does it at once, if you turn that on), and History keeps them under that commit.
 
-Comment bodies are markdown. Links and images render, so an agent can point at a screenshot or a test report that it serves elsewhere. A markdown file in the diff has a rich view, like GitHub's: the rendered document with the changed paragraphs marked.
+Comment bodies are GitHub-flavored markdown, written in a box with Write and Preview tabs and a formatting toolbar. A newline is a line break, fenced code is highlighted by language, and tables, task lists, collapsible `<details>` sections, and GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, and the like) render as on GitHub. Links and images render too, so an agent can point at a screenshot or a test report that it serves elsewhere. A markdown file in the diff has a rich view, like GitHub's: the rendered document with the changed paragraphs marked.
 
 ## Documentation
 
