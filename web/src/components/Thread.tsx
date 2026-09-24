@@ -1,5 +1,7 @@
 import { useContext, useState } from "react";
 import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   BotIcon,
   CheckIcon,
   CircleCheckIcon,
@@ -23,13 +25,16 @@ export interface ThreadProps {
 
 // A comment thread: comments in order with author roles, draft
 // affordances (edit/delete before send), reply, and reviewer-only
-// resolve.
+// resolve and archive. An archived thread is read-only but for
+// bringing it back.
 export default function Thread({ thread, onChanged }: ThreadProps) {
   const [replying, setReplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const focused = useContext(FocusedThreadContext) === thread.id;
+  const archived = Boolean(thread.archivedAt);
+  const hasDraft = thread.comments.some((c) => c.draft);
 
   const run = (op: Promise<unknown>) =>
     op.then(
@@ -56,12 +61,20 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
       data-thread-id={thread.id}
       data-focused={focused || undefined}
     >
-      {thread.resolved && (
+      {(thread.resolved || archived) && (
         <div className="flex items-center gap-1.5 border-b px-3 py-1.5">
-          <Badge variant="outline" className="border-added/40 text-added">
-            <CheckIcon />
-            Resolved
-          </Badge>
+          {thread.resolved && (
+            <Badge variant="outline" className="border-added/40 text-added">
+              <CheckIcon />
+              Resolved
+            </Badge>
+          )}
+          {archived && (
+            <Badge variant="outline" className="text-muted-foreground">
+              <ArchiveIcon />
+              Archived
+            </Badge>
+          )}
         </div>
       )}
       <ul className="divide-y">
@@ -185,7 +198,17 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
         </p>
       )}
       <div className="flex flex-wrap items-center gap-1 border-t bg-muted/30 px-2 py-1.5">
-        {replying ? (
+        {archived ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => void run(api.unarchiveThread(thread.id))}
+          >
+            <ArchiveRestoreIcon />
+            Unarchive
+          </Button>
+        ) : replying ? (
           <div className="w-full p-1">
             <CommentForm
               placeholder="Reply"
@@ -219,6 +242,21 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
             >
               <CircleCheckIcon />
               {thread.resolved ? "Unresolve" : "Resolve"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={hasDraft}
+              title={
+                hasDraft
+                  ? "Send or delete the draft before archiving"
+                  : "Hide this thread; it stays in History"
+              }
+              onClick={() => void run(api.archiveThreads({ ids: [thread.id] }))}
+            >
+              <ArchiveIcon />
+              Archive
             </Button>
           </>
         )}

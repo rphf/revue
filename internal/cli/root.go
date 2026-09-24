@@ -44,17 +44,22 @@ Human commands:
                                 the servers of your other repositories
   revue update [--check]        replace this binary with the latest release and
                                 restart the running servers on it
+  revue prune [--dry-run]       remove the data of repositories that no longer exist
 
 Agent commands (JSON output; exit codes in docs/cli.md):
   feedback [--since C]            unresolved threads with quoted code, plus what happened since C
   reply --thread N -m TEXT        reply in a thread (reads stdin when -m is absent)
   wait [--since C] [--timeout D]  block until the reviewer sends
   export                          threads as markdown
+  archive --thread N | --landed | --resolved | --all
+                                  archive threads of this branch
+  unarchive --thread N            bring an archived thread back
 
 Exit codes: 0 ok, 1 error, 2 bad arguments or invalid request, 3 wait timed out
 
 Environment (read when a server starts; see docs/configuration.md):
-  REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR
+  REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR,
+  REVUE_ARCHIVE_RETENTION
 `
 
 // env carries everything a command needs, so tests can inject a
@@ -98,6 +103,8 @@ func Main(args []string) int {
 		return cmdStop(rest, os.Stdout, os.Stderr)
 	case "update":
 		return cmdUpdate(rest, os.Stdout, os.Stderr)
+	case "prune":
+		return cmdPrune(rest, os.Stdout, os.Stderr)
 	}
 
 	e, code := connect(os.Stdout, os.Stderr)
@@ -118,6 +125,10 @@ func Main(args []string) int {
 		return e.cmdWait(rest)
 	case "export":
 		return e.cmdExport(rest)
+	case "archive":
+		return e.cmdArchive(rest)
+	case "unarchive":
+		return e.cmdUnarchive(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		return ExitValidation
@@ -300,9 +311,18 @@ func cmdServe(args []string) int {
 	bind := fs.String("bind", os.Getenv("REVUE_BIND"), "listen address (default 127.0.0.1; $REVUE_BIND)")
 	port := fs.Int("port", envInt("REVUE_PORT"), "fixed listen port (default: recorded or ephemeral; $REVUE_PORT)")
 	publicURL := fs.String("public-url", os.Getenv("REVUE_PUBLIC_URL"), "browser-facing base URL ($REVUE_PUBLIC_URL)")
+	retentionFlag := fs.String("archive-retention", os.Getenv("REVUE_ARCHIVE_RETENTION"), "keep archived threads this long, 0 forever (default 90d; $REVUE_ARCHIVE_RETENTION)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return ExitValidation
+	}
+	retention := server.DefaultArchiveRetention
+	if *retentionFlag != "" {
+		var err error
+		if retention, err = server.ParseRetention(*retentionFlag); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return ExitValidation
+		}
 	}
 	repoRoot := *repo
 	if repoRoot == "" {
@@ -314,11 +334,12 @@ func cmdServe(args []string) int {
 		}
 	}
 	s, err := server.Start(server.Config{
-		RepoRoot:    repoRoot,
-		IdleTimeout: *idle,
-		Bind:        *bind,
-		Port:        *port,
-		PublicURL:   *publicURL,
+		RepoRoot:         repoRoot,
+		IdleTimeout:      *idle,
+		Bind:             *bind,
+		Port:             *port,
+		PublicURL:        *publicURL,
+		ArchiveRetention: retention,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

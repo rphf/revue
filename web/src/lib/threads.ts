@@ -11,3 +11,6 @@ export function threadRev(t: Thread): string {
 export function locationLabel(path: string, line: number): string {
   return line === 0 ? path : `${path}:${line}`;
 }
+
+// A branch by name, or what stands in for one on a detached HEAD.
+export const branchLabel = (name: string) => name || "(detached HEAD)";

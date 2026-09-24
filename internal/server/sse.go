@@ -134,6 +134,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-wake:
 			pending = true
 		case <-poll.C:
+			s.checkLanding()
 			changed, err := v.refresh(s.repoRoot, false)
 			if err != nil || !changed {
 				continue

@@ -15,6 +15,10 @@ These steps are written for an agent. Put them in the agent's instructions.
    shows as outdated on their side, with the old code one click away.
 6. Repeat from step 2 until the threads are resolved or the note says you
    are done. `revue feedback --since <cursor>` lists only what happened since.
+7. Commit when the note says so. A commit ends the round: the threads whose
+   code it contains land, `feedback` lists them under `landed`, and the
+   reviewer archives them from the page. `revue archive --landed` does the
+   same from the terminal when the reviewer asks you to.
 
 `revue wait --timeout 10m` is an alternative to step 3 for unattended runs. It
 returns as soon as the reviewer sends. A send that lands while no `wait` is

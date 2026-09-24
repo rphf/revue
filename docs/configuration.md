@@ -10,6 +10,7 @@ settings until it stops. Flags of `revue serve` override them.
 | `REVUE_PUBLIC_URL` | `http://127.0.0.1:<port>` | Base URL for the browser. It goes into printed links and is accepted as a request origin. |
 | `REVUE_IDLE_TIMEOUT` | `30m` | Quiet period before the server stops. `0` disables the shutdown. |
 | `REVUE_DATA_DIR` | XDG directories | One root for the database and the state file. For tests and scripts. |
+| `REVUE_ARCHIVE_RETENTION` | `90d` | How long archived threads stay before they are deleted: a number of days such as `30d`, a duration such as `720h`, or `0` to keep them forever. The branch history in the page lives on archived threads. |
 
 ## Run inside a container
 
@@ -52,3 +53,10 @@ repository path. Nothing is written inside the repository.
 | `~/.local/state/revue/<key>/server.log` | Server log |
 
 `XDG_DATA_HOME` and `XDG_STATE_HOME` move these roots.
+
+The database cleans itself. When the server starts, and once a day while it
+runs, it deletes the threads archived longer ago than
+`REVUE_ARCHIVE_RETENTION`, the events older than that, and the file snapshots
+no thread uses any more. At start it also rewrites the file when more than
+half of it is free space. `revue prune` removes the directories of
+repositories that no longer exist.

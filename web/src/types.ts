@@ -55,7 +55,56 @@ export interface Thread {
   resolved: boolean;
   createdAt: string;
   comments: Comment[];
+  // Where the thread was written: the branch ("" on a detached HEAD),
+  // HEAD, and the diff arguments. Empty for threads from before origins
+  // were recorded.
+  branch?: string;
+  head?: string;
+  args?: string[];
+  // Set once the thread left the views; the commit its code landed in.
+  archivedAt?: string;
+  archivedHead?: string;
 }
+
+// Threads whose code landed at HEAD but that are not archived yet.
+export interface Landed {
+  head: string;
+  threadIds: number[];
+}
+
+export interface Settings {
+  autoArchiveLanded: boolean;
+}
+
+// One commit of a branch's history with the threads that landed in it.
+export interface HistoryCommit {
+  hash: string;
+  subject: string;
+  date: string;
+  // False for a commit the branch no longer contains (rewritten by a
+  // rebase); missing for one the repository lost.
+  onBranch: boolean;
+  missing?: boolean;
+  threads: Thread[];
+}
+
+// A branch with threads, open or archived.
+export interface Branch {
+  name: string;
+  open: number;
+  archived: number;
+}
+
+export interface History {
+  branch: string;
+  current: string;
+  branches: { name: string; threads: number }[];
+  commits: HistoryCommit[];
+  more: boolean;
+}
+
+export type ArchiveSelector =
+  { ids: number[] } | { landed: true } | { resolved: true } | { all: true };
 
 export interface Send {
   id: number;

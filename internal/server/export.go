@@ -7,14 +7,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/rphf/revue/internal/store"
 )
 
 // handleExport renders the threads as markdown: grouped by file, each
 // with its quoted snapshot and every sent comment. Drafts stay out.
 func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
-	md, err := renderExport(s.store, filepath.Base(s.repoRoot))
+	views, err := s.threadViews(false, true, false)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	md := renderExport(views, filepath.Base(s.repoRoot))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -24,17 +27,12 @@ func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(md))
 }
 
-func renderExport(st *store.Store, repo string) (string, error) {
-	views, err := threadViews(st, false, true, false)
-	if err != nil {
-		return "", err
-	}
-
+func renderExport(views []*threadView, repo string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Threads in %s\n\n", repo)
 	if len(views) == 0 {
 		b.WriteString("No sent threads.\n")
-		return b.String(), nil
+		return b.String()
 	}
 	unresolved := 0
 	for _, v := range views {
@@ -54,7 +52,7 @@ func renderExport(st *store.Store, repo string) (string, error) {
 			writeThread(&b, v)
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 func writeThread(b *strings.Builder, v *threadView) {

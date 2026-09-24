@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiffLineAnnotation } from "@pierre/diffs";
@@ -125,6 +126,20 @@ vi.mock("../api", async (importOriginal) => ({
     deleteComment: vi.fn(),
     resolveThread: vi.fn(),
     send: vi.fn(),
+    getLanded: vi.fn(() => Promise.resolve({ head: "", threadIds: [] })),
+    getSettings: vi.fn(() => Promise.resolve({ autoArchiveLanded: false })),
+    putSettings: vi.fn((s: unknown) => Promise.resolve(s)),
+    archiveThreads: vi.fn(() =>
+      Promise.resolve({ archived: [], skipped: [], head: "" }),
+    ),
+    unarchiveThread: vi.fn(),
+    getHistory: vi.fn(),
+    getBranches: vi.fn(() =>
+      Promise.resolve({
+        current: "main",
+        branches: [{ name: "main", open: 1, archived: 0 }],
+      }),
+    ),
   },
 }));
 
@@ -780,5 +795,78 @@ describe("DiffPage focus notice", () => {
     pushEvent({ type: "focus", payload: null });
     expect(shown).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+  });
+});
+
+describe("DiffPage landed threads", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(makeDiff(1));
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
+    vi.mocked(api.getLanded).mockResolvedValue({
+      head: "c0ffee1234",
+      threadIds: [1],
+    });
+    try {
+      localStorage.removeItem("revue-landed-dismissed");
+    } catch {
+      // No storage: nothing to clear.
+    }
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  async function openPanel() {
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show threads" }),
+    );
+    return screen.findByTestId("landed-offer");
+  }
+
+  it("offers to archive what landed and archives it in one click", async () => {
+    const offer = await openPanel();
+    expect(offer).toHaveTextContent("1 thread landed in c0ffee1");
+    fireEvent.click(within(offer).getByRole("button", { name: /Archive/ }));
+    await waitFor(() =>
+      expect(api.archiveThreads).toHaveBeenCalledWith({ landed: true }),
+    );
+  });
+
+  it("hides the offer on Not now until the next commit", async () => {
+    const offer = await openPanel();
+    fireEvent.click(within(offer).getByRole("button", { name: "Not now" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("landed-offer")).not.toBeInTheDocument(),
+    );
+    vi.mocked(api.getLanded).mockResolvedValue({
+      head: "beef5678",
+      threadIds: [1],
+    });
+    pushEvent({ id: 5, type: "threads.landed", payload: {}, createdAt: "" });
+    expect(await screen.findByTestId("landed-offer")).toHaveTextContent(
+      "landed in beef567",
+    );
+  });
+
+  it("turns automatic archiving on from the offer", async () => {
+    const offer = await openPanel();
+    fireEvent.click(
+      within(offer).getByRole("checkbox", {
+        name: "Archive landed threads automatically",
+      }),
+    );
+    await waitFor(() =>
+      expect(api.putSettings).toHaveBeenCalledWith({ autoArchiveLanded: true }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("landed-offer")).not.toBeInTheDocument(),
+    );
   });
 });

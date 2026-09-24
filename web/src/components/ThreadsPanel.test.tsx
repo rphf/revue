@@ -1,6 +1,39 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: {
+    getBranches: vi.fn(async () => ({
+      current: "main",
+      branches: [
+        { name: "main", open: 4, archived: 0 },
+        { name: "feat", open: 1, archived: 2 },
+      ],
+    })),
+    listThreads: vi.fn(async () => ({
+      threads: [thread(9, { path: "feat.go" })],
+    })),
+    getHistory: vi.fn(async (branch: string) => ({
+      branch,
+      current: "main",
+      branches: [],
+      commits: [
+        {
+          hash: "c".repeat(40),
+          subject: "landed commit",
+          date: "2026-09-24T10:00:00Z",
+          onBranch: true,
+          threads: [thread(7, { resolved: true }), thread(8)],
+        },
+      ],
+      more: false,
+    })),
+  },
+}));
+
+import { api } from "../api";
 import ThreadsPanel from "./ThreadsPanel";
 import type { Send, Thread, ThreadPosition } from "../types";
 import { groupByRound } from "@/lib/rounds";
@@ -63,6 +96,7 @@ describe("ThreadsPanel", () => {
     const user = userEvent.setup();
     render(
       <ThreadsPanel
+        sends={oneSend}
         rounds={groupByRound(threads, oneSend)}
         positions={positions}
         onJump={() => {}}
@@ -93,6 +127,7 @@ describe("ThreadsPanel", () => {
   it("shows the live line for live threads and the origin otherwise", () => {
     render(
       <ThreadsPanel
+        sends={oneSend}
         rounds={groupByRound(threads, oneSend)}
         positions={positions}
         onJump={() => {}}
@@ -112,6 +147,7 @@ describe("ThreadsPanel", () => {
     const onJump = vi.fn();
     render(
       <ThreadsPanel
+        sends={oneSend}
         rounds={groupByRound(threads, oneSend)}
         positions={positions}
         onJump={onJump}
@@ -138,6 +174,7 @@ describe("ThreadsPanel", () => {
     };
     render(
       <ThreadsPanel
+        sends={oneSend}
         rounds={groupByRound(
           [thread(1, { sendId: 1 }), thread(2, { sendId: 2 }), draft],
           sends,
@@ -177,6 +214,7 @@ describe("ThreadsPanel", () => {
     ];
     render(
       <ThreadsPanel
+        sends={oneSend}
         rounds={groupByRound(
           [thread(1, { sendId: 1 }), thread(2, { sendId: 2 })],
           sends,
@@ -191,5 +229,60 @@ describe("ThreadsPanel", () => {
       "aria-current",
       "true",
     );
+  });
+
+  it("switches to History and keeps each archived thread's resolution", async () => {
+    const user = userEvent.setup();
+    const onOpenThread = vi.fn();
+    render(
+      <ThreadsPanel
+        sends={oneSend}
+        rounds={groupByRound(threads, oneSend)}
+        positions={positions}
+        onJump={() => {}}
+        onOpenThread={onOpenThread}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Branch")).toHaveValue("main"),
+    );
+    await user.click(screen.getByRole("radio", { name: "History" }));
+    expect(await screen.findByText("landed commit")).toBeInTheDocument();
+    expect(api.getHistory).toHaveBeenLastCalledWith("main", 200);
+    await user.click(screen.getByRole("tab", { name: /unresolved/ }));
+    expect(screen.queryByTestId("history-thread-7")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("history-thread-8"));
+    expect(onOpenThread).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 8 }),
+    );
+  });
+
+  it("lists another branch's threads and opens them on their snapshot", async () => {
+    const onJump = vi.fn();
+    const onOpenThread = vi.fn();
+    render(
+      <ThreadsPanel
+        sends={oneSend}
+        rounds={groupByRound(threads, oneSend)}
+        positions={positions}
+        onJump={onJump}
+        onOpenThread={onOpenThread}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Branch")).toHaveValue("main"),
+    );
+    fireEvent.change(screen.getByLabelText("Branch"), {
+      target: { value: "feat" },
+    });
+    await waitFor(() => expect(api.listThreads).toHaveBeenCalledWith("feat"));
+    fireEvent.click(await screen.findByTestId("panel-thread-9"));
+    expect(onOpenThread).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9 }),
+    );
+    expect(onJump).not.toHaveBeenCalled();
+    expect(screen.getByText(/Threads of feat/)).toBeInTheDocument();
   });
 });

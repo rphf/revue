@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -44,6 +43,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/threads/{id}/comments", s.handleReply)
 	mux.HandleFunc("POST /api/threads/{id}/resolve", s.handleResolve(true))
 	mux.HandleFunc("POST /api/threads/{id}/unresolve", s.handleResolve(false))
+	mux.HandleFunc("POST /api/threads/archive", s.handleArchive)
+	mux.HandleFunc("POST /api/threads/{id}/unarchive", s.handleUnarchive)
+	mux.HandleFunc("GET /api/landed", s.handleLanded)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("GET /api/branches", s.handleBranches)
+	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
+	mux.HandleFunc("PUT /api/settings", s.handlePutSettings)
 	mux.HandleFunc("PATCH /api/comments/{id}", s.handleEditComment)
 	mux.HandleFunc("DELETE /api/comments/{id}", s.handleDeleteComment)
 	mux.HandleFunc("POST /api/send", s.handleSend)
@@ -173,7 +179,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	threads, err := s.store.ListThreads(true)
+	threads, err := s.scopedThreads(true)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -242,17 +248,6 @@ type quote struct {
 	Lines     []string `json:"lines"`
 }
 
-func threadViews(st *store.Store, includeDrafts, withQuotes, unresolvedOnly bool) ([]*threadView, error) {
-	threads, err := st.ListThreads(includeDrafts)
-	if err != nil {
-		return nil, err
-	}
-	if unresolvedOnly {
-		threads = slices.DeleteFunc(threads, func(t *store.Thread) bool { return t.Resolved })
-	}
-	return viewsOf(st, threads, includeDrafts, withQuotes)
-}
-
 // viewsOf attaches comments, and quotes when asked, to threads with one
 // comments query and one blob read per distinct snapshot.
 func viewsOf(st *store.Store, threads []*store.Thread, includeDrafts, withQuotes bool) ([]*threadView, error) {
@@ -309,10 +304,34 @@ func quoteFor(st *store.Store, t *store.Thread, blobs map[string][]byte) (*quote
 	return &quote{Path: t.Path, Side: t.Side, StartLine: start, Line: t.Line, Lines: lines[start-1 : t.Line]}, nil
 }
 
+// handleListThreads lists the unarchived threads of the checkout, with
+// ?branch= those of another branch, or with ?archived=1 every archived
+// thread, most recently archived first.
 func (s *Server) handleListThreads(w http.ResponseWriter, r *http.Request) {
 	includeDrafts := r.URL.Query().Get("drafts") == "1"
 	withQuotes := r.URL.Query().Get("quote") == "1"
-	views, err := threadViews(s.store, includeDrafts, withQuotes, false)
+	if r.URL.Query().Get("archived") == "1" {
+		threads, err := s.store.ListArchivedThreads()
+		if err == nil {
+			var views []*threadView
+			if views, err = viewsOf(s.store, threads, false, withQuotes); err == nil {
+				writeJSON(w, http.StatusOK, map[string]any{"threads": views})
+				return
+			}
+		}
+		internalError(w, err)
+		return
+	}
+	if r.URL.Query().Has("branch") {
+		views, err := s.branchThreadViews(r.URL.Query().Get("branch"), includeDrafts, withQuotes)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"threads": views})
+		return
+	}
+	views, err := s.threadViews(includeDrafts, withQuotes, false)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -364,10 +383,12 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "validation", "binary files take no line comments")
 		return
 	}
+	head, branch := s.head()
 	nt := store.NewThread{
 		Path: f.Path, OldPath: f.OldPath, Status: f.Status, Side: side,
 		StartLine: req.StartLine, Line: req.Line,
 		OldContent: f.OldContent, NewContent: f.NewContent,
+		Branch: branch, Head: head, Base: s.baseOf(head), Args: req.Args,
 	}
 	if h := anchor.Find(c.hunks, req.Path, side, req.Line); req.Line > 0 && h != nil {
 		nt.HunkHash, nt.HunkStart = h.Hash, h.Start(req.Side)
@@ -597,10 +618,13 @@ func (s *Server) handleListSends(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFeedback is the agent's cursor read: events since the cursor
-// (drafts are never in the log), every unresolved thread with its sent
-// comments and quoted snapshot, and the most recent send with its note.
+// (drafts are never in the log), every unresolved thread of this
+// checkout with its sent comments and quoted snapshot, the most recent
+// send with its note, and the threads whose code landed but that are
+// not archived yet.
 func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	since := parseInt64(r.URL.Query().Get("since"))
+	s.checkLanding()
 	events, err := s.store.EventsSince(since)
 	if err != nil {
 		internalError(w, err)
@@ -613,7 +637,7 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	if len(events) > 0 {
 		cursor = events[len(events)-1].ID
 	}
-	views, err := threadViews(s.store, false, true, true)
+	views, err := s.threadViews(false, true, true)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -623,10 +647,16 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	_, landed, err := s.landedThreads()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"cursor":   cursor,
 		"events":   events,
 		"threads":  views,
 		"lastSend": last,
+		"landed":   landed,
 	})
 }

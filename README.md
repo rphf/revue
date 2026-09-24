@@ -34,6 +34,8 @@ The page shows one diff, named by its `git diff` arguments, and keeps it current
 
 Comments are drafts until you send them, all at once, with an optional note. The agent reads the send with `revue feedback` and replies in threads with `revue reply`. The reviewer resolves threads; the agent can reply but cannot resolve.
 
+Threads belong to the branch they were written on. A commit ends the conversation the way a merge does on GitHub: the threads whose code it contains land, the page offers to archive them (or does it at once, if you turn that on), and History keeps them under that commit.
+
 Comment bodies are markdown. Links and images render, so an agent can point at a screenshot or a test report that it serves elsewhere. A markdown file in the diff has a rich view, like GitHub's: the rendered document with the changed paragraphs marked.
 
 ## Documentation

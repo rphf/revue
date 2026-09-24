@@ -42,6 +42,29 @@ export function cli(args: string[]): Promise<CliResult> {
   });
 }
 
+// git runs git in the fixture repository, as the agent would.
+export function git(args: string[]): Promise<CliResult> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      {
+        cwd: REPO,
+        env: {
+          ...process.env,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_SYSTEM: "/dev/null",
+        },
+      },
+      (error, stdout, stderr) => {
+        const code =
+          error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+      },
+    );
+  });
+}
+
 export function cliJSON<T>(res: CliResult): T {
   return JSON.parse(res.stdout) as T;
 }

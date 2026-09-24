@@ -1,8 +1,13 @@
 import type {
+  ArchiveSelector,
+  Branch,
   Comment,
   DiffResponse,
   FileVersions,
+  History,
+  Landed,
   Send,
+  Settings,
   Side,
   Snapshot,
   Thread,
@@ -52,8 +57,14 @@ export const api = {
     side: "old" | "new",
     version: number,
   ) => `/api/diff/image${argsQuery(args, { path, side, v: String(version) })}`,
-  listThreads: () =>
-    request<{ threads: Thread[] }>("GET", "/api/threads?drafts=1"),
+  // The checkout's threads, or another branch's.
+  listThreads: (branch?: string) =>
+    request<{ threads: Thread[] }>(
+      "GET",
+      `/api/threads?drafts=1${branch === undefined ? "" : `&branch=${encodeURIComponent(branch)}`}`,
+    ),
+  getBranches: () =>
+    request<{ current: string; branches: Branch[] }>("GET", "/api/branches"),
   getSnapshot: (threadId: number) =>
     request<Snapshot>("GET", `/api/threads/${threadId}/snapshot`),
   createThread: (args: {
@@ -82,6 +93,29 @@ export const api = {
       `/api/threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
       {},
     ),
+  archiveThreads: (selector: ArchiveSelector) =>
+    request<{ archived: number[]; skipped: number[]; head: string }>(
+      "POST",
+      "/api/threads/archive",
+      selector,
+    ),
+  unarchiveThread: (threadId: number) =>
+    request<{ threadId: number }>(
+      "POST",
+      `/api/threads/${threadId}/unarchive`,
+      {},
+    ),
+  getLanded: () => request<Landed>("GET", "/api/landed"),
+  getSettings: () => request<Settings>("GET", "/api/settings"),
+  putSettings: (settings: Settings) =>
+    request<Settings>("PUT", "/api/settings", settings),
+  getHistory: (branch?: string, limit?: number) => {
+    const q = new URLSearchParams();
+    if (branch !== undefined) q.set("branch", branch);
+    if (limit !== undefined) q.set("limit", String(limit));
+    const qs = q.toString();
+    return request<History>("GET", `/api/history${qs ? `?${qs}` : ""}`);
+  },
   listSends: () => request<{ sends: Send[] }>("GET", "/api/sends"),
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),

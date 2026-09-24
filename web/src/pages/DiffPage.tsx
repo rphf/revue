@@ -9,7 +9,9 @@ import { api, errorMessage } from "../api";
 import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
 import type {
+  ArchiveSelector,
   DiffResponse,
+  Landed,
   Send,
   Side,
   Thread as ThreadType,
@@ -68,6 +70,25 @@ interface DiffLoad {
 }
 
 const DIFF_STYLE_KEY = "revue-diff-style";
+const DISMISSED_LANDED_KEY = "revue-landed-dismissed";
+
+function loadDismissedHead(): string {
+  try {
+    return localStorage.getItem(DISMISSED_LANDED_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const noop = () => {};
+
+function saveDismissedHead(head: string): void {
+  try {
+    localStorage.setItem(DISMISSED_LANDED_KEY, head);
+  } catch {
+    // Forgetting the dismissal only shows the offer again.
+  }
+}
 
 function loadDiffStyle(): DiffStyle {
   try {
@@ -138,6 +159,15 @@ export default function DiffPage({
   const [pulse, setPulse] = useState(0);
   const [askNotify, setAskNotify] = useState(false);
   const closeAskNotify = useCallback(() => setAskNotify(false), []);
+  // Threads whose code landed, offered for archiving once per commit.
+  // "Not now" hides the offer until HEAD moves on.
+  const [landed, setLanded] = useState<Landed | null>(null);
+  const [dismissedHead, setDismissedHead] = useState(loadDismissedHead);
+  const [autoArchive, setAutoArchive] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [historySignal, setHistorySignal] = useState(0);
+  // An archived thread opened from History, shown on its snapshot.
+  const [historyThread, setHistoryThread] = useState<ThreadType | null>(null);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(loadDiffStyle);
   const changeDiffStyle = useCallback((style: DiffStyle) => {
     setDiffStyle(style);
@@ -215,6 +245,20 @@ export default function DiffPage({
   const rounds = useMemo(() => groupByRound(threads, sends), [threads, sends]);
   useEffect(loadThreads, [loadThreads]);
 
+  const loadLanded = useCallback(() => {
+    api.getLanded().then(setLanded, () => setLanded(null));
+  }, []);
+  const loadSettings = useCallback(() => {
+    api.getSettings().then(
+      (s) => setAutoArchive(s.autoArchiveLanded),
+      () => {},
+    );
+  }, []);
+  useEffect(() => {
+    loadLanded();
+    loadSettings();
+  }, [loadLanded, loadSettings]);
+
   // The diff on screen, refetched whenever the server says it moved.
   const shown = load?.argsKey === argsKey ? load : null;
   // The latest diff.changed notice. One that comes while the first
@@ -289,8 +333,21 @@ export default function DiffPage({
       if (next === undefined || next !== version) {
         setFetchNonce((n) => n + 1);
         setPulse((p) => p + 1);
+        loadLanded();
       }
       return;
+    }
+    if (e.type === "settings.changed") {
+      loadSettings();
+      return;
+    }
+    if (
+      e.type === "threads.landed" ||
+      e.type === "thread.archived" ||
+      e.type === "thread.unarchived"
+    ) {
+      loadLanded();
+      setHistorySignal((n) => n + 1);
     }
     loadThreads();
   });
@@ -554,6 +611,7 @@ export default function DiffPage({
   const jumpToThread = useCallback(
     (thread: ThreadType, position: ThreadPosition | undefined) => {
       setFocusedId(thread.id);
+      setHistoryThread(null);
       if (position?.state === "live") {
         setSnapshotId(null);
         setSelectedPath(position.path);
@@ -569,6 +627,7 @@ export default function DiffPage({
     [reveal],
   );
   const openSnapshot = useCallback((id: number) => {
+    setHistoryThread(null);
     setSnapshotId(id);
     setFocusedId(id);
   }, []);
@@ -641,6 +700,81 @@ export default function DiffPage({
     [loadThreads, openComposer],
   );
   const sendNow = useCallback(() => void sendRound(""), [sendRound]);
+
+  // Archiving: the offer after a commit, the panel menu, and the
+  // automatic setting. Every change reloads the threads, what landed,
+  // and History.
+  const afterArchive = useCallback(() => {
+    loadThreads();
+    loadLanded();
+    setHistorySignal((n) => n + 1);
+  }, [loadThreads, loadLanded]);
+  const archive = useCallback(
+    async (selector: ArchiveSelector) => {
+      try {
+        const res = await api.archiveThreads(selector);
+        const kept = res.skipped.length;
+        setArchiveError(
+          kept === 0
+            ? null
+            : `${kept === 1 ? "1 thread holds" : `${kept} threads hold`} a draft and stayed: send or delete the draft first.`,
+        );
+      } catch (e) {
+        setArchiveError(errorMessage(e));
+      }
+      afterArchive();
+    },
+    [afterArchive],
+  );
+  const archiveLanded = useCallback(
+    () => void archive({ landed: true }),
+    [archive],
+  );
+  const archiveBulk = useCallback(
+    (which: "resolved" | "all") =>
+      void archive(which === "all" ? { all: true } : { resolved: true }),
+    [archive],
+  );
+  const dismissLanded = useCallback(() => {
+    if (!landed) return;
+    setDismissedHead(landed.head);
+    saveDismissedHead(landed.head);
+  }, [landed]);
+  const changeAutoArchive = useCallback(
+    (on: boolean) => {
+      setAutoArchive(on);
+      api.putSettings({ autoArchiveLanded: on }).then(
+        () => {
+          setArchiveError(null);
+          afterArchive();
+        },
+        (e: unknown) => {
+          setAutoArchive(!on);
+          setArchiveError(errorMessage(e));
+        },
+      );
+    },
+    [afterArchive],
+  );
+  const landedOffer =
+    landed &&
+    !autoArchive &&
+    landed.head !== dismissedHead &&
+    landed.threadIds.length > 0
+      ? { head: landed.head, count: landed.threadIds.length }
+      : null;
+  const openArchived = useCallback((t: ThreadType) => {
+    setSnapshotId(null);
+    setHistoryThread(t);
+    setFocusedId(t.id);
+  }, []);
+  const closeHistoryThread = useCallback(() => setHistoryThread(null), []);
+  // The only action on an archived thread brings it back, so the
+  // snapshot closes with it.
+  const historyThreadChanged = useCallback(() => {
+    setHistoryThread(null);
+    afterArchive();
+  }, [afterArchive]);
 
   return (
     <TooltipProvider>
@@ -814,6 +948,22 @@ export default function DiffPage({
                   />
                 </div>
               )}
+              {!snapshotThread && historyThread && (
+                <div className="absolute inset-0 z-10">
+                  <SnapshotView
+                    key={`history-${historyThread.id}`}
+                    thread={historyThread}
+                    index={0}
+                    total={1}
+                    onPrev={noop}
+                    onNext={noop}
+                    diffStyle={diffStyle}
+                    theme={theme}
+                    onChanged={historyThreadChanged}
+                    onClose={closeHistoryThread}
+                  />
+                </div>
+              )}
             </ResizablePanel>
             {showPanel && (
               <>
@@ -829,8 +979,20 @@ export default function DiffPage({
                     rounds={rounds}
                     positions={positions}
                     onJump={jumpToThread}
-                    activeId={snapshotThread?.id ?? focusedId}
+                    activeId={
+                      snapshotThread?.id ?? historyThread?.id ?? focusedId
+                    }
                     onClose={closePanel}
+                    landed={landedOffer}
+                    onArchiveLanded={archiveLanded}
+                    onDismissLanded={dismissLanded}
+                    autoArchive={autoArchive}
+                    onAutoArchiveChange={changeAutoArchive}
+                    onArchive={archiveBulk}
+                    archiveError={archiveError}
+                    onOpenThread={openArchived}
+                    signal={historySignal}
+                    sends={sends}
                     footer={
                       <SendComposer
                         draftCount={draftCount}

@@ -71,7 +71,25 @@ type Thread struct {
 	NewBlob   string    `json:"-"`
 	Resolved  bool      `json:"resolved"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Where the thread was written: the branch ("" on a detached HEAD),
+	// HEAD, and the diff arguments. All empty for threads from before
+	// origins were recorded.
+	Branch string   `json:"branch"`
+	Head   string   `json:"head"`
+	Args   []string `json:"args"`
+	// Base is where the branch left the default branch when the thread
+	// was written: a tip still there has no work of its own to merge.
+	Base string `json:"-"`
+	// ArchivedAt is set once the thread leaves the views; ArchivedHead is
+	// the HEAD at that moment, the commit its code landed in.
+	ArchivedAt   *time.Time `json:"archivedAt,omitempty"`
+	ArchivedHead string     `json:"archivedHead,omitempty"`
+	// Kept marks a thread brought back by hand: it never lands again.
+	Kept bool `json:"-"`
 }
+
+// HasOrigin reports whether the thread recorded where it was written.
+func (t *Thread) HasOrigin() bool { return t.Head != "" }
 
 // NewThread carries everything CreateThread freezes: the anchor and the
 // file's contents on both sides (nil when the side does not exist).
@@ -86,6 +104,10 @@ type NewThread struct {
 	HunkStart  int
 	OldContent []byte
 	NewContent []byte
+	Branch     string
+	Head       string
+	Base       string
+	Args       []string
 }
 
 type Comment struct {
@@ -247,7 +269,7 @@ func (s *Store) Blob(hash string) ([]byte, error) {
 
 // --- Threads ---
 
-const threadCols = "id, path, old_path, status, side, start_line, line, hunk_hash, hunk_start, COALESCE(old_blob, ''), COALESCE(new_blob, ''), resolved, created_at"
+const threadCols = "id, path, old_path, status, side, start_line, line, hunk_hash, hunk_start, COALESCE(old_blob, ''), COALESCE(new_blob, ''), resolved, created_at, branch, head, base, args, archived_at, archived_head, kept"
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -274,8 +296,10 @@ func queryAll[T any](q dbtx, scan func(rowScanner) (T, error), query string, arg
 func scanThread(row rowScanner) (*Thread, error) {
 	var t Thread
 	var start sql.NullInt64
-	var created string
-	err := row.Scan(&t.ID, &t.Path, &t.OldPath, &t.Status, &t.Side, &start, &t.Line, &t.HunkHash, &t.HunkStart, &t.OldBlob, &t.NewBlob, &t.Resolved, &created)
+	var created, args string
+	var archived sql.NullString
+	err := row.Scan(&t.ID, &t.Path, &t.OldPath, &t.Status, &t.Side, &start, &t.Line, &t.HunkHash, &t.HunkStart, &t.OldBlob, &t.NewBlob, &t.Resolved, &created,
+		&t.Branch, &t.Head, &t.Base, &args, &archived, &t.ArchivedHead, &t.Kept)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -287,6 +311,13 @@ func scanThread(row rowScanner) (*Thread, error) {
 		t.StartLine = &v
 	}
 	t.CreatedAt = parseTime(created)
+	if err := json.Unmarshal([]byte(args), &t.Args); err != nil || t.Args == nil {
+		t.Args = []string{}
+	}
+	if archived.Valid {
+		at := parseTime(archived.String)
+		t.ArchivedAt = &at
+	}
 	return &t, nil
 }
 
@@ -313,10 +344,19 @@ func (s *Store) CreateThread(nt NewThread, role, body string, draft bool) (*Thre
 	if nt.StartLine != nil {
 		start = sql.NullInt64{Int64: int64(*nt.StartLine), Valid: true}
 	}
+	args := nt.Args
+	if args == nil {
+		args = []string{}
+	}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return nil, nil, err
+	}
 	t, err := scanThread(s.q.QueryRow(
-		`INSERT INTO threads (path, old_path, status, side, start_line, line, hunk_hash, hunk_start, old_blob, new_blob, resolved, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?) RETURNING `+threadCols,
+		`INSERT INTO threads (path, old_path, status, side, start_line, line, hunk_hash, hunk_start, old_blob, new_blob, resolved, created_at, branch, head, base, args)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?) RETURNING `+threadCols,
 		nt.Path, nt.OldPath, nt.Status, nt.Side, start, nt.Line, nt.HunkHash, nt.HunkStart, oldHash, newHash, now(),
+		nt.Branch, nt.Head, nt.Base, string(argsJSON),
 	))
 	if err != nil {
 		return nil, nil, err
@@ -332,15 +372,80 @@ func (s *Store) GetThread(id int64) (*Thread, error) {
 	return scanThread(s.q.QueryRow("SELECT "+threadCols+" FROM threads WHERE id = ?", id))
 }
 
-// ListThreads returns threads that have at least one visible comment,
-// oldest first. Without includeDrafts, threads whose comments are all
-// drafts are omitted entirely: drafts are invisible until sent.
+// ListThreads returns the unarchived threads that have at least one
+// visible comment, oldest first. Without includeDrafts, threads whose
+// comments are all drafts are omitted entirely: drafts are invisible
+// until sent.
 func (s *Store) ListThreads(includeDrafts bool) ([]*Thread, error) {
 	visible := "SELECT thread_id FROM comments"
 	if !includeDrafts {
 		visible += " WHERE draft = 0"
 	}
-	return queryAll(s.q, scanThread, "SELECT "+threadCols+" FROM threads WHERE id IN ("+visible+") ORDER BY id")
+	return queryAll(s.q, scanThread, "SELECT "+threadCols+" FROM threads WHERE archived_at IS NULL AND id IN ("+visible+") ORDER BY id")
+}
+
+// ListArchivedThreads returns every archived thread, most recently
+// archived first.
+func (s *Store) ListArchivedThreads() ([]*Thread, error) {
+	return queryAll(s.q, scanThread, "SELECT "+threadCols+" FROM threads WHERE archived_at IS NOT NULL ORDER BY julianday(archived_at) DESC, id DESC")
+}
+
+// ThreadsWithDrafts returns the ids of threads holding a reviewer draft.
+func (s *Store) ThreadsWithDrafts() (map[int64]bool, error) {
+	ids, err := queryAll(s.q, func(r rowScanner) (int64, error) {
+		var id int64
+		return id, r.Scan(&id)
+	}, "SELECT DISTINCT thread_id FROM comments WHERE draft = 1")
+	out := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, err
+}
+
+// ArchiveThreads archives the listed threads at head and returns the
+// ids it archived. Threads already archived, and threads holding a
+// draft, are left alone: a draft is the reviewer's unfinished work.
+func (s *Store) ArchiveThreads(ids []int64, head string) ([]int64, error) {
+	if len(ids) == 0 {
+		return []int64{}, nil
+	}
+	args := []any{now(), head}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	archived, err := queryAll(s.q, func(r rowScanner) (int64, error) {
+		var id int64
+		return id, r.Scan(&id)
+	}, `UPDATE threads SET archived_at = ?, archived_head = ?
+		 WHERE id IN (?`+strings.Repeat(", ?", len(ids)-1)+`) AND archived_at IS NULL
+		   AND id NOT IN (SELECT thread_id FROM comments WHERE draft = 1)
+		 RETURNING id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	slices.Sort(archived)
+	if archived == nil {
+		archived = []int64{}
+	}
+	return archived, nil
+}
+
+// UnarchiveThread brings an archived thread back into the views and
+// keeps it there: a thread the reviewer brought back never lands again.
+func (s *Store) UnarchiveThread(id int64) error {
+	res, err := s.q.Exec("UPDATE threads SET archived_at = NULL, archived_head = '', kept = 1 WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ThreadsInSend returns the threads with a comment published by the
@@ -540,6 +645,101 @@ func (s *Store) ListSends() ([]*Send, error) {
 		sends = []*Send{}
 	}
 	return sends, err
+}
+
+// --- Settings ---
+
+// Setting returns the JSON value stored under key, and whether there is
+// one.
+func (s *Store) Setting(key string) (string, bool, error) {
+	var v string
+	err := s.q.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+// SetSetting stores the JSON value under key.
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.q.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value)
+	return err
+}
+
+// ReadSetting reads one setting from the database at path without
+// migrating or writing it, for tools that look at other repositories'
+// databases. A database without the setting reports ok false.
+func ReadSetting(path, key string) (value string, ok bool, err error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = db.Close() }()
+	err = db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) || (err != nil && strings.Contains(err.Error(), "no such table")) {
+		return "", false, nil
+	}
+	return value, err == nil, err
+}
+
+// --- Retention ---
+
+// PruneArchived deletes the threads archived before cutoff, with their
+// comments, and returns how many threads went.
+func (s *Store) PruneArchived(cutoff time.Time) (int64, error) {
+	old := "SELECT id FROM threads WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday(?)"
+	at := cutoff.UTC().Format(time.RFC3339Nano)
+	if _, err := s.q.Exec("DELETE FROM comments WHERE thread_id IN ("+old+")", at); err != nil {
+		return 0, err
+	}
+	res, err := s.q.Exec("DELETE FROM threads WHERE id IN ("+old+")", at)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneBlobs deletes the snapshots no thread refers to any more.
+func (s *Store) PruneBlobs() (int64, error) {
+	res, err := s.q.Exec(`DELETE FROM blobs WHERE hash NOT IN (
+		SELECT old_blob FROM threads WHERE old_blob IS NOT NULL
+		UNION SELECT new_blob FROM threads WHERE new_blob IS NOT NULL)`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneEvents deletes the events logged before cutoff. Cursors stay
+// valid: AUTOINCREMENT never hands out an id again, so an old cursor
+// just reads what is left after it.
+func (s *Store) PruneEvents(cutoff time.Time) (int64, error) {
+	res, err := s.q.Exec("DELETE FROM events WHERE julianday(created_at) < julianday(?)", cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// Fragmentation reports the free pages, the total pages, and the page
+// size of the file.
+func (s *Store) Fragmentation() (free, total, pageSize int64, err error) {
+	for _, p := range []struct {
+		pragma string
+		dst    *int64
+	}{{"freelist_count", &free}, {"page_count", &total}, {"page_size", &pageSize}} {
+		if err := s.q.QueryRow("PRAGMA " + p.pragma).Scan(p.dst); err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	return free, total, pageSize, nil
+}
+
+// Vacuum rewrites the file without its free pages. It cannot run
+// inside a transaction.
+func (s *Store) Vacuum() error {
+	_, err := s.q.Exec("VACUUM")
+	return err
 }
 
 // --- Events ---

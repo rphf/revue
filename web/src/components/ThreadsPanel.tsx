@@ -1,20 +1,32 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ArchiveIcon,
   ChevronRightIcon,
+  EllipsisIcon,
   MessageSquareIcon,
   MessageSquareTextIcon,
   XIcon,
 } from "lucide-react";
-import type { Thread, ThreadPosition } from "../types";
-import type { Round } from "@/lib/rounds";
+import { api } from "../api";
+import type { Branch, Send, Thread, ThreadPosition } from "../types";
+import { groupByRound, type Round } from "@/lib/rounds";
 import { excerpt } from "@/lib/text";
-import { locationLabel } from "@/lib/threads";
+import { branchLabel, locationLabel } from "@/lib/threads";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import HistoryView from "./HistoryView";
 
+type PanelMode = "current" | "history";
 type PanelFilter = "all" | "live" | "outdated" | "resolved";
 type ThreadState = Exclude<PanelFilter, "all">;
 
@@ -26,18 +38,37 @@ const stateDot: Record<ThreadState, string> = {
   resolved: "bg-muted-foreground/50",
 };
 
+const NO_POSITIONS: ReadonlyMap<number, ThreadPosition> = new Map();
+
 export interface ThreadsPanelProps {
-  // Every thread, grouped by the round it was last active in.
+  // The checkout's threads, grouped by the round they were last active in.
   rounds: Round[];
+  // Every send, to group another branch's threads by round.
+  sends: Send[];
   // Where each thread sits in the diff on screen; a thread without a
   // live position is outdated for this diff.
   positions: ReadonlyMap<number, ThreadPosition>;
   onJump: (thread: Thread, position: ThreadPosition | undefined) => void;
+  // Opens a thread that is not in this checkout (another branch's, or an
+  // archived one) on its snapshot.
+  onOpenThread?: (thread: Thread) => void;
   // The thread the page is showing, marked in the list.
   activeId?: number | null;
   onClose: () => void;
   // Pinned under the list: the composer for the next send.
   footer?: ReactNode;
+  // Threads whose code landed and that are not archived, offered once
+  // per commit.
+  landed?: { head: string; count: number } | null;
+  onArchiveLanded?: () => void;
+  onDismissLanded?: () => void;
+  autoArchive?: boolean;
+  onAutoArchiveChange?: (on: boolean) => void;
+  onArchive?: (which: "resolved" | "all") => void;
+  archiveError?: string | null;
+  // Bumped when threads changed anywhere, to refetch the branch list,
+  // another branch's threads, and History.
+  signal?: number;
 }
 
 interface Row {
@@ -46,26 +77,86 @@ interface Row {
   state: ThreadState;
 }
 
-// Every thread with live/outdated/resolved filters relative to the
-// shown diff, in one collapsible section per round: what is not sent
-// yet, then each Send newest first, the way `revue feedback --since`
-// reads the conversation. The unsent round and the latest Send start
-// open. A thread whose code is gone stays reachable here and opens on
-// the file as it was. Rows lead with the opening comment, which is what
-// a reviewer remembers a thread by; the file position is secondary.
+// Threads of a branch in two modes. Current: every open thread with
+// live/outdated/resolved filters relative to the shown diff, in one
+// collapsible section per round (what is not sent yet, then each Send
+// newest first, the way `revue feedback --since` reads the
+// conversation). History: the threads archived on the branch, under the
+// commit their code landed in. The branch picker serves both; another
+// branch's threads are not in this diff and open on their snapshot.
 export default function ThreadsPanel({
-  rounds,
-  positions,
+  rounds: checkoutRounds,
+  sends,
+  positions: checkoutPositions,
   onJump,
+  onOpenThread,
   activeId,
   onClose,
   footer,
+  landed,
+  onArchiveLanded,
+  onDismissLanded,
+  autoArchive = false,
+  onAutoArchiveChange,
+  onArchive,
+  archiveError,
+  signal = 0,
 }: ThreadsPanelProps) {
+  const [mode, setMode] = useState<PanelMode>("current");
   const [filter, setFilter] = useState<PanelFilter>("all");
+  // undefined follows the branch checked out.
+  const [picked, setPicked] = useState<string | undefined>(undefined);
+  const [branches, setBranches] = useState<{
+    current: string;
+    branches: Branch[];
+  } | null>(null);
+  const [other, setOther] = useState<{ branch: string; threads: Thread[] }>();
   // Sections the reviewer opened or closed; the rest follow the default.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(
     new Map(),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getBranches().then(
+      (b) => {
+        if (!cancelled) setBranches(b);
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [signal]);
+  const current = branches?.current;
+  const branch = picked ?? current;
+  const viewingOther = picked !== undefined && picked !== current;
+
+  useEffect(() => {
+    if (!viewingOther || mode !== "current") return;
+    let cancelled = false;
+    api.listThreads(picked).then(
+      (r) => {
+        if (!cancelled) setOther({ branch: picked, threads: r.threads });
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingOther, picked, mode, signal]);
+
+  const otherRounds = useMemo(
+    () =>
+      viewingOther && other?.branch === picked
+        ? groupByRound(other.threads, sends)
+        : [],
+    [viewingOther, other, picked, sends],
+  );
+  const rounds = viewingOther ? otherRounds : checkoutRounds;
+  const positions = viewingOther ? NO_POSITIONS : checkoutPositions;
+  const jump = (thread: Thread, position: ThreadPosition | undefined) =>
+    viewingOther ? onOpenThread?.(thread) : onJump(thread, position);
 
   const { sections, counts } = useMemo(() => {
     const counts: Record<PanelFilter, number> = {
@@ -107,88 +198,293 @@ export default function ThreadsPanel({
   const toggle = (key: string, open: boolean) =>
     setToggled((prev) => new Map(prev).set(key, !open));
 
+  const choices = branches?.branches ?? [];
+
   return (
     <div className="flex h-full flex-col" data-testid="threads-panel">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
         <MessageSquareTextIcon className="size-4 text-muted-foreground" />
         <span className="font-medium">Threads</span>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {counts.all}
-        </span>
+        {mode === "current" && (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {counts.all}
+          </span>
+        )}
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          spacing={0}
+          className="ml-auto"
+          value={mode}
+          onValueChange={(v) => {
+            if (v) setMode(v as PanelMode);
+          }}
+          aria-label="Threads or history"
+        >
+          <ToggleGroupItem value="current" className="h-7 px-2.5 text-xs">
+            Current
+          </ToggleGroupItem>
+          <ToggleGroupItem value="history" className="h-7 px-2.5 text-xs">
+            History
+          </ToggleGroupItem>
+        </ToggleGroup>
+        {onArchive && (
+          <PanelMenu
+            onArchive={onArchive}
+            bulkDisabled={viewingOther}
+            autoArchive={autoArchive}
+            onAutoArchiveChange={onAutoArchiveChange}
+          />
+        )}
         <Button
           variant="ghost"
           size="icon-xs"
-          className="ml-auto"
           aria-label="Close threads"
           onClick={onClose}
         >
           <XIcon />
         </Button>
       </div>
-      <Tabs
-        value={filter}
-        onValueChange={(v) => setFilter(v as PanelFilter)}
-        className="gap-0"
-      >
-        <TabsList
-          variant="line"
-          className="h-9 w-full justify-start gap-0 border-b px-2"
+      <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+        <label htmlFor="threads-branch" className="text-muted-foreground">
+          Branch
+        </label>
+        <select
+          id="threads-branch"
+          className="h-7 min-w-0 flex-1 truncate rounded-md border bg-background px-2 font-mono text-xs"
+          value={branch ?? ""}
+          disabled={branches === null}
+          onChange={(e) =>
+            setPicked(e.target.value === current ? undefined : e.target.value)
+          }
         >
-          {FILTERS.map((f) => (
-            <TabsTrigger
-              key={f}
-              value={f}
-              className="flex-none gap-1 px-2 text-xs capitalize"
-            >
-              {f}
-              {f !== "all" && (
-                <span className="text-muted-foreground tabular-nums">
-                  {counts[f]}
-                </span>
-              )}
-            </TabsTrigger>
+          {choices.map((b) => (
+            <option key={b.name} value={b.name}>
+              {branchLabel(b.name)}
+              {b.name === current ? " (checked out)" : ""}
+            </option>
           ))}
-        </TabsList>
-      </Tabs>
-      {visibleSections.length === 0 ? (
-        <p className="min-h-0 flex-1 p-4 text-sm text-muted-foreground">
-          No {filter === "all" ? "" : filter + " "}threads
-        </p>
+        </select>
+      </div>
+      {mode === "history" ? (
+        branch !== undefined && (
+          <HistoryView
+            key={branch}
+            branch={branch}
+            onOpen={(t) => onOpenThread?.(t)}
+            activeId={activeId}
+            signal={signal}
+          />
+        )
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          {visibleSections.map(({ round, rows }) => {
-            const open = isOpen(round, rows);
-            return (
-              <section
-                key={round.key}
-                className="border-b"
-                data-testid={`panel-round-${round.key}`}
-              >
-                <RoundHeader
-                  round={round}
-                  count={rows.length}
-                  open={open}
-                  onToggle={() => toggle(round.key, open)}
-                />
-                {open && (
-                  <ul className="divide-y border-t">
-                    {rows.map((row) => (
-                      <ThreadRow
-                        key={row.thread.id}
-                        row={row}
-                        active={row.thread.id === activeId}
-                        onJump={onJump}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </section>
-            );
-          })}
-        </ScrollArea>
+        <>
+          <Tabs
+            value={filter}
+            onValueChange={(v) => setFilter(v as PanelFilter)}
+            className="gap-0"
+          >
+            <TabsList
+              variant="line"
+              className="h-9 w-full justify-start gap-0 border-b px-2"
+            >
+              {FILTERS.map((f) => (
+                <TabsTrigger
+                  key={f}
+                  value={f}
+                  className="flex-none gap-1 px-2 text-xs capitalize"
+                >
+                  {f}
+                  {f !== "all" && (
+                    <span className="text-muted-foreground tabular-nums">
+                      {counts[f]}
+                    </span>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          {!viewingOther && landed && landed.count > 0 && (
+            <LandedOffer
+              landed={landed}
+              onArchive={onArchiveLanded}
+              onDismiss={onDismissLanded}
+              autoArchive={autoArchive}
+              onAutoArchiveChange={onAutoArchiveChange}
+            />
+          )}
+          {archiveError && (
+            <p
+              className="border-b px-3 py-1.5 text-xs text-destructive"
+              role="alert"
+            >
+              {archiveError}
+            </p>
+          )}
+          {viewingOther && (
+            <p className="border-b px-3 py-1.5 text-xs text-muted-foreground">
+              Threads of {branchLabel(picked)}: not in this diff, they open on
+              the code they were written on.
+            </p>
+          )}
+          {visibleSections.length === 0 ? (
+            <p className="min-h-0 flex-1 p-4 text-sm text-muted-foreground">
+              No {filter === "all" ? "" : filter + " "}threads
+            </p>
+          ) : (
+            <ScrollArea className="min-h-0 flex-1">
+              {visibleSections.map(({ round, rows }) => {
+                const open = isOpen(round, rows);
+                return (
+                  <section
+                    key={round.key}
+                    className="border-b"
+                    data-testid={`panel-round-${round.key}`}
+                  >
+                    <RoundHeader
+                      round={round}
+                      count={rows.length}
+                      open={open}
+                      onToggle={() => toggle(round.key, open)}
+                    />
+                    {open && (
+                      <ul className="divide-y border-t">
+                        {rows.map((row) => (
+                          <ThreadRow
+                            key={row.thread.id}
+                            row={row}
+                            active={row.thread.id === activeId}
+                            onJump={jump}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                );
+              })}
+            </ScrollArea>
+          )}
+        </>
       )}
       {footer}
     </div>
+  );
+}
+
+function AutoArchiveToggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange?: (on: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-xs select-none">
+      <Checkbox
+        className="size-3.5 bg-background [&_svg]:size-3!"
+        checked={checked}
+        onCheckedChange={(v) => onChange?.(v === true)}
+        aria-label="Archive landed threads automatically"
+      />
+      Archive landed threads automatically
+    </label>
+  );
+}
+
+// The offer that follows a commit: its threads landed, archive them in
+// one click, or not now (until the next commit).
+function LandedOffer({
+  landed,
+  onArchive,
+  onDismiss,
+  autoArchive,
+  onAutoArchiveChange,
+}: {
+  landed: { head: string; count: number };
+  onArchive?: () => void;
+  onDismiss?: () => void;
+  autoArchive: boolean;
+  onAutoArchiveChange?: (on: boolean) => void;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-2 border-b bg-added/10 px-3 py-2"
+      role="status"
+      data-testid="landed-offer"
+    >
+      <p className="text-xs">
+        {landed.count === 1 ? "1 thread" : `${landed.count} threads`} landed in{" "}
+        <span className="font-mono">{landed.head.slice(0, 7)}</span>
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button type="button" size="xs" onClick={onArchive}>
+          <ArchiveIcon />
+          Archive
+        </Button>
+        <Button type="button" variant="ghost" size="xs" onClick={onDismiss}>
+          Not now
+        </Button>
+      </div>
+      <AutoArchiveToggle checked={autoArchive} onChange={onAutoArchiveChange} />
+    </div>
+  );
+}
+
+function PanelMenu({
+  onArchive,
+  bulkDisabled,
+  autoArchive,
+  onAutoArchiveChange,
+}: {
+  onArchive: (which: "resolved" | "all") => void;
+  // Bulk archiving acts on the checkout's threads only.
+  bulkDisabled: boolean;
+  autoArchive: boolean;
+  onAutoArchiveChange?: (on: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pick = (which: "resolved" | "all") => {
+    setOpen(false);
+    onArchive(which);
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="icon-xs" aria-label="Thread actions">
+          <EllipsisIcon />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="flex w-64 flex-col gap-1 p-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="justify-start"
+          disabled={bulkDisabled}
+          onClick={() => pick("resolved")}
+        >
+          <ArchiveIcon />
+          Archive resolved and outdated
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="justify-start"
+          disabled={bulkDisabled}
+          onClick={() => pick("all")}
+        >
+          <ArchiveIcon />
+          Archive all on this branch
+        </Button>
+        <div className="border-t px-2 pt-2 pb-1">
+          <AutoArchiveToggle
+            checked={autoArchive}
+            onChange={onAutoArchiveChange}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

@@ -33,6 +33,9 @@ type Config struct {
 	Port        int
 	PublicURL   string
 	BuildStamp  string // identifies the binary; "" derives it from the executable
+	// ArchiveRetention is how long archived threads are kept; 0 keeps
+	// them forever.
+	ArchiveRetention time.Duration
 }
 
 // BuildStamp identifies the running binary by path and modification
@@ -97,6 +100,7 @@ type Server struct {
 	views     *views
 	bus       *bus
 	activity  *activity
+	repo      repoState
 	// raise brings the browser to the front; tests replace it.
 	raise func() error
 
@@ -141,14 +145,11 @@ func xdgDir(envVar, fallback string) (string, error) {
 // DataDir holds durable per-repo data (the threads database):
 // $XDG_DATA_HOME/revue/<key>, default ~/.local/share/revue/<key>.
 func DataDir(repoRoot string) (string, error) {
-	if base := os.Getenv("REVUE_DATA_DIR"); base != "" {
-		return filepath.Join(base, repoKey(repoRoot)), nil
-	}
-	base, err := xdgDir("XDG_DATA_HOME", filepath.Join(".local", "share"))
+	base, err := dataBaseDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "revue", repoKey(repoRoot)), nil
+	return filepath.Join(base, repoKey(repoRoot)), nil
 }
 
 // StateDir holds ephemeral per-repo runtime state (the server state
@@ -290,6 +291,12 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.ln = ln
 	s.http = &http.Server{Handler: s.Handler()}
+	if err := s.recordRepo(); err != nil {
+		_ = st.Close()
+		_ = ln.Close()
+		return nil, err
+	}
+	s.maintain(cfg.ArchiveRetention)
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	state := &State{Port: port, Token: token, PID: os.Getpid(), PublicURL: publicURL, Repo: cfg.RepoRoot}
@@ -303,6 +310,7 @@ func Start(cfg Config) (*Server, error) {
 	}
 
 	go func() { _ = s.http.Serve(ln) }()
+	go s.maintenanceLoop(cfg.ArchiveRetention)
 	if cfg.IdleTimeout > 0 {
 		go s.idleLoop(cfg.IdleTimeout)
 	}

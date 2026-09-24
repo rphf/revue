@@ -8,6 +8,8 @@ vi.mock("../api", async (importOriginal) => ({
     editComment: vi.fn(async () => ({})),
     deleteComment: vi.fn(async () => {}),
     resolveThread: vi.fn(async () => ({})),
+    archiveThreads: vi.fn(async () => ({ archived: [1], skipped: [] })),
+    unarchiveThread: vi.fn(async () => ({})),
   },
 }));
 
@@ -124,5 +126,49 @@ describe("Thread", () => {
     await waitFor(() =>
       expect(api.resolveThread).toHaveBeenCalledWith(1, false),
     );
+  });
+
+  it("archives a thread, and not while it holds a draft", async () => {
+    const onChanged = vi.fn();
+    const { rerender } = render(
+      <Thread
+        thread={thread([comment({ body: "sent" })])}
+        onChanged={onChanged}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Archive/ }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(api.archiveThreads).toHaveBeenCalledWith({ ids: [1] });
+
+    rerender(
+      <Thread
+        thread={thread([comment({ body: "draft", draft: true })])}
+        onChanged={onChanged}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Archive/ })).toBeDisabled();
+  });
+
+  it("offers only Unarchive on an archived thread", async () => {
+    const onChanged = vi.fn();
+    render(
+      <Thread
+        thread={thread([comment({ body: "old" })], {
+          archivedAt: "2026-09-24T10:00:00Z",
+          archivedHead: "abc1234",
+        })}
+        onChanged={onChanged}
+      />,
+    );
+    expect(screen.getByText("Archived")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Reply/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Resolve/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Unarchive/ }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(api.unarchiveThread).toHaveBeenCalledWith(1);
   });
 });
