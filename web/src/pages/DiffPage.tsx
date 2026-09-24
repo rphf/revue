@@ -928,6 +928,7 @@ export default function DiffPage({
                       onFileComment={onFileComment}
                       collapsed={collapsed}
                       onToggleCollapsed={toggleCollapsed}
+                      scrollKey={argsKey}
                     />
                   )}
                 </ResizablePanel>

@@ -38,6 +38,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
+import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import { treePathCompare } from "./treePath";
 
@@ -127,6 +128,8 @@ export interface DiffViewProps {
   // Files shown as their header only.
   collapsed?: ReadonlySet<string>;
   onToggleCollapsed?: (path: string) => void;
+  // Names the diff whose scroll position survives a reload.
+  scrollKey?: string;
 }
 
 interface ItemMemo {
@@ -191,6 +194,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     onFileComment,
     collapsed,
     onToggleCollapsed,
+    scrollKey,
   }: DiffViewProps,
   ref,
 ) {
@@ -546,6 +550,8 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     ],
   );
 
+  const onScroll = useScrollMemory(codeView, scrollKey, items.length > 0);
+
   if (items.length === 0) {
     return (
       <div
@@ -564,6 +570,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       className="diff-scroll"
       items={items}
       options={options}
+      onScroll={onScroll}
       renderAnnotation={renderItemAnnotation}
       renderHeaderPrefix={renderHeaderPrefix}
       renderHeaderMetadata={renderHeaderMetadata}

@@ -38,6 +38,19 @@ export default defineConfig({
         viewport: { width: 1440, height: 1000 },
       },
     },
+    {
+      // Firefox lays the diff out later than Chromium; the specs that
+      // depend on layout timing run in both.
+      name: "firefox",
+      testMatch: /08-scroll-restore/,
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 1440, height: 1000 },
+        // The host-resolver flag above is Chromium's; this spec makes
+        // no outside requests.
+        launchOptions: { args: [] },
+      },
+    },
   ],
   webServer: {
     command: "bash tests/scripts/start-test-server.sh",
