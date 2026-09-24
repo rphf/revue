@@ -87,10 +87,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// The first notice carries the current version, so a page that
 	// connected after the diff moved refetches without waiting a tick.
+	// announced is the last version this stream told its page about:
+	// any request may refresh the view, so a tick compares versions
+	// rather than asking whether its own refresh saw the change.
+	var announced int64
 	if c, err := v.load(s.repoRoot); err == nil && c != nil {
 		if err := writeDiffChanged(w, c.version); err != nil {
 			return
 		}
+		announced = c.version
 	}
 
 	cursor := parseInt64(since)
@@ -135,14 +140,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			pending = true
 		case <-poll.C:
 			s.checkLanding()
-			changed, err := v.refresh(s.repoRoot, false)
-			if err != nil || !changed {
+			if _, err := v.refresh(s.repoRoot, false); err != nil {
 				continue
 			}
-			if c := v.current(); c != nil {
+			if c := v.current(); c != nil && c.version != announced {
 				if err := writeDiffChanged(w, c.version); err != nil {
 					return
 				}
+				announced = c.version
 				flusher.Flush()
 			}
 		case <-focus:

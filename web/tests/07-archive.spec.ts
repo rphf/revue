@@ -25,6 +25,8 @@ test("a commit lands a thread, archiving moves it to History", async ({
 
   expect((await git(["add", "gamma.go"])).code).toBe(0);
   expect((await git(["commit", "-q", "-m", "add gamma"])).code).toBe(0);
+  // The committed file leaves the diff without a reload.
+  await expect(page.getByText("gamma one")).toHaveCount(0, { timeout: 10_000 });
 
   await page.getByRole("button", { name: /threads/ }).click();
   const panel = page.getByTestId("threads-panel");

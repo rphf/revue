@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -477,5 +478,38 @@ func TestArchivedThreadsListNewestFirst(t *testing.T) {
 	ts.mustStatus(t, ts.do(t, "GET", "/api/threads?archived=1", nil, &out), http.StatusOK)
 	if len(out.Threads) != 2 || out.Threads[0].ID != second || out.Threads[1].ID != first || out.Threads[0].ArchivedAt == nil {
 		t.Fatalf("archived list = %+v", out.Threads)
+	}
+}
+
+// A change another request read first still reaches every open page:
+// the stream compares versions, not whether its own refresh saw it.
+func TestSSENotifiesAChangeAnotherRequestRefreshedFirst(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	req, _ := http.NewRequest("GET", ts.URL()+"/api/events?since=0", nil)
+	req.Header.Set("Authorization", "Bearer "+ts.Token())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	frames := readFrames(t, resp.Body)
+	if first := nextFrame(t, frames, 3*time.Second); first.Type != eventDiffChanged {
+		t.Fatalf("first frame = %+v", first)
+	}
+
+	ts.modify(t)
+	want := ts.getDiff(t).Version // this request refreshes the view first
+	for {
+		f := nextFrame(t, frames, 4*time.Second)
+		if f.Type != eventDiffChanged {
+			continue
+		}
+		var notice struct {
+			Version int64 `json:"version"`
+		}
+		_ = json.Unmarshal(f.Payload, &notice)
+		if notice.Version == want {
+			return
+		}
 	}
 }
