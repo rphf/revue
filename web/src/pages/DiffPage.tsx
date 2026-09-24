@@ -25,11 +25,7 @@ import type {
   ThreadPosition,
 } from "../types";
 import { CircleAlertIcon, XIcon } from "lucide-react";
-import {
-  type PanelSize,
-  useDefaultLayout,
-  usePanelRef,
-} from "react-resizable-panels";
+import { type PanelSize, usePanelRef } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import NotifyBanner from "../components/NotifyBanner";
@@ -87,6 +83,43 @@ const DIFF_STYLE_KEY = "revue-diff-style";
 const DISMISSED_LANDED_KEY = "revue-landed-dismissed";
 const TREE_HIDDEN_KEY = "revue-tree-hidden";
 const HIDE_SPACE_KEY = "revue-hide-whitespace";
+const PANEL_OPEN_KEY = "revue-threads-open";
+const TREE_WIDTH_KEY = "revue-tree-width";
+const THREADS_WIDTH_KEY = "revue-threads-width";
+
+function loadWidth(key: string, fallback: number): number {
+  try {
+    const px = Number(localStorage.getItem(key));
+    return px > 0 ? px : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveWidth(key: string, px: number): void {
+  try {
+    localStorage.setItem(key, String(Math.round(px)));
+  } catch {
+    // Not remembering the width is fine.
+  }
+}
+
+function loadPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(PANEL_OPEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function savePanelOpen(open: boolean): void {
+  try {
+    if (open) localStorage.setItem(PANEL_OPEN_KEY, "1");
+    else localStorage.removeItem(PANEL_OPEN_KEY);
+  } catch {
+    // Not remembering the choice is fine.
+  }
+}
 
 function loadHideSpace(): boolean {
   try {
@@ -218,10 +251,18 @@ export default function DiffPage({
   const [threads, setThreads] = useState<ThreadType[]>([]);
   const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
-  const [showPanel, setShowPanel] = useState(false);
+  // The panel stays as it was left across reloads. It reopens without
+  // taking the caret: that is for opening it.
+  const [showPanel, setShowPanel] = useState(loadPanelOpen);
+  // The width the threads pane opens at, read again each time it opens.
+  const [threadsWidth, setThreadsWidth] = useState(() =>
+    loadWidth(THREADS_WIDTH_KEY, 360),
+  );
+  useEffect(() => savePanelOpen(showPanel), [showPanel]);
   const [composerFocus, setComposerFocus] = useState(0);
   // Opening the panel puts the caret in the note, however it opens.
   const togglePanel = useCallback(() => {
+    setThreadsWidth(loadWidth(THREADS_WIDTH_KEY, 360));
     setShowPanel((v) => !v);
     setComposerFocus((n) => n + 1);
   }, []);
@@ -274,38 +315,22 @@ export default function DiffPage({
     });
   }, []);
 
-  // Pane widths survive reloads. The threads pane sits outside the
-  // tree and the diff, so a snapshot can cover both and leave the list
-  // of threads beside it; it is conditional, so the layout with and
-  // without it is stored separately.
-  const outerLayout = useDefaultLayout({
-    id: "revue-outer-panes",
-    storage: localStorage,
-    onlySaveAfterUserInteractions: true,
-    panelIds: showPanel ? ["main", "threads"] : ["main"],
-  });
-  const mainLayout = useDefaultLayout({
-    id: "revue-main-panes",
-    storage: localStorage,
-    onlySaveAfterUserInteractions: true,
-    panelIds: ["tree", "diff"],
-  });
+  // Pane widths survive reloads, kept in pixels: the layout store
+  // keeps shares of the group, which move with the space around them.
+  // The tree and the threads keep their width when that space changes,
+  // so opening the threads narrows the diff, not the tree. The threads
+  // pane sits outside the tree and the diff, so a snapshot can cover
+  // both and leave the list of threads beside it.
+  const onThreadsResize = useCallback((size: PanelSize) => {
+    saveWidth(THREADS_WIDTH_KEY, size.inPixels);
+  }, []);
 
   // The tree collapses rather than unmounts, from the top bar or by
-  // dragging it below its minimum. A collapse from the button is not a
-  // drag, so the layout store skips it and the choice is kept apart; a
-  // tree hidden at load opens back to its last stored width.
+  // dragging it below its minimum, and opens back to its last width.
   const treeRef = usePanelRef();
   const [showTree, setShowTree] = useState(loadTreeOpen);
-  const [initialMainLayout] = useState(() => {
-    const stored = mainLayout.defaultLayout;
-    if (!showTree) return { tree: 0, diff: 100 };
-    return stored?.tree ? stored : undefined;
-  });
-  const storedTree = mainLayout.defaultLayout?.tree;
-  const treeOpenSize = useRef<string | number>(
-    storedTree ? `${storedTree}%` : 272,
-  );
+  const [treeWidth] = useState(() => loadWidth(TREE_WIDTH_KEY, 272));
+  const treeOpenSize = useRef(treeWidth);
   const toggleTree = useCallback(() => {
     const panel = treeRef.current;
     if (!panel) return;
@@ -313,8 +338,11 @@ export default function DiffPage({
     else panel.collapse();
   }, [treeRef]);
   const onTreeResize = useCallback((size: PanelSize) => {
-    const open = size.asPercentage > 0;
-    if (open) treeOpenSize.current = `${size.asPercentage}%`;
+    const open = size.inPixels > 0;
+    if (open) {
+      treeOpenSize.current = size.inPixels;
+      saveWidth(TREE_WIDTH_KEY, size.inPixels);
+    }
     setShowTree(open);
     saveTreeOpen(open);
   }, []);
@@ -806,6 +834,7 @@ export default function DiffPage({
   );
 
   const openComposer = useCallback(() => {
+    setThreadsWidth(loadWidth(THREADS_WIDTH_KEY, 360));
     setShowPanel(true);
     setComposerFocus((n) => n + 1);
   }, []);
@@ -1010,26 +1039,20 @@ export default function DiffPage({
             orientation="horizontal"
             id="outer-panes"
             className="min-h-0 flex-1"
-            defaultLayout={outerLayout.defaultLayout}
-            onLayoutChanged={outerLayout.onLayoutChanged}
           >
             <ResizablePanel
               id="main"
               minSize={560}
               className="relative min-w-0"
             >
-              <ResizablePanelGroup
-                orientation="horizontal"
-                id="main-panes"
-                defaultLayout={initialMainLayout}
-                onLayoutChanged={mainLayout.onLayoutChanged}
-              >
+              <ResizablePanelGroup orientation="horizontal" id="main-panes">
                 <ResizablePanel
                   id="tree"
                   panelRef={treeRef}
                   onResize={onTreeResize}
                   collapsible
-                  defaultSize={272}
+                  groupResizeBehavior="preserve-pixel-size"
+                  defaultSize={showTree ? treeWidth : 0}
                   minSize={200}
                   maxSize="40"
                   className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
@@ -1147,7 +1170,9 @@ export default function DiffPage({
                 <ResizableHandle />
                 <ResizablePanel
                   id="threads"
-                  defaultSize={360}
+                  groupResizeBehavior="preserve-pixel-size"
+                  onResize={onThreadsResize}
+                  defaultSize={threadsWidth}
                   minSize={280}
                   maxSize="45"
                   className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"

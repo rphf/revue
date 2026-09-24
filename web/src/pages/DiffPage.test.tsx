@@ -257,6 +257,20 @@ describe("DiffPage send", () => {
     expect(api.send).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the threads panel open across reloads", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    const { unmount } = renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show threads" }),
+    );
+    await screen.findByTestId("threads-panel");
+    unmount();
+
+    renderPage();
+    expect(await screen.findByTestId("threads-panel")).toBeInTheDocument();
+    expect(screen.getByLabelText("Note to the agent")).not.toHaveFocus();
+  });
+
   it("focuses the note when the threads panel opens", async () => {
     vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
     renderPage();
