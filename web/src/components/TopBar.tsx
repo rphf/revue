@@ -92,11 +92,14 @@ function LiveDot({ pulse }: { pulse: number }) {
   );
 }
 
-function Shortcut({ letter }: { letter: string }) {
+// A shortcut as the modifier key, then the rest.
+function Shortcut({ keys }: { keys: string[] }) {
   return (
     <KbdGroup>
       <Kbd>{IS_MAC ? "⌘" : "Ctrl"}</Kbd>
-      <Kbd>{letter}</Kbd>
+      {keys.map((k) => (
+        <Kbd key={k}>{k}</Kbd>
+      ))}
     </KbdGroup>
   );
 }
@@ -161,7 +164,7 @@ export default function TopBar({
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          Files <Shortcut letter="B" />
+          Files <Shortcut keys={["B"]} />
         </TooltipContent>
       </Tooltip>
       <Brand />
@@ -195,7 +198,7 @@ export default function TopBar({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Threads <Shortcut letter="I" />
+            Threads <Shortcut keys={["I"]} />
           </TooltipContent>
         </Tooltip>
 
@@ -253,9 +256,8 @@ export default function TopBar({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {draftCount > 0
-                ? `Send ${draftCount} draft comment${draftCount === 1 ? "" : "s"} now`
-                : "No drafts to send: opens the note to the agent"}
+              {draftCount > 0 ? "Send directly" : "Write a note"}{" "}
+              <Shortcut keys={[IS_MAC ? "⇧" : "Shift", "↵"]} />
             </TooltipContent>
           </Tooltip>
           <Tooltip>

@@ -234,6 +234,29 @@ describe("DiffPage send", () => {
     expect(api.send).not.toHaveBeenCalled();
   });
 
+  it("sends the drafts with the shift-enter shortcut", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([{ ...reviewerComment, draft: true }])],
+    });
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("send-now")).toHaveTextContent("1"),
+    );
+    fireEvent.keyDown(window, { key: "Enter", shiftKey: true, ctrlKey: true });
+    await waitFor(() => expect(api.send).toHaveBeenCalledWith(""));
+  });
+
+  it("sends the note, not a bare send, on shift-enter in the composer", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    renderPage();
+    fireEvent.click(await screen.findByTestId("open-send"));
+    const note = await screen.findByLabelText("Note to the agent");
+    fireEvent.change(note, { target: { value: "LGTM" } });
+    fireEvent.keyDown(note, { key: "Enter", shiftKey: true, ctrlKey: true });
+    await waitFor(() => expect(api.send).toHaveBeenCalledWith("LGTM"));
+    expect(api.send).toHaveBeenCalledTimes(1);
+  });
+
   it("focuses the note when the threads panel opens", async () => {
     vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
     renderPage();

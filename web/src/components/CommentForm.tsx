@@ -63,6 +63,7 @@ export default function CommentForm({
       cancel();
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
       void submit();
     }
   };

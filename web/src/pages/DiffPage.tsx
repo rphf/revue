@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import type {
   DiffLineAnnotation,
@@ -258,21 +265,6 @@ export default function DiffPage({
     setShowTree(open);
     saveTreeOpen(open);
   }, []);
-
-  // ⌘B toggles the tree, like the side bar in editors, and ⌘I the
-  // threads. They work from inside a comment box too, as in an editor.
-  useEffect(() => {
-    const listener = (e: KeyboardEvent) => {
-      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "b") toggleTree();
-      else if (key === "i") togglePanel();
-      else return;
-      e.preventDefault();
-    };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, [toggleTree, togglePanel]);
 
   // Threads and the sends that group them into rounds load together,
   // so a Send never shows its threads under the wrong round. Calls
@@ -770,6 +762,28 @@ export default function DiffPage({
     [loadThreads, openComposer],
   );
   const sendNow = useCallback(() => void sendRound(""), [sendRound]);
+
+  // ⌘B toggles the tree, like the side bar in editors, ⌘I the threads,
+  // and ⌘⇧↵ does what the Send button does. They work from inside a
+  // text box too, as in an editor, unless the box used the key itself.
+  const onShortcut = useEffectEvent((e: KeyboardEvent) => {
+    if (e.defaultPrevented || e.altKey) return;
+    if (!(IS_MAC ? e.metaKey : e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    if (e.shiftKey && key === "enter") {
+      if (sending) return;
+      if (draftCount > 0) sendNow();
+      else openComposer();
+    } else if (!e.shiftKey && key === "b") toggleTree();
+    else if (!e.shiftKey && key === "i") togglePanel();
+    else return;
+    e.preventDefault();
+  });
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => onShortcut(e);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, []);
 
   // Archiving: the offer after a commit, the panel menu, and the
   // automatic setting. Every change reloads the threads, what landed,
