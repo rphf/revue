@@ -76,6 +76,8 @@ export interface DiffPageProps {
 // screen until the new one lands.
 interface DiffLoad {
   argsKey: string;
+  // Whether whitespace changes were left out of this diff.
+  hideSpace: boolean;
   diff: DiffResponse | null;
   files: FileDiffMetadata[] | null;
   error: string | null;
@@ -84,6 +86,50 @@ interface DiffLoad {
 const DIFF_STYLE_KEY = "revue-diff-style";
 const DISMISSED_LANDED_KEY = "revue-landed-dismissed";
 const TREE_HIDDEN_KEY = "revue-tree-hidden";
+const HIDE_SPACE_KEY = "revue-hide-whitespace";
+
+function loadHideSpace(): boolean {
+  try {
+    return localStorage.getItem(HIDE_SPACE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveHideSpace(hide: boolean): void {
+  try {
+    if (hide) localStorage.setItem(HIDE_SPACE_KEY, "1");
+    else localStorage.removeItem(HIDE_SPACE_KEY);
+  } catch {
+    // Not remembering the choice is fine.
+  }
+}
+
+// inHunks reports whether a line is in the diff on screen: in one of
+// its file's hunks, or anywhere in the file for line 0.
+function inHunks(
+  files: FileDiffMetadata[] | null,
+  at: { path: string; side?: Side; line?: number },
+): boolean {
+  const file = files?.find((f) => f.name === at.path);
+  if (!file) return false;
+  if (!at.line) return true;
+  const line = at.line;
+  return file.hunks.some((h) =>
+    at.side === "deletions"
+      ? line >= h.deletionStart && line < h.deletionStart + h.deletionCount
+      : line >= h.additionStart && line < h.additionStart + h.additionCount,
+  );
+}
+
+// A key typed into a text box is text, not a shortcut.
+function typing(e: KeyboardEvent): boolean {
+  const el = e.composedPath()[0];
+  return (
+    el instanceof HTMLElement &&
+    (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+  );
+}
 
 function loadTreeOpen(): boolean {
   try {
@@ -207,6 +253,13 @@ export default function DiffPage({
     setDiffStyle(style);
     saveDiffStyle(style);
   }, []);
+  const [hideSpace, setHideSpace] = useState(loadHideSpace);
+  const toggleHideSpace = useCallback(() => {
+    setHideSpace((hide) => {
+      saveHideSpace(!hide);
+      return !hide;
+    });
+  }, []);
   const [viewed, setViewed] = useState<ReadonlySet<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string>();
   // Markdown files shown rendered instead of as source (GitHub's rich
@@ -329,7 +382,7 @@ export default function DiffPage({
   useEffect(() => {
     let cancelled = false;
     api
-      .getDiff(args)
+      .getDiff(args, hideSpace)
       .then((diff) => {
         if (cancelled) return;
         setLoad((prev) => {
@@ -340,7 +393,7 @@ export default function DiffPage({
               ? { patch: same.diff.patch, files: same.files }
               : null,
           );
-          return { argsKey, diff, files, error: null };
+          return { argsKey, hideSpace, diff, files, error: null };
         });
         const seen = notice.current;
         if (
@@ -354,6 +407,7 @@ export default function DiffPage({
         if (!cancelled)
           setLoad({
             argsKey,
+            hideSpace,
             diff: null,
             files: null,
             error: errorMessage(e),
@@ -362,7 +416,7 @@ export default function DiffPage({
     return () => {
       cancelled = true;
     };
-  }, [args, argsKey, fetchNonce]);
+  }, [args, argsKey, fetchNonce, hideSpace]);
   const diff = shown?.diff ?? null;
   const repo = diff?.repo;
   useEffect(() => {
@@ -670,6 +724,10 @@ export default function DiffPage({
   // A live thread scrolls to its line; an outdated one opens on the
   // file as it was when the thread started. Either way the thread is
   // outlined until the next click elsewhere.
+  // A live thread on a line whose only change was whitespace is not in
+  // the diff while whitespace is hidden: jumping to it shows whitespace
+  // again and waits for that diff before scrolling.
+  const spaceJump = useRef<NonNullable<typeof jump> | null>(null);
   const jumpToThread = useCallback(
     (thread: ThreadType, position: ThreadPosition | undefined) => {
       setFocusedId(thread.id);
@@ -677,17 +735,29 @@ export default function DiffPage({
       if (position?.state === "live") {
         setSnapshotId(null);
         setSelectedPath(position.path);
-        reveal({
+        const target = {
           path: position.path,
           side: position.side,
           line: position.line,
-        });
+        };
+        if (hideSpace && !inHunks(parsedFiles, target)) {
+          setHideSpace(false);
+          saveHideSpace(false);
+          spaceJump.current = target;
+        } else reveal(target);
       } else {
         setSnapshotId(thread.id);
       }
     },
-    [reveal],
+    [reveal, hideSpace, parsedFiles],
   );
+  useEffect(() => {
+    const target = spaceJump.current;
+    if (target && shown?.files && !shown.hideSpace) {
+      spaceJump.current = null;
+      reveal(target);
+    }
+  }, [shown, reveal]);
   const openSnapshot = useCallback((id: number) => {
     setHistoryThread(null);
     setSnapshotId(id);
@@ -766,8 +836,19 @@ export default function DiffPage({
   // ⌘B toggles the tree, like the side bar in editors, ⌘I the threads,
   // and ⌘⇧↵ does what the Send button does. They work from inside a
   // text box too, as in an editor, unless the box used the key itself.
+  // W hides whitespace, as in lazygit, and | switches split and unified
+  // views; being bare keys, they are text inside a box.
   const onShortcut = useEffectEvent((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey) return;
+    if (!e.metaKey && !e.ctrlKey) {
+      if (e.repeat || typing(e)) return;
+      if (e.key === "w") toggleHideSpace();
+      else if (e.key === "|")
+        changeDiffStyle(diffStyle === "split" ? "unified" : "split");
+      else return;
+      e.preventDefault();
+      return;
+    }
     if (!(IS_MAC ? e.metaKey : e.ctrlKey)) return;
     const key = e.key.toLowerCase();
     if (e.shiftKey && key === "enter") {
@@ -883,6 +964,8 @@ export default function DiffPage({
             sending={sending}
             diffStyle={diffStyle}
             onDiffStyleChange={changeDiffStyle}
+            hideSpace={hideSpace}
+            onToggleHideSpace={toggleHideSpace}
             theme={theme}
             onToggleTheme={onToggleTheme}
           />

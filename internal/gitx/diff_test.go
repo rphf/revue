@@ -616,3 +616,34 @@ func TestCatFileSkipsMissingObjects(t *testing.T) {
 		t.Errorf("sizes = %+v", sizes)
 	}
 }
+
+func TestIgnoringSpaceHidesWhitespaceOnlyFiles(t *testing.T) {
+	repo := gittest.Init(t)
+	write(t, repo, "space.txt", "a\nb\nc\n")
+	write(t, repo, "real.txt", "x\ny\n")
+	commitAll(t, repo, "c1")
+	write(t, repo, "space.txt", "a\n    b\nc\n")
+	write(t, repo, "real.txt", "x\n  y\nz\n")
+	write(t, repo, "new.txt", "  fresh\n")
+
+	res, err := Capture(repo, nil, nil)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	patch, hidden, err := IgnoringSpace(repo, nil, res)
+	if err != nil {
+		t.Fatalf("IgnoringSpace: %v", err)
+	}
+	if !hidden["space.txt"] || len(hidden) != 1 {
+		t.Errorf("hidden = %v, want only space.txt", hidden)
+	}
+	if strings.Contains(patch, "space.txt") {
+		t.Errorf("whitespace-only file still in the patch:\n%s", patch)
+	}
+	if !strings.Contains(patch, "+z") || strings.Contains(patch, "+  y") {
+		t.Errorf("real.txt should keep its addition and drop the reindent:\n%s", patch)
+	}
+	if !strings.Contains(patch, "+  fresh") {
+		t.Errorf("untracked file missing from the patch:\n%s", patch)
+	}
+}

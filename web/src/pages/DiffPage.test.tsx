@@ -380,6 +380,41 @@ describe("DiffPage live updates", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides whitespace with W and switches the layout with |", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    expect(api.getDiff).toHaveBeenLastCalledWith([], false);
+    fireEvent.keyDown(window, { key: "w" });
+    await waitFor(() => expect(api.getDiff).toHaveBeenLastCalledWith([], true));
+    expect(
+      screen.getByRole("button", { name: "Show whitespace changes" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    const split = screen.getByRole("radio", { name: "Split view" });
+    expect(split).toHaveAttribute("aria-checked", "true");
+    fireEvent.keyDown(window, { key: "|", shiftKey: true });
+    expect(screen.getByRole("radio", { name: "Unified view" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("types W into a text box instead of hiding whitespace", async () => {
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show threads" }),
+    );
+    const note = await screen.findByLabelText("Note to the agent");
+    const calls = vi.mocked(api.getDiff).mock.calls.length;
+    fireEvent.keyDown(note, { key: "w" });
+    expect(
+      screen.getByRole("button", { name: "Hide whitespace changes" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(api.getDiff).toHaveBeenCalledTimes(calls);
+  });
+
   it("outlines a live thread jumped to from the panel", async () => {
     renderPage();
     await waitFor(() =>
@@ -733,6 +768,28 @@ describe("DiffPage viewed files", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it("shows whitespace again to jump to a thread the hidden diff leaves out", async () => {
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "w" });
+    await waitFor(() => expect(api.getDiff).toHaveBeenLastCalledWith([], true));
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    scrolls.length = 0;
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+
+    await waitFor(() =>
+      expect(api.getDiff).toHaveBeenLastCalledWith([], false),
+    );
+    await waitFor(() =>
+      expect(scrolls.filter((s) => s.type === "line")).toEqual([
+        expect.objectContaining({ id: "a.go" }),
+      ]),
+    );
+    expect(
+      screen.getByRole("button", { name: "Hide whitespace changes" }),
+    ).toHaveAttribute("aria-pressed", "false");
   });
 
   it("collapses a file ticked as viewed in its header, and a jump to a thread in it opens it", async () => {

@@ -1508,3 +1508,46 @@ func TestBrowserFromHandlersPicksTheHTTPSHandler(t *testing.T) {
 		t.Errorf("browser with no handlers = %q, want Safari", got)
 	}
 }
+
+// With w=1 the diff leaves whitespace out: a file with only whitespace
+// changes is gone, and threads keep the places the full diff gives them.
+func TestDiffIgnoringWhitespace(t *testing.T) {
+	repo := initRepo(t)
+	writeFile(t, repo, "b.txt", "one\ntwo\n")
+	gittest.Git(t, repo, "add", "-A")
+	gittest.Git(t, repo, "commit", "-q", "-m", "c2")
+	ts := startServer(t, repo, 0)
+	ts.modify(t)
+	writeFile(t, repo, "b.txt", "one\n\ttwo\n")
+	id := ts.draft(t, 15, "note")
+
+	full := ts.getDiff(t)
+	var spaced diffResponse
+	ts.mustStatus(t, ts.do(t, "GET", "/api/diff?w=1", nil, &spaced), http.StatusOK)
+
+	if spaced.Version != full.Version {
+		t.Errorf("version = %d, want the full diff's %d", spaced.Version, full.Version)
+	}
+	for _, f := range spaced.Files {
+		if f.Path == "b.txt" {
+			t.Error("whitespace-only b.txt still listed")
+		}
+	}
+	if strings.Contains(spaced.Patch, "b.txt") || !strings.Contains(spaced.Patch, changedLine) {
+		t.Errorf("patch should drop b.txt and keep a.txt:\n%s", spaced.Patch)
+	}
+	var fullAnchor, spacedAnchor *positionView
+	for i := range full.Anchors {
+		if full.Anchors[i].ThreadID == id {
+			fullAnchor = &full.Anchors[i]
+		}
+	}
+	for i := range spaced.Anchors {
+		if spaced.Anchors[i].ThreadID == id {
+			spacedAnchor = &spaced.Anchors[i]
+		}
+	}
+	if fullAnchor == nil || spacedAnchor == nil || *fullAnchor != *spacedAnchor {
+		t.Errorf("anchor = %+v, want %+v", spacedAnchor, fullAnchor)
+	}
+}

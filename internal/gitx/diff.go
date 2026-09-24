@@ -41,11 +41,16 @@ type File struct {
 	// blob, or no blob when the new side is only in the working tree.
 	OldOID, NewOID   string
 	OldSize, NewSize int64
+
+	// Untracked marks a working-tree file git does not track yet.
+	Untracked bool
 }
 
 type Result struct {
 	Patch string
 	Files []File
+	// UntrackedPatch is the part of Patch for untracked files.
+	UntrackedPatch string
 }
 
 // Empty reports whether the capture contains no changes.
@@ -226,9 +231,40 @@ func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {
 		}
 		files = append(files, untracked...)
 		out += upatch
+		return &Result{Patch: out, Files: files, UntrackedPatch: upatch}, nil
 	}
 
 	return &Result{Patch: out, Files: files}, nil
+}
+
+// IgnoringSpace reads r's diff again with whitespace changes left out,
+// as git diff -w prints it. The tracked part is diffed again; the
+// untracked part, all additions, is r's own. hidden lists the files
+// whose only changes were whitespace, which git -w leaves out.
+func IgnoringSpace(repoRoot string, args []string, r *Result) (patch string, hidden map[string]bool, err error) {
+	if err := ValidateArgs(args); err != nil {
+		return "", nil, err
+	}
+	flags := append(append([]string{}, forcedDiffFlags...), "--ignore-all-space")
+	out, err := git(repoRoot, append(append([]string{"diff", "--no-color", "--full-index"}, flags...), args...)...)
+	if err != nil {
+		return "", nil, err
+	}
+	names, err := git(repoRoot, append(append([]string{"diff", "--name-only", "-z"}, flags...), args...)...)
+	if err != nil {
+		return "", nil, err
+	}
+	kept := map[string]bool{}
+	for _, name := range strings.Split(string(names), "\x00") {
+		kept[name] = true
+	}
+	hidden = map[string]bool{}
+	for _, f := range r.Files {
+		if !f.Untracked && !kept[f.Path] {
+			hidden[f.Path] = true
+		}
+	}
+	return joinTypeChanges(string(out)) + r.UntrackedPatch, hidden, nil
 }
 
 func hasOldBlob(f *File, e rawEntry) bool {
@@ -411,6 +447,7 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 				return nil, "", err
 			}
 			patch.WriteString(linkPatch)
+			f.Untracked = true
 			files = append(files, f)
 			continue
 		}
@@ -423,7 +460,7 @@ func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
 		isBinary := bytes.HasPrefix(numstat, []byte("-\t-\t"))
 		patch.Write(filePatch)
 
-		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary, NewSize: info.Size()}
+		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary, NewSize: info.Size(), Untracked: true}
 		if !isBinary {
 			content, err := os.ReadFile(filepath.Join(repoRoot, p))
 			if err != nil {

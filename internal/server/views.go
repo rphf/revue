@@ -39,6 +39,25 @@ type capture struct {
 	hunks   []*anchor.Hunk
 	target  *anchor.Target
 	files   map[string]*gitx.File
+
+	// The same diff with whitespace changes left out, read on first
+	// request. Threads are still placed with the full diff's hunks.
+	spaceOnce sync.Once
+	space     *spaceReading
+	spaceErr  error
+}
+
+type spaceReading struct {
+	patch  string
+	hidden map[string]bool
+}
+
+func (c *capture) ignoringSpace(repoRoot string, args []string) (*spaceReading, error) {
+	c.spaceOnce.Do(func() {
+		patch, hidden, err := gitx.IgnoringSpace(repoRoot, args, c.result)
+		c.space, c.spaceErr = &spaceReading{patch: patch, hidden: hidden}, err
+	})
+	return c.space, c.spaceErr
 }
 
 type views struct {
@@ -150,9 +169,13 @@ type fileView struct {
 
 // fileViews lists the files; a binary file also carries the byte size
 // of each side it has, since no diff describes it.
-func (c *capture) fileViews() []fileView {
+// fileViews lists the capture's files, less the hidden ones.
+func (c *capture) fileViews(hidden map[string]bool) []fileView {
 	out := make([]fileView, 0, len(c.result.Files))
 	for _, f := range c.result.Files {
+		if hidden[f.Path] {
+			continue
+		}
 		v := fileView{Path: f.Path, OldPath: f.OldPath, Status: f.Status, IsBinary: f.IsBinary}
 		if f.IsBinary {
 			if f.OldOID != "" {

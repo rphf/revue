@@ -43,8 +43,12 @@ async function request<T>(
 export const api = {
   // Brings the browser app forward after a notification click (macOS).
   raise: () => request<void>("POST", "/api/raise"),
-  getDiff: (args: string[]) =>
-    request<DiffResponse>("GET", `/api/diff${argsQuery(args)}`),
+  // hideSpace leaves whitespace changes out, as GitHub's w=1 does.
+  getDiff: (args: string[], hideSpace = false) =>
+    request<DiffResponse>(
+      "GET",
+      `/api/diff${argsQuery(args, hideSpace ? { w: "1" } : undefined)}`,
+    ),
   getDiffFile: (args: string[], path: string) =>
     request<FileVersions>("GET", `/api/diff/file${argsQuery(args, { path })}`),
   // Image URL for the rich markdown view, served from the checkout.

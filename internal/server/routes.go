@@ -172,7 +172,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // handleDiff serves the current diff for the requested arguments: the
 // raw patch the UI parses, the file list, and where every thread sits
-// in it.
+// in it. With w=1 the patch leaves whitespace changes out, as on
+// GitHub, and files with nothing else are left out of the list.
 func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	args := queryArgs(r)
 	c, ok := s.captureFromQuery(w, args)
@@ -184,13 +185,22 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	patch, hidden := c.result.Patch, map[string]bool(nil)
+	if r.URL.Query().Get("w") == "1" {
+		space, err := c.ignoringSpace(s.repoRoot, args)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		patch, hidden = space.patch, space.hidden
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"args":    args,
 		"branch":  c.branch,
 		"repo":    s.repoName,
 		"version": c.version,
-		"patch":   c.result.Patch,
-		"files":   c.fileViews(),
+		"patch":   patch,
+		"files":   c.fileViews(hidden),
 		"anchors": c.positions(threads),
 	})
 }

@@ -7,6 +7,7 @@ import {
   PanelLeftIcon,
   Rows3Icon,
   SendIcon,
+  SpaceIcon,
 } from "lucide-react";
 import type { Theme } from "../theme";
 import type { DiffStyle } from "./DiffView";
@@ -123,6 +124,8 @@ export interface TopBarProps {
   sending: boolean;
   diffStyle: DiffStyle;
   onDiffStyleChange: (style: DiffStyle) => void;
+  hideSpace: boolean;
+  onToggleHideSpace: () => void;
   theme: Theme;
   onToggleTheme: () => void;
 }
@@ -146,6 +149,8 @@ export default function TopBar({
   sending,
   diffStyle,
   onDiffStyleChange,
+  hideSpace,
+  onToggleHideSpace,
   theme,
   onToggleTheme,
 }: TopBarProps) {
@@ -219,7 +224,9 @@ export default function TopBar({
                 <Columns2Icon />
               </ToggleGroupItem>
             </TooltipTrigger>
-            <TooltipContent>Split view</TooltipContent>
+            <TooltipContent>
+              Split view <Kbd>|</Kbd>
+            </TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -227,9 +234,28 @@ export default function TopBar({
                 <Rows3Icon />
               </ToggleGroupItem>
             </TooltipTrigger>
-            <TooltipContent>Unified view</TooltipContent>
+            <TooltipContent>
+              Unified view <Kbd>|</Kbd>
+            </TooltipContent>
           </Tooltip>
         </ToggleGroup>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={hideSpace ? "secondary" : "ghost"}
+              size="icon-sm"
+              aria-label={`${hideSpace ? "Show" : "Hide"} whitespace changes`}
+              aria-pressed={hideSpace}
+              onClick={onToggleHideSpace}
+            >
+              <SpaceIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {hideSpace ? "Show" : "Hide"} whitespace <Kbd>W</Kbd>
+          </TooltipContent>
+        </Tooltip>
 
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
 
