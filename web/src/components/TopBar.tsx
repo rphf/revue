@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
+import { Toggle } from "@/components/ui/toggle";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
@@ -186,27 +187,9 @@ export default function TopBar({
       <DiffPicker branch={branch} args={args} onNavigate={onNavigate} />
       <LiveDot pulse={pulse} />
 
-      <div className="ml-auto flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={panelOpen ? "secondary" : "ghost"}
-              size="sm"
-              aria-label={`${panelOpen ? "Hide" : "Show"} threads`}
-              aria-pressed={panelOpen}
-              onClick={onTogglePanel}
-            >
-              <MessageSquareTextIcon />
-              {threadCount > 0 && (
-                <span className="tabular-nums">{threadCount}</span>
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            Threads <Shortcut keys={["I"]} />
-          </TooltipContent>
-        </Tooltip>
-
+      {/* How the diff looks, then the page's theme, then the review:
+          the threads and sending them, which opens the threads too. */}
+      <div className="ml-auto flex items-center gap-1.5">
         <ToggleGroup
           type="single"
           variant="outline"
@@ -242,27 +225,50 @@ export default function TopBar({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant={hideSpace ? "secondary" : "ghost"}
-              size="icon-sm"
+            <Toggle
+              variant="outline"
+              size="sm"
+              className="rounded-lg px-2"
+              pressed={hideSpace}
+              onPressedChange={onToggleHideSpace}
               aria-label={`${hideSpace ? "Show" : "Hide"} whitespace changes`}
-              aria-pressed={hideSpace}
-              onClick={onToggleHideSpace}
             >
               <SpaceIcon />
-            </Button>
+            </Toggle>
           </TooltipTrigger>
           <TooltipContent>
             {hideSpace ? "Show" : "Hide"} whitespace <Kbd>W</Kbd>
           </TooltipContent>
         </Tooltip>
 
+        <Separator orientation="vertical" className="mx-1 h-5!" />
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <Separator orientation="vertical" className="mx-1 h-5!" />
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={panelOpen ? "secondary" : "ghost"}
+              size="sm"
+              aria-label={`${panelOpen ? "Hide" : "Show"} threads`}
+              aria-pressed={panelOpen}
+              onClick={onTogglePanel}
+            >
+              <MessageSquareTextIcon />
+              {threadCount > 0 && (
+                <span className="tabular-nums">{threadCount}</span>
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Threads <Shortcut keys={["I"]} />
+          </TooltipContent>
+        </Tooltip>
 
         {/* One click sends the drafts as they are; the second half
             opens the composer to add a note. Without drafts there is
             nothing to send at once, so both halves open the composer. */}
-        <div className="ml-1 flex items-center">
+        <div className="flex items-center">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
