@@ -234,6 +234,22 @@ describe("DiffPage send", () => {
     expect(api.send).not.toHaveBeenCalled();
   });
 
+  it("focuses the note when the threads panel opens", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show threads" }),
+    );
+    const note = await screen.findByLabelText("Note to the agent");
+    await waitFor(() => expect(note).toHaveFocus());
+    fireEvent.keyDown(window, { key: "i", ctrlKey: true });
+    await waitFor(() => expect(note).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: "i", ctrlKey: true });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Note to the agent")).toHaveFocus(),
+    );
+  });
+
   it("opens the threads panel on the composer to send with a note", async () => {
     vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
     renderPage();

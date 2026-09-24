@@ -166,7 +166,12 @@ export default function DiffPage({
   const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   const [showPanel, setShowPanel] = useState(false);
-  const togglePanel = useCallback(() => setShowPanel((v) => !v), []);
+  const [composerFocus, setComposerFocus] = useState(0);
+  // Opening the panel puts the caret in the note, however it opens.
+  const togglePanel = useCallback(() => {
+    setShowPanel((v) => !v);
+    setComposerFocus((n) => n + 1);
+  }, []);
   const closePanel = useCallback(() => setShowPanel(false), []);
   // The note for the next send outlives the panel, so closing it to
   // look at the diff loses nothing. The composer owns the text while it
@@ -175,7 +180,6 @@ export default function DiffPage({
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [composerFocus, setComposerFocus] = useState(0);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
