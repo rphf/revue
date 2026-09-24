@@ -75,10 +75,13 @@ export default function SendComposer({
         </p>
       )}
       <div className="flex items-center justify-between gap-2">
-        <KbdGroup className="text-xs text-muted-foreground">
-          <Kbd>{IS_MAC ? "⌘" : "Ctrl"}</Kbd>
-          <Kbd>Enter</Kbd>
-        </KbdGroup>
+        <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+          <KbdGroup>
+            <Kbd>{IS_MAC ? "⌘" : "Ctrl"}</Kbd>
+            <Kbd>↵</Kbd>
+          </KbdGroup>
+          to send
+        </span>
         <Button
           type="button"
           size="sm"
