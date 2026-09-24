@@ -258,7 +258,7 @@
   /* A whole markdown file rendered in the diff pane: document scale
      on top of the comment styles, and the changed blocks marked. */
   .markdown-doc {
-    @apply max-w-[80ch] px-6 py-4 font-sans text-sm text-foreground;
+    @apply mx-auto max-w-[80ch] px-6 py-4 font-sans text-sm text-foreground;
   }
   .markdown-doc h1 {
     @apply mt-6 mb-3 border-b pb-2 text-2xl font-semibold tracking-tight;
@@ -275,14 +275,17 @@
   .markdown-doc > .rich-block:first-child > :first-child {
     margin-top: 0;
   }
+  /* Like GitHub's rich diff: a bar beside a changed block, no fill.
+     Without vertical padding the block's margins fall outside it, so
+     the bars of neighbouring blocks stay apart. */
   .rich-block {
-    @apply -mx-3 rounded-md border-l-2 border-transparent px-3 py-0.5;
+    @apply -ml-4 border-l-4 border-transparent pl-3;
   }
   .rich-added {
-    @apply border-added bg-added/8;
+    @apply border-added/50;
   }
   .rich-removed {
-    @apply border-removed bg-removed/8 text-muted-foreground;
+    @apply border-removed/50 text-muted-foreground;
   }
   /* A checkerboard behind image previews, so transparent pixels read as
      transparent in both themes. */
