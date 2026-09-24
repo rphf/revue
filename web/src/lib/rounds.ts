@@ -9,7 +9,9 @@ export type Round =
       kind: "send";
       key: string;
       send: Send;
-      // 1-based, in send order.
+      // 1-based, counting sends from the first one the listed threads
+      // took part in: once older threads are archived, the
+      // conversation counts from 1 again.
       number: number;
       threads: Thread[];
     };
@@ -43,17 +45,19 @@ function commentRound(
 // groupByRound lists each thread once, under the latest round it has a
 // comment in, the way `revue feedback --since` surfaces what moved. The
 // unsent round comes first, then sends newest first; empty rounds are
-// left out and threads keep their order.
+// left out and threads keep their order. A round left empty because
+// its threads moved on still counts: a thread going back and forth
+// reads Round 1, 2, 3, not Round 1 each time.
 export function groupByRound(threads: Thread[], sends: Send[]): Round[] {
   const ordered = [...sends].sort((a, b) => a.id - b.id);
   const indexById = new Map(ordered.map((s, i) => [s.id, i]));
   const unsent: Thread[] = [];
   const bySend: Thread[][] = ordered.map(() => []);
+  let first = UNSENT;
   for (const t of threads) {
-    const round = Math.max(
-      0,
-      ...t.comments.map((c) => commentRound(c, ordered, indexById)),
-    );
+    const rounds = t.comments.map((c) => commentRound(c, ordered, indexById));
+    first = Math.min(first, ...rounds);
+    const round = Math.max(0, ...rounds);
     if (round === UNSENT || ordered.length === 0) unsent.push(t);
     else bySend[round].push(t);
   }
@@ -66,7 +70,7 @@ export function groupByRound(threads: Thread[], sends: Send[]): Round[] {
       kind: "send",
       key: `send-${ordered[i].id}`,
       send: ordered[i],
-      number: i + 1,
+      number: i - first + 1,
       threads: bySend[i],
     });
   }

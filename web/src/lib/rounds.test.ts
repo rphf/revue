@@ -63,20 +63,55 @@ describe("groupByRound", () => {
       ["unsent", [2, 3]],
       ["send-3", [1]],
     ]);
+    // Thread 2 took part in send 1, so counting starts there.
     expect(rounds[1]).toMatchObject({ kind: "send", number: 3 });
   });
 
   it("numbers rounds in send order whatever the input order", () => {
     const rounds = groupByRound(
-      [thread([comment({ sendId: 2 })], { id: 1 })],
+      [
+        thread([comment({ sendId: 2 })], { id: 1 }),
+        thread([comment({ sendId: 3 })], { id: 2 }),
+      ],
       [...sends].reverse(),
     );
-    expect(rounds[0]).toMatchObject({ number: 2, send: { note: "second" } });
+    expect(rounds[0]).toMatchObject({ number: 2, send: { id: 3 } });
+    expect(rounds[1]).toMatchObject({ number: 1, send: { note: "second" } });
+  });
+
+  // Archiving a commit's threads takes their rounds off the list: the
+  // next conversation starts from Round 1, not from the repository's
+  // count of sends.
+  it("counts from the first send the listed threads took part in", () => {
+    const rounds = groupByRound(
+      [thread([comment({ sendId: 3 })], { id: 1 })],
+      sends,
+    );
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]).toMatchObject({ number: 1, send: { id: 3 } });
   });
 
   it("has only the unsent round before the first send", () => {
     expect(keys([thread([comment({ draft: true })], { id: 1 })], [])).toEqual([
       ["unsent", [1]],
     ]);
+  });
+
+  it("keeps counting while one thread goes back and forth", () => {
+    const rounds = groupByRound(
+      [
+        thread(
+          [
+            comment({ sendId: 1 }),
+            comment({ authorRole: "agent", createdAt: "2026-09-20T10:30:00Z" }),
+            comment({ sendId: 2 }),
+          ],
+          { id: 1 },
+        ),
+        thread([comment({ sendId: 3 })], { id: 2 }),
+      ],
+      sends,
+    );
+    expect(rounds.map((r) => r.kind === "send" && r.number)).toEqual([3, 2]);
   });
 });
