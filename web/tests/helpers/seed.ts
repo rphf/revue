@@ -106,7 +106,7 @@ export function writeFixtureFile(name: string, content: string): void {
 // draftComment creates a reviewer draft through the real gutter UI on
 // the diff line containing lineText: hover the line, click the diff's
 // own "+" (inside the shadow root, which locators pierce), fill the
-// form, start the thread. CodeView virtualizes rows and re-renders
+// form, start the thread, and wait until the server has it. CodeView virtualizes rows and re-renders
 // them as highlighting streams in, so any step can find its node gone;
 // each block retries as a whole until it passes.
 export async function draftComment(
@@ -144,9 +144,17 @@ export async function draftComment(
   await page
     .getByRole("button", { name: "Start thread" })
     .dispatchEvent("click");
+  // The form's own textarea holds the body too, so the text alone
+  // shows up before the server has the draft. The form closes once
+  // the thread is saved, and the body is then in a thread card.
+  await expect(page.getByPlaceholder(/Comment on line/)).toHaveCount(0, {
+    timeout: 10_000,
+  });
   await expect(async () => {
     await line.scrollIntoViewIfNeeded();
-    await expect(page.getByText(body)).toBeVisible({ timeout: 1000 });
+    await expect(page.locator("[data-thread-id]").getByText(body)).toBeVisible({
+      timeout: 1000,
+    });
   }).toPass({ timeout: 10_000 });
 }
 
