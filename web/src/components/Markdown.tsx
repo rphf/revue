@@ -1,16 +1,27 @@
-import { useMemo } from "react";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { useEffect, useMemo, useRef } from "react";
+import { highlightCode } from "@/lib/highlight";
+import { renderMarkdown } from "@/lib/markdown";
 
-// Comment bodies come from reviewers AND agents — untrusted either
-// way. Everything renders through markdown + DOMPurify; raw HTML never
-// reaches the DOM (R4 hardening).
+// A comment body, rendered: see renderMarkdown for what is allowed.
+// Code blocks are colored after the first paint, once their grammar
+// has loaded.
 export default function Markdown({ source }: { source: string }) {
-  const html = useMemo(() => {
-    const rendered = marked.parse(source, { async: false }) as string;
-    return DOMPurify.sanitize(rendered);
-  }, [source]);
+  const ref = useRef<HTMLDivElement>(null);
+  const html = useMemo(() => renderMarkdown(source), [source]);
+  useEffect(() => {
+    const root = ref.current;
+    if (!root || !root.querySelector("pre > code[class*='language-']")) return;
+    let alive = true;
+    void highlightCode(root, () => alive);
+    return () => {
+      alive = false;
+    };
+  }, [html]);
   return (
-    <div className="markdown" dangerouslySetInnerHTML={{ __html: html }} />
+    <div
+      ref={ref}
+      className="markdown"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }

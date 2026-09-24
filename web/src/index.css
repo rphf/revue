@@ -254,6 +254,75 @@
   .markdown hr {
     @apply my-3;
   }
+  /* Code blocks colored by Shiki carry both themes' colors; the page's
+     theme picks one. */
+  .markdown pre.shiki {
+    background-color: var(--shiki-light-bg);
+  }
+  .markdown pre.shiki span {
+    color: var(--shiki-light);
+  }
+  [data-theme="dark"] .markdown pre.shiki {
+    background-color: var(--shiki-dark-bg);
+  }
+  [data-theme="dark"] .markdown pre.shiki span {
+    color: var(--shiki-dark);
+  }
+  /* Task lists and collapsible sections, as on GitHub. */
+  .markdown li:has(> input[type="checkbox"]) {
+    @apply -ml-5 list-none;
+  }
+  .markdown li > input[type="checkbox"] {
+    @apply mr-1.5 align-middle;
+  }
+  .markdown details {
+    @apply my-2 rounded-md border px-2.5 py-1.5;
+  }
+  .markdown summary {
+    @apply cursor-pointer font-medium;
+  }
+  .markdown details[open] > summary {
+    @apply mb-1;
+  }
+  /* GitHub's alerts: a quote tagged [!NOTE] and the like. */
+  .markdown-alert {
+    @apply my-2 border-l-4 py-0.5 pl-3;
+    border-color: var(--alert);
+  }
+  .markdown-alert-title {
+    @apply font-medium;
+    color: var(--alert);
+  }
+  .markdown-alert-note {
+    --alert: #0969da;
+  }
+  .markdown-alert-tip {
+    --alert: #1a7f37;
+  }
+  .markdown-alert-important {
+    --alert: #8250df;
+  }
+  .markdown-alert-warning {
+    --alert: #9a6700;
+  }
+  .markdown-alert-caution {
+    --alert: #cf222e;
+  }
+  [data-theme="dark"] .markdown-alert-note {
+    --alert: #4493f8;
+  }
+  [data-theme="dark"] .markdown-alert-tip {
+    --alert: #3fb950;
+  }
+  [data-theme="dark"] .markdown-alert-important {
+    --alert: #ab7df8;
+  }
+  [data-theme="dark"] .markdown-alert-warning {
+    --alert: #d29922;
+  }
+  [data-theme="dark"] .markdown-alert-caution {
+    --alert: #f85149;
+  }
 
   /* A whole markdown file rendered in the diff pane: document scale
      on top of the comment styles, and the changed blocks marked. */
