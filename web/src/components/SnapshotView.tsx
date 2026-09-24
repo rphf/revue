@@ -23,6 +23,7 @@ import {
 import { api, errorMessage } from "../api";
 import type { Theme } from "../theme";
 import type { Thread as ThreadType } from "../types";
+import { isTyping } from "@/lib/keys";
 import { locationLabel, threadRev } from "@/lib/threads";
 import { timeAgo } from "@/lib/time";
 import { Button } from "@/components/ui/button";
@@ -58,14 +59,6 @@ type SnapshotState =
   | { status: "ready"; file: FileDiffMetadata | null; createdAt: string };
 
 // Page shortcuts stay out of the way of anything that takes text.
-function isTyping(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable ||
-    target.closest("input, textarea, select, [contenteditable]") !== null
-  );
-}
-
 function NavButton({
   label,
   shortcut,
@@ -160,7 +153,7 @@ export default function SnapshotView({
   // handlers when a key comes in.
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (isTyping(e.target)) return;
+    if (isTyping(e)) return;
     if (e.key === "Escape") onClose();
     else if (e.key === "k" && hasPrev) onPrev();
     else if (e.key === "j" && hasNext) onNext();

@@ -415,6 +415,31 @@ describe("DiffPage live updates", () => {
     );
   });
 
+  it("lists the shortcuts on ? and from the top bar", async () => {
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "?", shiftKey: true });
+    const sheet = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+    });
+    expect(
+      within(sheet).getByText("Hide or show whitespace changes"),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByText("Next outdated thread")).toBeInTheDocument();
+
+    // Nothing acts behind the open list.
+    const calls = vi.mocked(api.getDiff).mock.calls.length;
+    fireEvent.keyDown(window, { key: "w" });
+    expect(api.getDiff).toHaveBeenCalledTimes(calls);
+
+    fireEvent.keyDown(sheet, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
   it("types W into a text box instead of hiding whitespace", async () => {
     renderPage();
     fireEvent.click(

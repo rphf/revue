@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   BookMarkedIcon,
   Columns2Icon,
+  KeyboardIcon,
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
   PanelLeftIcon,
@@ -127,6 +128,7 @@ export interface TopBarProps {
   onDiffStyleChange: (style: DiffStyle) => void;
   hideSpace: boolean;
   onToggleHideSpace: () => void;
+  onShowShortcuts: () => void;
   theme: Theme;
   onToggleTheme: () => void;
 }
@@ -152,6 +154,7 @@ export default function TopBar({
   onDiffStyleChange,
   hideSpace,
   onToggleHideSpace,
+  onShowShortcuts,
   theme,
   onToggleTheme,
 }: TopBarProps) {
@@ -243,6 +246,21 @@ export default function TopBar({
 
         <Separator orientation="vertical" className="mx-1 h-5!" />
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Keyboard shortcuts"
+              onClick={onShowShortcuts}
+            >
+              <KeyboardIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Keyboard shortcuts <Kbd>?</Kbd>
+          </TooltipContent>
+        </Tooltip>
         <Separator orientation="vertical" className="mx-1 h-5!" />
 
         <Tooltip>

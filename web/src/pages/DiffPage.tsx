@@ -39,6 +39,7 @@ import FileTree from "../components/FileTree";
 import LoadingBlocks from "../components/LoadingBlocks";
 import RichMarkdown from "../components/RichMarkdown";
 import SendComposer from "../components/SendComposer";
+import ShortcutsDialog from "../components/ShortcutsDialog";
 import SnapshotView from "../components/SnapshotView";
 import Thread from "../components/Thread";
 import { FocusedThreadContext } from "../components/threadFocus";
@@ -46,6 +47,7 @@ import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { notifyPermission, requestAttention } from "@/lib/attention";
 import { keyForArgs } from "@/lib/diffArgs";
+import { isTyping } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
@@ -152,15 +154,6 @@ function inHunks(
     at.side === "deletions"
       ? line >= h.deletionStart && line < h.deletionStart + h.deletionCount
       : line >= h.additionStart && line < h.additionStart + h.additionCount,
-  );
-}
-
-// A key typed into a text box is text, not a shortcut.
-function typing(e: KeyboardEvent): boolean {
-  const el = e.composedPath()[0];
-  return (
-    el instanceof HTMLElement &&
-    (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
   );
 }
 
@@ -294,6 +287,8 @@ export default function DiffPage({
     setDiffStyle(style);
     saveDiffStyle(style);
   }, []);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const openShortcuts = useCallback(() => setShowShortcuts(true), []);
   const [hideSpace, setHideSpace] = useState(loadHideSpace);
   const toggleHideSpace = useCallback(() => {
     setHideSpace((hide) => {
@@ -865,13 +860,15 @@ export default function DiffPage({
   // ⌘B toggles the tree, like the side bar in editors, ⌘I the threads,
   // and ⌘⇧↵ does what the Send button does. They work from inside a
   // text box too, as in an editor, unless the box used the key itself.
-  // W hides whitespace, as in lazygit, and | switches split and unified
-  // views; being bare keys, they are text inside a box.
+  // W hides whitespace, as in lazygit, | switches split and unified
+  // views, and ? lists every shortcut, as on GitHub; being bare keys,
+  // they are text inside a box. None acts behind the open list.
   const onShortcut = useEffectEvent((e: KeyboardEvent) => {
-    if (e.defaultPrevented || e.altKey) return;
+    if (e.defaultPrevented || e.altKey || showShortcuts) return;
     if (!e.metaKey && !e.ctrlKey) {
-      if (e.repeat || typing(e)) return;
-      if (e.key === "w") toggleHideSpace();
+      if (e.repeat || isTyping(e)) return;
+      if (e.key === "?") setShowShortcuts(true);
+      else if (e.key === "w") toggleHideSpace();
       else if (e.key === "|")
         changeDiffStyle(diffStyle === "split" ? "unified" : "split");
       else return;
@@ -975,6 +972,10 @@ export default function DiffPage({
       <FocusedThreadContext.Provider value={focusedId}>
         <div className="flex h-full flex-col">
           <ConnectionBanner state={connection} />
+          <ShortcutsDialog
+            open={showShortcuts}
+            onOpenChange={setShowShortcuts}
+          />
           {askNotify && <NotifyBanner onClose={closeAskNotify} />}
           <TopBar
             repo={repo}
@@ -995,6 +996,7 @@ export default function DiffPage({
             onDiffStyleChange={changeDiffStyle}
             hideSpace={hideSpace}
             onToggleHideSpace={toggleHideSpace}
+            onShowShortcuts={openShortcuts}
             theme={theme}
             onToggleTheme={onToggleTheme}
           />
