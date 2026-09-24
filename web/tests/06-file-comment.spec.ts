@@ -24,16 +24,26 @@ func beta() {
   await page
     .getByRole("button", { name: "Comment on beta.go" })
     .dispatchEvent("click");
-  await page.getByPlaceholder("Comment on this file").fill("whole file note");
+  // Specs share one server, so a retry names its note apart from the
+  // thread the failed attempt left behind.
+  const body = `whole file note ${test.info().retry}`;
+  await page.getByPlaceholder("Comment on this file").fill(body);
   await page
     .getByRole("button", { name: "Start thread" })
     .dispatchEvent("click");
 
-  const note = page.getByText("whole file note");
+  // The saved thread, not the text still in the form. The page redraws
+  // its rows as the thread and the diff reload, so an element can go
+  // between finding it and measuring it: measure until both hold still.
+  const note = page.locator("[data-thread-id]").getByText(body);
   await expect(note).toBeVisible();
-  const noteBox = await note.boundingBox();
-  const lineBox = await firstLine.boundingBox();
-  expect(noteBox!.y).toBeLessThan(lineBox!.y);
+  await expect(async () => {
+    const noteBox = await note.boundingBox();
+    const lineBox = await firstLine.boundingBox();
+    expect(noteBox).not.toBeNull();
+    expect(lineBox).not.toBeNull();
+    expect(noteBox!.y).toBeLessThan(lineBox!.y);
+  }).toPass({ timeout: 10_000 });
 
   // Once sent, the agent sees it on line 0, with no quoted code.
   await api("POST", "/api/send", { note: "" });
