@@ -4,7 +4,10 @@
 
 Review what your coding agent wrote the way you review a pull request, without pushing anything. revue shows the agent's changes as a GitHub-style diff in your browser, and the agent reads your comments and answers them through a small CLI. Everything stays on one machine: no remote, no accounts.
 
-<img width="1580" height="1084" alt="Screenshot 2026-09-23 at 21 58 31" src="https://github.com/user-attachments/assets/3b849e93-6e7f-4768-b5d7-75a774071ce4" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img src="docs/screenshot.png" alt="revue: an agent's self-review note, an outdated thread with its answer under the file header, and the threads panel sorted by whose turn it is" width="1580">
+</picture>
 
 ## Install
 
