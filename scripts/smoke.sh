@@ -87,7 +87,6 @@ curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"one fix"}
 grep -qx "#$THREAD_ID main.go:4" "$WORK/fb.txt" || fail "sent thread missing"
 grep -qxF '  | 	println("v2")' "$WORK/fb.txt" || fail "quoted snapshot wrong"
 grep -qx "note: one fix" "$WORK/fb.txt" || fail "note missing"
-CURSOR=$(sed -n 's/^cursor //p' "$WORK/fb.txt")
 
 step "agent replies in thread"
 "$BIN" reply "$THREAD_ID" "switched to fmt.Println" || fail "reply failed"
@@ -119,7 +118,7 @@ curl -sf "${AUTH[@]}" "$BASE/api/threads" > "$WORK/threads.json"
 
 step "wait: timeout is distinct (exit 3)"
 set +e
-"$BIN" wait --since "$CURSOR" --timeout 1s > "$WORK/wait1.txt"
+"$BIN" wait --timeout 1s > "$WORK/wait1.txt"
 CODE=$?
 set -e
 [ "$CODE" = "3" ] || fail "wait timeout exit = $CODE, want 3"
@@ -128,11 +127,12 @@ step "wait: a send unblocks (exit 0)"
 ( sleep 0.3 && curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"go"}' \
     "$BASE/api/send" > /dev/null ) &
 set +e
-"$BIN" wait --since "$CURSOR" --timeout 30s > "$WORK/wait2.txt"
+"$BIN" wait --timeout 30s > "$WORK/wait2.txt"
 CODE=$?
 set -e
 wait
 [ "$CODE" = "0" ] || fail "wait send exit = $CODE, want 0"
 grep -qx "note: go" "$WORK/wait2.txt" || fail "wait did not print the send"
+! "$BIN" feedback | grep -q "^note:" || fail "a delivered note was printed again"
 
 echo "SMOKE OK"

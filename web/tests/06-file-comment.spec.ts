@@ -49,7 +49,7 @@ func beta() {
   await api("POST", "/api/send", { note: "" });
   const { threads } = await api<{
     threads: { path: string; line: number; quote?: unknown }[];
-  }>("GET", "/api/feedback?since=0");
+  }>("GET", "/api/feedback");
   const fileThread = threads.find((t) => t.path === "beta.go" && t.line === 0);
   expect(fileThread).toBeDefined();
   expect(fileThread?.quote).toBeUndefined();
