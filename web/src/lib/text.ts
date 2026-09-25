@@ -2,13 +2,18 @@
 // markup a reviewer or agent is likely to type so the excerpt reads as
 // prose; it never renders, so it needs no sanitizing.
 export function excerpt(markdown: string): string {
+  // Code spans keep their text as typed, so `snake_case` or `a*b` in
+  // one survives the emphasis stripping below.
+  const code: string[] = [];
   return markdown
     .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]*)`/g, "$1")
+    .replace(/`([^`]*)`/g, (_, c: string) => `\uE000${code.push(c) - 1}\uE000`)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
-    .replace(/(\*\*|__|[*_~])/g, "")
+    .replace(/\*\*|[*~]/g, "")
+    .replace(/(?<![\p{L}\p{N}])_{1,2}|_{1,2}(?![\p{L}\p{N}])/gu, "")
+    .replace(/\uE000(\d+)\uE000/g, (_, i: string) => code[Number(i)])
     .replace(/\s+/g, " ")
     .trim();
 }
