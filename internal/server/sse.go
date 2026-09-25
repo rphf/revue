@@ -192,17 +192,23 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 }
 
 // waitOutcome is the long-poll result for the CLI's `revue wait`.
+// Since is the cursor the wait read from, for the feedback that follows.
 type waitOutcome struct {
 	Outcome string      `json:"outcome"` // sent | timeout
+	Since   int64       `json:"since"`
 	Cursor  int64       `json:"cursor"`
 	Send    *store.Send `json:"send,omitempty"`
 }
 
 // handleWait long-polls the event log until a send lands after the
-// cursor. Because the log is persistent, a send that landed while no
-// wait was active is delivered by the next call.
+// cursor, by default the delivery cursor. Because the log is persistent,
+// a send that landed while no wait was active is delivered by the next
+// call.
 func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
-	since := parseInt64(r.URL.Query().Get("since"))
+	since, ok := s.startCursor(w, r)
+	if !ok {
+		return
+	}
 	timeout := 30 * time.Second
 	if t := r.URL.Query().Get("timeout"); t != "" {
 		d, err := time.ParseDuration(t)
@@ -238,7 +244,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 				Send *store.Send `json:"send"`
 			}
 			_ = json.Unmarshal(e.Payload, &payload)
-			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "sent", Cursor: cursor, Send: payload.Send})
+			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "sent", Since: since, Cursor: cursor, Send: payload.Send})
 			return
 		}
 
@@ -248,7 +254,7 @@ func (s *Server) handleWait(w http.ResponseWriter, r *http.Request) {
 		case <-s.closing:
 			return
 		case <-deadline.C:
-			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "timeout", Cursor: cursor})
+			writeJSON(w, http.StatusOK, waitOutcome{Outcome: "timeout", Since: since, Cursor: cursor})
 			return
 		case <-wake:
 		}

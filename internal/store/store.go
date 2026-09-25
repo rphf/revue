@@ -125,6 +125,8 @@ type Send struct {
 	ID        int64     `json:"id"`
 	Note      string    `json:"note"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Tree is the working tree the send approved, "" when unknown.
+	Tree string `json:"-"`
 }
 
 type Event struct {
@@ -588,7 +590,8 @@ func (s *Store) DraftCount() (int, error) {
 // Send records a send and promotes every reviewer draft to a sent
 // comment tied to it. Call inside WithTx along with the event append so
 // delivery is atomic. A send with no draft and no note is refused.
-func (s *Store) Send(note string) (*Send, error) {
+// tree is the working tree the reviewer approved, "" when unknown.
+func (s *Store) Send(note, tree string) (*Send, error) {
 	drafts, err := s.DraftCount()
 	if err != nil {
 		return nil, err
@@ -596,7 +599,7 @@ func (s *Store) Send(note string) (*Send, error) {
 	if drafts == 0 && strings.TrimSpace(note) == "" {
 		return nil, ErrNothingToSend
 	}
-	sd, err := scanSend(s.q.QueryRow("INSERT INTO sends (note, created_at) VALUES (?, ?) RETURNING "+sendCols, note, now()))
+	sd, err := scanSend(s.q.QueryRow("INSERT INTO sends (note, tree, created_at) VALUES (?, ?, ?) RETURNING "+sendCols, note, tree, now()))
 	if err != nil {
 		return nil, err
 	}
@@ -609,12 +612,12 @@ func (s *Store) Send(note string) (*Send, error) {
 	return sd, nil
 }
 
-const sendCols = "id, note, created_at"
+const sendCols = "id, note, tree, created_at"
 
 func scanSend(row rowScanner) (*Send, error) {
 	var sd Send
 	var created string
-	err := row.Scan(&sd.ID, &sd.Note, &created)
+	err := row.Scan(&sd.ID, &sd.Note, &sd.Tree, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -771,6 +774,17 @@ func (s *Store) AppendEvent(eventType string, payload any) (*Event, error) {
 }
 
 // EventsSince returns the events with id > since, oldest first.
+// LastEventID is the highest event id ever issued, pruned events
+// included, 0 before the first.
+func (s *Store) LastEventID() (int64, error) {
+	var id int64
+	err := s.q.QueryRow("SELECT seq FROM sqlite_sequence WHERE name = 'events'").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
 func (s *Store) EventsSince(since int64) ([]*Event, error) {
 	return queryAll(s.q, scanEvent, "SELECT "+eventCols+" FROM events WHERE id > ? ORDER BY id", since)
 }

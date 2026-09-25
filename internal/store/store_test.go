@@ -195,7 +195,7 @@ func TestDraftsInvisibleUntilSent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sd, err := s.Send("please fix")
+	sd, err := s.Send("please fix", "")
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestDraftsInvisibleUntilSent(t *testing.T) {
 
 func TestSendRefusesNothing(t *testing.T) {
 	s, _ := openTemp(t)
-	if _, err := s.Send("  "); !errors.Is(err, ErrNothingToSend) {
+	if _, err := s.Send("  ", ""); !errors.Is(err, ErrNothingToSend) {
 		t.Errorf("empty send err = %v, want ErrNothingToSend", err)
 	}
 	last, err := s.LastSend()
@@ -238,7 +238,7 @@ func TestSendRefusesNothing(t *testing.T) {
 		t.Errorf("LastSend before any send = %+v, %v", last, err)
 	}
 	// A note alone is a send.
-	if _, err := s.Send("LGTM"); err != nil {
+	if _, err := s.Send("LGTM", ""); err != nil {
 		t.Errorf("note-only send: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestListSendsOldestFirst(t *testing.T) {
 		t.Fatalf("ListSends before any send = %+v, %v", sends, err)
 	}
 	for _, note := range []string{"first", "second"} {
-		if _, err := s.Send(note); err != nil {
+		if _, err := s.Send(note, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -273,7 +273,7 @@ func TestDraftEditAndDeleteRules(t *testing.T) {
 	if got.Body != "first, edited" {
 		t.Errorf("body = %q", got.Body)
 	}
-	if _, err := s.Send(""); err != nil {
+	if _, err := s.Send("", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpdateDraftComment(c.ID, "no"); !errors.Is(err, ErrNotDraft) {
@@ -380,7 +380,7 @@ func TestCommentsForThreadsAndThreadsInSend(t *testing.T) {
 	if _, err := s.AddComment(a.ID, RoleAgent, "a2", false); err != nil {
 		t.Fatal(err)
 	}
-	sd, err := s.Send("")
+	sd, err := s.Send("", "")
 	if err != nil {
 		t.Fatal(err)
 	}

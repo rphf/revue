@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -16,11 +17,9 @@ type feedbackData struct {
 		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"payload"`
 	} `json:"events"`
-	Threads  []feedbackThread `json:"threads"`
-	LastSend *struct {
-		Note string `json:"note"`
-	} `json:"lastSend"`
-	Landed []int64 `json:"landed"`
+	Threads []feedbackThread `json:"threads"`
+	Stale   []int64          `json:"stale"`
+	Landed  []int64          `json:"landed"`
 }
 
 type feedbackThread struct {
@@ -39,76 +38,99 @@ type feedbackThread struct {
 	} `json:"comments"`
 }
 
-// cmdFeedback prints what the agent has to act on. Without --since:
-// every unresolved thread and the last send's note. With it: only what
-// the reviewer did after cursor C.
+// cmdFeedback prints what the agent has to act on: every unresolved
+// thread and the notes of the sends not yet delivered. With --since C:
+// only what the reviewer did after cursor C.
 func (e *env) cmdFeedback(args []string) int {
 	fs := newFlagSet("feedback")
-	since := fs.Int64("since", 0, "cursor from the previous feedback or wait")
+	since := fs.Int64("since", 0, "only what came after this cursor")
 	if err := fs.Parse(args); err != nil {
 		return e.failValidation(err.Error())
 	}
-	return e.printFeedback(*since)
+	if !isSet(fs, "since") {
+		return e.printFeedback(nil)
+	}
+	return e.printFeedback(since)
 }
 
-func (e *env) printFeedback(since int64) int {
+// isSet reports whether the flag was given, as opposed to defaulted.
+func isSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
+// printFeedback prints the feedback from the delivery cursor, or with
+// since, only what came after it.
+func (e *env) printFeedback(since *int64) int {
+	path := "/api/feedback"
+	if since != nil {
+		path += fmt.Sprintf("?since=%d", *since)
+	}
 	var fb feedbackData
-	if err := e.client.do("GET", fmt.Sprintf("/api/feedback?since=%d", since), nil, &fb); err != nil {
+	if err := e.client.do("GET", path, nil, &fb); err != nil {
 		return e.fail(err)
 	}
-	renderFeedback(e.stdout, &fb, since)
+	renderFeedback(e.stdout, &fb, since != nil)
 	return ExitOK
 }
 
-// renderFeedback writes the feedback as text: a cursor line, the note,
+// sentNote is a send's note, and whether the code changed after it.
+type sentNote struct {
+	text  string
+	stale bool
+}
+
+// renderFeedback writes the feedback as text: a cursor line, the notes,
 // one block per thread, then the resolved and landed ids. Anything at
 // column 0 starts an item; a body's further lines are indented.
-func renderFeedback(w io.Writer, fb *feedbackData, since int64) {
-	note := ""
+// Incremental output lists only the threads the events touched.
+func renderFeedback(w io.Writer, fb *feedbackData, incremental bool) {
+	var notes []sentNote
 	touched := map[int64]bool{}
 	var resolved []int64
-	if since == 0 {
-		if fb.LastSend != nil {
-			note = fb.LastSend.Note
-		}
-	} else {
-		for _, ev := range fb.Events {
-			switch ev.Type {
-			case "sent":
-				var p struct {
-					Send struct {
-						Note string `json:"note"`
-					} `json:"send"`
-					Threads []struct {
-						ID int64 `json:"id"`
-					} `json:"threads"`
-				}
-				_ = json.Unmarshal(ev.Payload, &p)
-				note = p.Send.Note
-				for _, t := range p.Threads {
-					touched[t.ID] = true
-				}
-			case "thread.resolved", "thread.unresolved":
-				var p struct {
-					ThreadID int64 `json:"threadId"`
-				}
-				_ = json.Unmarshal(ev.Payload, &p)
-				resolved = slices.DeleteFunc(resolved, func(id int64) bool { return id == p.ThreadID })
-				if ev.Type == "thread.resolved" {
-					resolved = append(resolved, p.ThreadID)
-				} else {
-					touched[p.ThreadID] = true
-				}
+	for _, ev := range fb.Events {
+		switch ev.Type {
+		case "sent":
+			var p struct {
+				Send struct {
+					ID   int64  `json:"id"`
+					Note string `json:"note"`
+				} `json:"send"`
+				Threads []struct {
+					ID int64 `json:"id"`
+				} `json:"threads"`
+			}
+			_ = json.Unmarshal(ev.Payload, &p)
+			if strings.TrimSpace(p.Send.Note) != "" {
+				notes = append(notes, sentNote{p.Send.Note, slices.Contains(fb.Stale, p.Send.ID)})
+			}
+			for _, t := range p.Threads {
+				touched[t.ID] = true
+			}
+		case "thread.resolved", "thread.unresolved":
+			var p struct {
+				ThreadID int64 `json:"threadId"`
+			}
+			_ = json.Unmarshal(ev.Payload, &p)
+			resolved = slices.DeleteFunc(resolved, func(id int64) bool { return id == p.ThreadID })
+			if ev.Type == "thread.resolved" {
+				resolved = append(resolved, p.ThreadID)
+			} else {
+				touched[p.ThreadID] = true
 			}
 		}
 	}
 
 	_, _ = fmt.Fprintf(w, "cursor %d\n", fb.Cursor)
-	if strings.TrimSpace(note) != "" {
-		writeField(w, "note", note)
+	for _, n := range notes {
+		writeField(w, "note", n.text)
+		if n.stale {
+			_, _ = fmt.Fprintln(w, "stale: the code changed after this send; its note does not approve the current diff")
+		}
 	}
 	for _, t := range fb.Threads {
-		if since != 0 && !touched[t.ID] {
+		if incremental && !touched[t.ID] {
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "\n%s\n", threadHeader(&t))

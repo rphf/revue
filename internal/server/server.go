@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -101,6 +102,9 @@ type Server struct {
 	bus       *bus
 	activity  *activity
 	repo      repoState
+	// deliveryMu keeps concurrent feedback from moving the delivery
+	// cursor back.
+	deliveryMu sync.Mutex
 	// raise brings the browser to the front; tests replace it.
 	raise func() error
 
@@ -291,7 +295,7 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.ln = ln
 	s.http = &http.Server{Handler: s.Handler()}
-	if err := s.recordRepo(); err != nil {
+	if err := errors.Join(s.recordRepo(), s.seedDelivered()); err != nil {
 		_ = st.Close()
 		_ = ln.Close()
 		return nil, err

@@ -19,7 +19,7 @@ func TestCheckpointLeavesIndexTreeAndBranchAlone(t *testing.T) {
 	statusBefore := gittest.Git(t, repo, "status", "--porcelain")
 	headBefore := gittest.Git(t, repo, "rev-parse", "HEAD")
 
-	if err := Checkpoint(repo); err != nil {
+	if err := checkpoint(repo); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
 	}
 	if got := gittest.Git(t, repo, "status", "--porcelain"); got != statusBefore {
@@ -42,7 +42,7 @@ func TestCheckpointWithoutCommitsOrIdentity(t *testing.T) {
 	gittest.Git(t, repo, "config", "--unset", "user.email")
 	gittest.Git(t, repo, "config", "--unset", "user.name")
 	write(t, repo, "a.txt", "first\n")
-	if err := Checkpoint(repo); err != nil {
+	if err := checkpoint(repo); err != nil {
 		t.Fatalf("Checkpoint on an unborn branch: %v", err)
 	}
 	if got := gittest.Git(t, repo, "show", LastSendRef+":a.txt"); got != "first\n" {
@@ -59,7 +59,7 @@ func TestDiffSinceCheckpointFollowsUntrackedFiles(t *testing.T) {
 	write(t, repo, "kept.txt", "kept\n")
 	write(t, repo, "gone.txt", "gone\n")
 	write(t, repo, "same.txt", "same\n")
-	if err := Checkpoint(repo); err != nil {
+	if err := checkpoint(repo); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestFingerprintSinceCheckpointFollowsUntrackedEdits(t *testing.T) {
 	write(t, repo, "a.txt", "one\n")
 	commitAll(t, repo, "c1")
 	write(t, repo, "u.txt", "v1\n")
-	if err := Checkpoint(repo); err != nil {
+	if err := checkpoint(repo); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{LastSendRef}
@@ -137,5 +137,31 @@ func TestDiffSinceCheckpointBeforeAnySend(t *testing.T) {
 	}
 	if _, _, err := Fingerprint(repo, []string{LastSendRef}); !errors.Is(err, ErrNoCheckpoint) {
 		t.Errorf("Fingerprint before a send: %v, want ErrNoCheckpoint", err)
+	}
+}
+
+// checkpoint records the working tree the way a send does.
+func checkpoint(repo string) error {
+	tree, err := WorkingTree(repo)
+	if err != nil {
+		return err
+	}
+	return Checkpoint(repo, tree)
+}
+
+func TestWorkingTreeChangesWithTheCode(t *testing.T) {
+	repo := gittest.Init(t)
+	write(t, repo, "a.txt", "one\n")
+	commitAll(t, repo, "c1")
+	before, err := WorkingTree(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := WorkingTree(repo); again != before {
+		t.Errorf("same code, trees %s and %s", before, again)
+	}
+	write(t, repo, "new.txt", "untracked\n")
+	if after, _ := WorkingTree(repo); after == before {
+		t.Errorf("an untracked file left the tree at %s", after)
 	}
 }

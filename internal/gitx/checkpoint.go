@@ -19,28 +19,33 @@ var checkpointIdent = []string{
 	"GIT_COMMITTER_NAME=revue", "GIT_COMMITTER_EMAIL=revue@localhost",
 }
 
-// Checkpoint records the working tree under LastSendRef, untracked
-// files included and ignored ones left out. It goes through a copy of
-// the index, so the index, the working tree and the branch stay as
-// they are.
-func Checkpoint(repoRoot string) error {
+// WorkingTree writes the working tree as a git tree, untracked files
+// included and ignored ones left out, and returns its hash. It goes
+// through a copy of the index, so the index, the working tree and the
+// branch stay as they are.
+func WorkingTree(repoRoot string) (string, error) {
 	env, done, err := scratchIndex(repoRoot)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer done()
 	if _, err := runGitEnv(repoRoot, env, nil, false, "add", "-A"); err != nil {
-		return err
+		return "", err
 	}
 	tree, err := runGitEnv(repoRoot, env, nil, false, "write-tree")
 	if err != nil {
-		return err
+		return "", err
 	}
+	return strings.TrimSpace(string(tree)), nil
+}
+
+// Checkpoint records tree, from WorkingTree, under LastSendRef.
+func Checkpoint(repoRoot, tree string) error {
 	args := []string{"commit-tree", "-m", "revue: the working tree at a send"}
 	if head, ok := ResolveRef(repoRoot, "HEAD"); ok {
 		args = append(args, "-p", head)
 	}
-	commit, err := runGitEnv(repoRoot, checkpointIdent, nil, false, append(args, strings.TrimSpace(string(tree)))...)
+	commit, err := runGitEnv(repoRoot, checkpointIdent, nil, false, append(args, tree)...)
 	if err != nil {
 		return err
 	}

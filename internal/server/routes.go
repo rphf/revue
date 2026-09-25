@@ -616,11 +616,17 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	// The tree the reviewer approves; the send stands without it, and is
+	// then never reported stale.
+	tree, err := gitx.WorkingTree(s.repoRoot)
+	if err != nil {
+		log.Printf("revue: working tree at a send: %v", err)
+	}
 	var send *store.Send
 	published := []*threadView{}
-	err := s.store.WithTx(func(tx *store.Store) error {
+	err = s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		send, err = tx.Send(req.Note)
+		send, err = tx.Send(req.Note, tree)
 		if err != nil {
 			return err
 		}
@@ -644,8 +650,10 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	// The send stands without its checkpoint: only the diff since the
 	// last send misses it.
-	if err := gitx.Checkpoint(s.repoRoot); err != nil {
-		log.Printf("revue: checkpoint: %v", err)
+	if tree != "" {
+		if err := gitx.Checkpoint(s.repoRoot, tree); err != nil {
+			log.Printf("revue: checkpoint: %v", err)
+		}
 	}
 	s.bus.notify()
 	writeJSON(w, http.StatusCreated, map[string]any{"send": send, "threads": published})
@@ -662,13 +670,17 @@ func (s *Server) handleListSends(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sends": sends})
 }
 
-// handleFeedback is the agent's cursor read: events since the cursor
-// (drafts are never in the log), every unresolved thread of this
-// checkout with its sent comments and quoted snapshot, the most recent
-// send with its note, and the threads whose code landed but that are
-// not archived yet.
+// handleFeedback is the agent's cursor read: events since the cursor,
+// by default the delivery cursor (drafts are never in the log), every
+// unresolved thread of this checkout with its sent comments and quoted
+// snapshot, the most recent send with its note, the sends among the
+// events whose code changed since, and the threads whose code landed
+// but that are not archived yet. What it returns counts as delivered.
 func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
-	since := parseInt64(r.URL.Query().Get("since"))
+	since, ok := s.startCursor(w, r)
+	if !ok {
+		return
+	}
 	s.checkLanding()
 	events, err := s.store.EventsSince(since)
 	if err != nil {
@@ -704,11 +716,63 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	stale, err := s.staleSends(events)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if err := s.deliver(cursor); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"since":    since,
 		"cursor":   cursor,
 		"events":   events,
 		"threads":  views,
 		"lastSend": last,
+		"stale":    stale,
 		"landed":   landed,
 	})
+}
+
+// staleSends lists the sends among events whose working tree is not the
+// current one: the code changed after the reviewer sent, so their note
+// does not approve what is there now. A send from before trees were
+// recorded is never stale.
+func (s *Server) staleSends(events []*store.Event) ([]int64, error) {
+	stale := []int64{}
+	current := ""
+	for _, e := range events {
+		if e.Type != eventSent {
+			continue
+		}
+		var p struct {
+			Send struct {
+				ID int64 `json:"id"`
+			} `json:"send"`
+		}
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return nil, err
+		}
+		sd, err := s.store.GetSend(p.Send.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if sd.Tree == "" {
+			continue
+		}
+		if current == "" {
+			if current, err = gitx.WorkingTree(s.repoRoot); err != nil {
+				return nil, err
+			}
+		}
+		if sd.Tree != current {
+			stale = append(stale, sd.ID)
+		}
+	}
+	return stale, nil
 }

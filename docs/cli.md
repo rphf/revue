@@ -33,8 +33,8 @@ code says what kind. `revue help` prints the same reference.
 
 | Command | Effect |
 | --- | --- |
-| `revue feedback [--since C]` | What the agent has to act on. Without `--since`: every unresolved thread of the current branch and the last send's note. With it: only the threads the reviewer sent or reopened after cursor C, the note of a send after C, and the threads resolved after C. |
-| `revue wait [--since C] [--timeout D]` | Block until the reviewer sends after C, then print what `feedback --since C` would. On timeout (5m by default) it prints the cursor and `timeout`, and exits 3. |
+| `revue feedback [--since C]` | What the agent has to act on: every unresolved thread of the current branch, the notes of the sends not yet delivered, and the threads resolved since. With `--since`: only the threads the reviewer sent or reopened after cursor C, with the notes and resolved threads after C. |
+| `revue wait [--since C] [--timeout D]` | Block until the reviewer sends something not yet delivered, then print it, with only the threads that send touched. `--since C` waits from cursor C instead. On timeout (5m by default) it prints the cursor and `timeout`, and exits 3. |
 | `revue reply ID [TEXT]` | Answer thread ID. TEXT is GitHub-flavored markdown; without it, stdin is read, which suits several lines. |
 | `revue comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]` | Open a thread, published at once, and print its ID: to explain a change before the reviewer reads it. No LINE comments on the whole file; `--old` points at the old side. The thread is anchored in the working-tree diff, or in the one the arguments after `--` name, as for `revue open`. It lands in the reviewer's "Your turn". |
 | `revue archive ID... \| --landed \| --resolved \| --all` | Archive these threads, or those of the current branch whose code landed, the resolved and outdated ones, or all of them. Prints `archived: ID...`, and `skipped (holds a draft): ID...` for threads with a reviewer draft, which are never archived. |
@@ -46,6 +46,7 @@ code says what kind. `revue help` prints the same reference.
 ```text
 cursor 69
 note: one fix, then commit
+stale: the code changed after this send; its note does not approve the current diff
 
 #20 docs/agent-loop.md:18-20 outdated
   | the code as it was
@@ -58,7 +59,16 @@ resolved: 19
 landed: 12 14
 ```
 
-Pass the cursor as `--since` next time. A thread header is `#ID PATH`, with
+The server remembers the last cursor it printed, in the repository's
+database, so an agent needs no cursor of its own. A send is delivered once:
+a wait that timed out leaves it for the next `wait` or `feedback`, on any
+revue server for the repository, even days later. A `--since` older than what
+was delivered, or past every cursor issued, such as a thread ID, is refused
+with exit 2.
+
+`note:` comes once per send, oldest first. `stale:` follows a note when the
+code changed after that send: the reviewer approved other code, so do not act
+on the note as an approval. A thread header is `#ID PATH`, with
 `:LINE` or `:START-END` unless the thread is on the whole file, then `old`
 for a line of the old side and `outdated` when the code changed since the
 comment. The quoted lines are the code the comment was written on, so the

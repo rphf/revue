@@ -112,10 +112,15 @@ func (h *harness) reviewerSend(note string) {
 	}
 }
 
-// feedback runs feedback and returns its text.
+// feedback runs feedback, with --since unless since is 0, and returns
+// its text.
 func (h *harness) feedback(since int64) string {
 	h.t.Helper()
-	code, out := h.run(h.cmdFeedback, "--since", fmt.Sprint(since))
+	args := []string{}
+	if since != 0 {
+		args = []string{"--since", fmt.Sprint(since)}
+	}
+	code, out := h.run(h.cmdFeedback, args...)
 	if code != ExitOK {
 		h.t.Fatalf("feedback failed (%d): %s", code, h.errOut.String())
 	}
@@ -315,6 +320,54 @@ func TestWaitPrintsTheSendAndTimesOutDistinctly(t *testing.T) {
 
 	if code, _ = h.run(h.cmdWait, "--timeout", "0"); code != ExitValidation {
 		t.Errorf("zero timeout: exit %d, want %d", code, ExitValidation)
+	}
+}
+
+// The incident: an agent passed the thread id that comment printed as a
+// cursor, the wait replayed the previous session's approval, and the
+// agent committed code nobody reviewed.
+func TestAThreadIDAsCursorNeverReplaysAnOldApproval(t *testing.T) {
+	h := newHarness(t)
+	h.modify(v2)
+	// The previous session's rounds put the delivered cursor past the id
+	// of the next thread.
+	h.reviewerSend("first round")
+	h.reviewerSend("second round")
+	h.reviewerSend("LGTM, commit and push")
+	if code, out := h.run(h.cmdWait, "--timeout", "1s"); code != ExitOK || !strings.Contains(out, "note: LGTM") {
+		t.Fatalf("first wait: exit %d, out %q", code, out)
+	}
+
+	code, out := h.run(h.cmdComment, "main.go:4", "a self-review note")
+	if code != ExitOK {
+		t.Fatalf("comment: exit %d, %s", code, h.errOut.String())
+	}
+	id := strings.TrimSpace(out)
+	code, out = h.run(h.cmdWait, "--since", id, "--timeout", "200ms")
+	if code != ExitValidation || strings.Contains(out, "LGTM") || h.errOut.Len() == 0 {
+		t.Errorf("wait --since %s: exit %d, out %q, stderr %q", id, code, out, h.errOut.String())
+	}
+	code, out = h.run(h.cmdWait, "--timeout", "200ms")
+	if code != ExitWaitTimeout || strings.Contains(out, "LGTM") {
+		t.Errorf("bare wait: exit %d, out %q", code, out)
+	}
+}
+
+func TestFeedbackPrintsEveryUndeliveredNoteAndMarksStaleOnes(t *testing.T) {
+	h := newHarness(t)
+	h.modify(v2)
+	h.reviewerSend("first look")
+	h.reviewerSend("LGTM")
+	writeFile(t, h.repo, "later.go", "package main\n")
+
+	out := h.feedback(0)
+	stale := "stale: the code changed after this send; its note does not approve the current diff\n"
+	want := fmt.Sprintf("cursor %d\nnote: first look\n%snote: LGTM\n%s", cursorOf(t, out), stale, stale)
+	if out != want {
+		t.Errorf("feedback =\n%s\nwant\n%s", out, want)
+	}
+	if again := h.feedback(0); strings.Contains(again, "note:") {
+		t.Errorf("notes delivered twice: %q", again)
 	}
 }
 

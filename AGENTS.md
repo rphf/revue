@@ -9,12 +9,13 @@ happens live, in revue, on the current working tree:
 2. Run `make build` so `bin/revue` embeds the current UI.
 3. End every implementation by opening a review round and waiting on it:
    run `bin/revue open` (add `-- <paths>` to limit the diff), then
-   `bin/revue wait --since C --timeout 60m`, with C the cursor from the last
-   `feedback` or `wait` output. Run the wait so the harness tells you when it
+   `bin/revue wait --timeout 60m`, without `--since`: the server knows what
+   it already delivered. Run the wait so the harness tells you when it
    returns (a tracked background task, not a detached `&`). A CLI call from
    a newer build replaces a running server from an older one, so no manual
-   restart.
-4. The wait prints the comments when it returns, with the next cursor.
+   restart; a wait that fails because of it is safe to run again.
+4. The wait prints the comments when it returns. A `stale:` line under a
+   note means the code changed after that send: it approves nothing.
    Fix what they ask, rebuild, and wait again. Reply with `bin/revue reply`
    only when a comment needs an answer: a question, a choice to make, or a
    reason why you did not do something. An instruction you carried out, such

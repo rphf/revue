@@ -203,12 +203,18 @@ type feedback struct {
 	Events   []*store.Event `json:"events"`
 	Threads  []*threadView  `json:"threads"`
 	LastSend *store.Send    `json:"lastSend"`
+	Stale    []int64        `json:"stale"`
 }
 
+// feedback reads from the delivery cursor when since is 0.
 func (ts *testServer) feedback(t *testing.T, since int64) *feedback {
 	t.Helper()
+	path := "/api/feedback"
+	if since != 0 {
+		path += fmt.Sprintf("?since=%d", since)
+	}
 	var out feedback
-	ts.do(t, "GET", fmt.Sprintf("/api/feedback?since=%d", since), nil, &out)
+	ts.mustStatus(t, ts.do(t, "GET", path, nil, &out), http.StatusOK)
 	return &out
 }
 
@@ -789,8 +795,9 @@ func TestAgentReplyIsEventedAndReviewerReplyIsADraft(t *testing.T) {
 	if len(fb.Threads) != 1 {
 		t.Errorf("unresolved thread missing from feedback")
 	}
-	if n := len(fb.Events); n != 4 || fb.Events[3].Type != eventUnresolved {
-		t.Errorf("event log = %d events, last %q", n, fb.Events[n-1].Type)
+	// Only what came after the previous feedback: it was delivered.
+	if n := len(fb.Events); n != 1 || fb.Events[0].Type != eventUnresolved {
+		t.Errorf("events since the last feedback = %+v", fb.Events)
 	}
 
 	resp := ts.do(t, "POST", "/api/threads/999/comments", map[string]any{"role": "agent", "body": "x"}, nil)

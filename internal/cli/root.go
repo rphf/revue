@@ -35,10 +35,11 @@ const usage = `revue: code review on a live git diff. The reviewer comments in a
 browser and sends; the agent reads and answers here.
 
 Agent:
-  feedback [--since C]     what to act on; with C, only what came after it
-  wait [--since C] [--timeout 5m]
-                           block until the reviewer sends, then print as
-                           feedback --since C; exit 3 on timeout
+  feedback [--since C]     what to act on: open threads and the notes not
+                           yet delivered; with C, only what came after it
+  wait [--timeout 5m]      block until the reviewer sends something not yet
+                           delivered, then print it; exit 3 on timeout.
+                           --since C waits from cursor C instead
   reply ID [TEXT]          answer thread ID (TEXT from stdin when absent)
   comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]
                            open a thread, e.g. to explain a change before
@@ -50,8 +51,10 @@ Agent:
   export                   every thread as markdown
 
 feedback and wait print:
-  cursor C                 pass it as --since next time
-  note: TEXT               the reviewer's note with the send
+  cursor C                 the last event printed; no need to keep it
+  note: TEXT               a send's note, once per send, oldest first
+  stale: TEXT              after a note: the code changed since that send,
+                           so the note does not approve the current diff
   #ID PATH:LINE[-END] [old] [outdated]
     | the code as it was when commented
   reviewer: TEXT           comments in order; lines after the first of a
@@ -59,7 +62,9 @@ feedback and wait print:
   resolved: ID...          resolved by the reviewer; nothing to do
   landed: ID...            code committed; archive --landed when asked
 outdated: the code changed since the comment. The reviewer resolves
-threads; an agent cannot.
+threads; an agent cannot. The server remembers what it printed: a send is
+delivered once, on any server for the repository, and a --since older
+than that is refused.
 
 Human:
   [open] [GIT-DIFF-ARGS] [--no-browser]
