@@ -1,6 +1,11 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { CheckIcon, ChevronsUpDownIcon, GitBranchIcon } from "lucide-react";
-import { diffLabel, pathForArgs, sameArgs } from "@/lib/diffArgs";
+import {
+  diffLabel,
+  LAST_SEND_REF,
+  pathForArgs,
+  sameArgs,
+} from "@/lib/diffArgs";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +26,11 @@ const PRESETS: { args: string[]; label: string; hint: string }[] = [
     hint: "working tree against HEAD, untracked files included",
   },
   { args: ["--staged"], label: "Staged changes", hint: "git diff --staged" },
+  {
+    args: [LAST_SEND_REF],
+    label: "Since my last send",
+    hint: "what changed in the working tree after you last sent",
+  },
 ];
 
 function loadRecent(): string[][] {

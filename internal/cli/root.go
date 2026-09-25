@@ -49,6 +49,9 @@ Human commands:
 Agent commands (JSON output; exit codes in docs/cli.md):
   feedback [--since C]            unresolved threads with quoted code, plus what happened since C
   reply --thread N -m TEXT        reply in a thread (reads stdin when -m is absent)
+  comment --path P [--line N] [--start-line M] [--side deletions] -m TEXT [git-diff args]
+                                  open a thread on a line, a range, or a whole file,
+                                  in the diff those args name (as for open)
   wait [--since C] [--timeout D]  block until the reviewer sends
   export                          threads as markdown
   archive --thread N | --landed | --resolved | --all
@@ -119,6 +122,8 @@ func Main(args []string) int {
 		return e.cmdURL(rest)
 	case "feedback":
 		return e.cmdFeedback(rest)
+	case "comment":
+		return e.cmdComment(rest)
 	case "reply":
 		return e.cmdReply(rest)
 	case "wait":

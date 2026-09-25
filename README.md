@@ -30,9 +30,11 @@ revue open abc123 def456      # two commits
 
 ## How it works
 
-The page shows one diff, named by its `git diff` arguments, and keeps it current: while a browser is connected the server watches the repository, and the diff updates in place, the way lazygit does. A thread remembers the code it was written on. While that hunk is in the diff the thread sits on it, at its current line even when code moved above it. When the hunk changed or left the diff, the thread is outdated: it stays in the threads panel and opens on the file as it was. A thread comes back when its code does.
+The page shows one diff, named by its `git diff` arguments, and keeps it current: while a browser is connected the server watches the repository, and the diff updates in place, the way lazygit does. A thread remembers the code it was written on. While that hunk is in the diff the thread sits on it, at its current line even when code moved above it. When the hunk changed or left the diff, the thread is outdated: it moves under its file's header, where the conversation goes on, with the file as it was and what changed in it since one click away. A file with outdated threads and no change left keeps a header of its own. A thread comes back when its code does. The threads panel groups threads by whose turn it is: yours when the agent wrote last, your drafts, the ones waiting on the agent, and the resolved ones.
 
-Comments are drafts until you send them, all at once, with an optional note. The agent reads the send with `revue feedback` and replies in threads with `revue reply`. The reviewer resolves threads; the agent can reply but cannot resolve.
+Comments are drafts until you send them, all at once, with an optional note. The agent reads the send with `revue feedback` and replies in threads with `revue reply`. The agent can also open threads of its own with `revue comment`, to explain a change before you read it. The reviewer resolves threads; the agent can reply but cannot resolve.
+
+A send also records the working tree, untracked files included, under `refs/revue/last-send`: a commit on no branch, which a plain `git push` leaves behind. The index, the working tree, and the branch stay as they are. "Since my last send" in the diff picker shows what changed after it, which is what the agent did with your comments.
 
 Threads belong to the branch they were written on. A commit ends the conversation the way a merge does on GitHub: the threads whose code it contains land, the page offers to archive them (or does it at once, if you turn that on), and History keeps them under that commit.
 

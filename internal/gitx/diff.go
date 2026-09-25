@@ -98,9 +98,17 @@ func git(repoRoot string, args ...string) ([]byte, error) {
 // With exit1OK, exit status 1 is success: a --no-index diff uses it to
 // mean "differences found".
 func runGit(repoRoot string, stdin []byte, exit1OK bool, args ...string) ([]byte, error) {
+	return runGitEnv(repoRoot, nil, stdin, exit1OK, args...)
+}
+
+// runGitEnv is runGit with variables added to the environment.
+func runGitEnv(repoRoot string, env []string, stdin []byte, exit1OK bool, args ...string) ([]byte, error) {
 	full := append(append([]string{}, configOverrides...), args...)
 	cmd := exec.Command("git", full...)
 	cmd.Dir = repoRoot
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -138,16 +146,20 @@ func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {
 	if err := ValidateArgs(args); err != nil {
 		return nil, err
 	}
+	env, done, err := diffEnv(repoRoot, args)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 
 	if patch == nil {
-		var err error
-		if patch, err = git(repoRoot, patchArgs(args)...); err != nil {
+		if patch, err = runGitEnv(repoRoot, env, nil, false, patchArgs(args)...); err != nil {
 			return nil, err
 		}
 	}
 
 	listArgs := append(append([]string{"diff", "--raw", "--numstat", "-z", "--abbrev=64"}, forcedDiffFlags...), args...)
-	listOut, err := git(repoRoot, listArgs...)
+	listOut, err := runGitEnv(repoRoot, env, nil, false, listArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +257,17 @@ func IgnoringSpace(repoRoot string, args []string, r *Result) (patch string, hid
 	if err := ValidateArgs(args); err != nil {
 		return "", nil, err
 	}
-	flags := append(append([]string{}, forcedDiffFlags...), "--ignore-all-space")
-	out, err := git(repoRoot, append(append([]string{"diff", "--no-color", "--full-index"}, flags...), args...)...)
+	env, done, err := diffEnv(repoRoot, args)
 	if err != nil {
 		return "", nil, err
 	}
-	names, err := git(repoRoot, append(append([]string{"diff", "--name-only", "-z"}, flags...), args...)...)
+	defer done()
+	flags := append(append([]string{}, forcedDiffFlags...), "--ignore-all-space")
+	out, err := runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff", "--no-color", "--full-index"}, flags...), args...)...)
+	if err != nil {
+		return "", nil, err
+	}
+	names, err := runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff", "--name-only", "-z"}, flags...), args...)...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -380,6 +397,11 @@ func newSideContent(repoRoot, oid, path string) ([]byte, error) {
 		}
 	}
 	return readWorktree(filepath.Join(repoRoot, path))
+}
+
+// WorktreeContent reads path in the working tree the way git stores it.
+func WorktreeContent(repoRoot, path string) ([]byte, error) {
+	return readWorktree(filepath.Join(repoRoot, filepath.FromSlash(path)))
 }
 
 // readWorktree reads a path the way git stores it: a symlink's blob is
@@ -699,8 +721,13 @@ func Fingerprint(repoRoot string, args []string) (string, []byte, error) {
 	if err := ValidateArgs(args); err != nil {
 		return "", nil, err
 	}
+	env, done, err := diffEnv(repoRoot, args)
+	if err != nil {
+		return "", nil, err
+	}
+	defer done()
 	h := sha256.New()
-	patch, err := git(repoRoot, patchArgs(args)...)
+	patch, err := runGitEnv(repoRoot, env, nil, false, patchArgs(args)...)
 	if err != nil {
 		return "", nil, err
 	}

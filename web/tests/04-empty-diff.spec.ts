@@ -40,4 +40,13 @@ func beta() {
     { timeout: 10_000 },
   );
   await expect(page.getByText("No changed files")).toBeVisible();
+
+  // The open thread on alpha.go outlives its change: its file keeps a
+  // header, marked as out of the diff, with the thread under it.
+  await expect(page.getByTestId("gone-alpha.go")).toHaveText(
+    "Not in this diff any more",
+  );
+  await expect(
+    page.getByTestId(/^outdated-/).filter({ hasText: "alpha draft note" }),
+  ).toBeVisible();
 });

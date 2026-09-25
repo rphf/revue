@@ -58,6 +58,14 @@ test("draft -> send with a note -> CLI feedback -> live agent reply", async ({
     "switched to fmt.Println",
   ]);
   expect(reply.code).toBe(0);
-  await expect(page.getByText("switched to fmt.Println")).toBeVisible();
-  await expect(page.getByText("agent", { exact: true })).toBeVisible();
+  const card = page.getByTestId(`thread-${fb.threads[0].id}`);
+  await expect(card.getByText("switched to fmt.Println")).toBeVisible();
+  await expect(card.getByText("agent", { exact: true })).toBeVisible();
+
+  // The agent wrote last: the panel puts the thread under Your turn,
+  // with the answer under the comment.
+  const yours = page.getByTestId("panel-turn-yours");
+  await expect(yours).toContainText("use fmt.Println instead of println");
+  await expect(yours).toContainText("agent: switched to fmt.Println");
+  await expect(page.getByTestId("panel-turn-agent")).toHaveCount(0);
 });

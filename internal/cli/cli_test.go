@@ -367,6 +367,60 @@ func TestReplyPostsAgentCommentAndMapsErrors(t *testing.T) {
 	}
 }
 
+func TestCommentOpensAPublishedAgentThread(t *testing.T) {
+	h := newHarness(t)
+	h.modify(v2)
+
+	code, out := h.run(h.cmdComment, "--path", "main.go", "--line", "4", "--start-line", "3", "-m", "why v2", "--", "main.go")
+	if code != ExitOK {
+		t.Fatalf("comment: exit %d: %s", code, out)
+	}
+	var parsed struct {
+		Thread struct {
+			ID        int64    `json:"id"`
+			Line      int      `json:"line"`
+			StartLine *int     `json:"startLine"`
+			Args      []string `json:"args"`
+		} `json:"thread"`
+		Comment struct {
+			AuthorRole string `json:"authorRole"`
+			Draft      bool   `json:"draft"`
+		} `json:"comment"`
+		Cursor int64 `json:"cursor"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Comment.AuthorRole != "agent" || parsed.Comment.Draft || parsed.Cursor == 0 {
+		t.Errorf("comment = %+v", parsed.Comment)
+	}
+	if parsed.Thread.Line != 4 || parsed.Thread.StartLine == nil || *parsed.Thread.StartLine != 3 ||
+		strings.Join(parsed.Thread.Args, " ") != "-- main.go" {
+		t.Errorf("thread = %+v", parsed.Thread)
+	}
+	fb := h.feedback(0)
+	if len(fb.Threads) != 1 || fb.Threads[0].Comments[0].Body != "why v2" {
+		t.Errorf("agent thread not in feedback: %+v", fb.Threads)
+	}
+
+	code, out = h.run(h.cmdComment, "--path", "main.go", "-m", "whole file")
+	if code != ExitOK || !strings.Contains(out, `"line": 0`) {
+		t.Errorf("file comment: exit %d, out %s", code, out)
+	}
+	code, out = h.run(h.cmdComment, "--line", "4", "-m", "no path")
+	if code != ExitValidation || !strings.Contains(out, `"validation"`) {
+		t.Errorf("missing --path: exit %d, out %s", code, out)
+	}
+	code, out = h.run(h.cmdComment, "--path", "main.go", "--line", "2", "--start-line", "3", "-m", "bad range")
+	if code != ExitValidation {
+		t.Errorf("start after line: exit %d, out %s", code, out)
+	}
+	code, out = h.run(h.cmdComment, "--path", "gone.go", "--line", "1", "-m", "not in the diff")
+	if code != ExitValidation || !strings.Contains(out, `"stale_diff"`) {
+		t.Errorf("file not in the diff: exit %d, out %s", code, out)
+	}
+}
+
 func TestExportPrintsMarkdown(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)

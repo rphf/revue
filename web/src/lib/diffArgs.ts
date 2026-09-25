@@ -32,10 +32,15 @@ export function argsForKey(key: string): string[] {
   return JSON.parse(key) as string[];
 }
 
-// What the top bar calls a diff: the two presets by name, anything
-// else by its arguments.
+// The server keeps the working tree of the last send under this ref:
+// diffing it against the working tree shows what changed since.
+export const LAST_SEND_REF = "refs/revue/last-send";
+
+// What the top bar calls a diff: the presets by name, anything else by
+// its arguments.
 export function diffLabel(args: string[]): string {
   if (args.length === 0) return "uncommitted";
+  if (args.length === 1 && args[0] === LAST_SEND_REF) return "since last send";
   if (args.length === 1 && (args[0] === "--staged" || args[0] === "--cached"))
     return "staged";
   return args.join(" ");

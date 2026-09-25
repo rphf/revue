@@ -8,11 +8,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { api } from "../api";
-import type { Branch, Send, Thread, ThreadPosition } from "../types";
-import { groupByRound, type Round } from "@/lib/rounds";
+import type { Branch, Thread, ThreadPosition } from "../types";
 import { excerpt } from "@/lib/text";
 import { branchLabel, locationLabel } from "@/lib/threads";
-import { formatDateTime, timeAgo } from "@/lib/time";
+import { timeAgo } from "@/lib/time";
+import { groupByTurn, sendCount, turnLabel, type Turn } from "@/lib/turns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,12 +39,11 @@ const stateDot: Record<ThreadState, string> = {
 };
 
 const NO_POSITIONS: ReadonlyMap<number, ThreadPosition> = new Map();
+const NO_THREADS: Thread[] = [];
 
 export interface ThreadsPanelProps {
-  // The checkout's threads, grouped by the round they were last active in.
-  rounds: Round[];
-  // Every send, to group another branch's threads by round.
-  sends: Send[];
+  // The checkout's threads, grouped in the panel by whose turn it is.
+  threads: Thread[];
   // Where each thread sits in the diff on screen; a thread without a
   // live position is outdated for this diff.
   positions: ReadonlyMap<number, ThreadPosition>;
@@ -79,14 +78,12 @@ interface Row {
 
 // Threads of a branch in two modes. Current: every open thread with
 // live/outdated/resolved filters relative to the shown diff, in one
-// collapsible section per round (what is not sent yet, then each Send
-// newest first, the way `revue feedback --since` reads the
-// conversation). History: the threads archived on the branch, under the
+// collapsible section per turn (yours, drafts, the agent's, resolved).
+// History: the threads archived on the branch, under the
 // commit their code landed in. The branch picker serves both; another
 // branch's threads are not in this diff and open on their snapshot.
 export default function ThreadsPanel({
-  rounds: checkoutRounds,
-  sends,
+  threads: checkoutThreads,
   positions: checkoutPositions,
   onJump,
   onOpenThread,
@@ -146,14 +143,11 @@ export default function ThreadsPanel({
     };
   }, [viewingOther, picked, mode, signal]);
 
-  const otherRounds = useMemo(
-    () =>
-      viewingOther && other?.branch === picked
-        ? groupByRound(other.threads, sends)
-        : [],
-    [viewingOther, other, picked, sends],
-  );
-  const rounds = viewingOther ? otherRounds : checkoutRounds;
+  const threads = viewingOther
+    ? other?.branch === picked
+      ? other.threads
+      : NO_THREADS
+    : checkoutThreads;
   const positions = viewingOther ? NO_POSITIONS : checkoutPositions;
   const jump = (thread: Thread, position: ThreadPosition | undefined) =>
     viewingOther ? onOpenThread?.(thread) : onJump(thread, position);
@@ -165,9 +159,9 @@ export default function ThreadsPanel({
       outdated: 0,
       resolved: 0,
     };
-    const sections = rounds.map((round) => ({
-      round,
-      rows: round.threads.map((t): Row => {
+    const sections = groupByTurn(threads).map(({ turn, threads }) => ({
+      turn,
+      rows: threads.map((t): Row => {
         const position = positions.get(t.id);
         const state: ThreadState = t.resolved
           ? "resolved"
@@ -180,8 +174,7 @@ export default function ThreadsPanel({
       }),
     }));
     return { sections, counts };
-  }, [rounds, positions]);
-  const latestSend = rounds.find((r) => r.kind === "send")?.key;
+  }, [threads, positions]);
 
   const visibleSections = sections
     .map((s) => ({
@@ -190,10 +183,13 @@ export default function ThreadsPanel({
     }))
     .filter((s) => s.rows.length > 0);
 
-  const isOpen = (round: Round, rows: Row[]) =>
-    toggled.get(round.key) ??
-    (round.kind === "unsent" ||
-      round.key === latestSend ||
+  // Your turn and drafts are open, and the first section when neither
+  // shows, so the list never opens all folded.
+  const isOpen = (turn: Turn, rows: Row[], index: number) =>
+    toggled.get(turn) ??
+    (turn === "yours" ||
+      turn === "drafts" ||
+      index === 0 ||
       rows.some((r) => r.thread.id === activeId));
   const toggle = (key: string, open: boolean) =>
     setToggled((prev) => new Map(prev).set(key, !open));
@@ -333,19 +329,19 @@ export default function ThreadsPanel({
             </p>
           ) : (
             <ScrollArea className="min-h-0 flex-1">
-              {visibleSections.map(({ round, rows }) => {
-                const open = isOpen(round, rows);
+              {visibleSections.map(({ turn, rows }, index) => {
+                const open = isOpen(turn, rows, index);
                 return (
                   <section
-                    key={round.key}
+                    key={turn}
                     className="border-b"
-                    data-testid={`panel-round-${round.key}`}
+                    data-testid={`panel-turn-${turn}`}
                   >
-                    <RoundHeader
-                      round={round}
+                    <TurnHeader
+                      turn={turn}
                       count={rows.length}
                       open={open}
-                      onToggle={() => toggle(round.key, open)}
+                      onToggle={() => toggle(turn, open)}
                     />
                     {open && (
                       <ul className="divide-y border-t">
@@ -488,52 +484,34 @@ function PanelMenu({
   );
 }
 
-function RoundHeader({
-  round,
+function TurnHeader({
+  turn,
   count,
   open,
   onToggle,
 }: {
-  round: Round;
+  turn: Turn;
   count: number;
   open: boolean;
   onToggle: () => void;
 }) {
-  const note = round.kind === "send" ? excerpt(round.send.note) : "";
   return (
     <button
       type="button"
-      className="sticky top-0 z-10 flex w-full flex-col gap-0.5 bg-sidebar px-3 py-2 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60"
+      className="sticky top-0 z-10 flex w-full items-center gap-1.5 bg-sidebar px-3 py-2 text-left text-xs outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60"
       aria-expanded={open}
       onClick={onToggle}
     >
-      <span className="flex w-full items-center gap-1.5 text-xs">
-        <ChevronRightIcon
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-90",
-          )}
-        />
-        <span className="font-medium">
-          {round.kind === "send" ? `Round ${round.number}` : "Not sent yet"}
-        </span>
-        {round.kind === "send" && (
-          <span
-            className="text-muted-foreground"
-            title={formatDateTime(round.send.createdAt)}
-          >
-            · {timeAgo(round.send.createdAt)}
-          </span>
+      <ChevronRightIcon
+        className={cn(
+          "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          open && "rotate-90",
         )}
-        <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
-          {count}
-        </span>
+      />
+      <span className="font-medium">{turnLabel[turn]}</span>
+      <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
+        {count}
       </span>
-      {note && (
-        <span className="truncate pl-5 text-xs text-muted-foreground">
-          {note}
-        </span>
-      )}
     </button>
   );
 }
@@ -555,6 +533,8 @@ function ThreadRow({
   const last = thread.comments[thread.comments.length - 1];
   const replies = Math.max(0, thread.comments.length - 1);
   const drafts = thread.comments.filter((c) => c.draft).length;
+  const sends = sendCount(thread);
+  const answer = last !== first && last?.authorRole === "agent" ? last : null;
   return (
     <li>
       <button
@@ -572,6 +552,9 @@ function ThreadRow({
           <span className={cn("size-1.5 rounded-full", stateDot[state])} />
           <span className="capitalize">{state}</span>
           {state === "outdated" && <span>· not in this diff</span>}
+          {first?.authorRole === "agent" && (
+            <span className="text-agent">· agent note</span>
+          )}
           {drafts > 0 && (
             <span className="text-renamed">
               · {drafts === 1 ? "draft" : `${drafts} drafts`}
@@ -584,12 +567,25 @@ function ThreadRow({
         <span className="line-clamp-2 text-sm leading-snug text-foreground">
           {first ? excerpt(first.body) : ""}
         </span>
+        {answer && (
+          <span className="line-clamp-2 border-l-2 border-agent/40 pl-2 text-xs leading-snug text-muted-foreground">
+            <span className="text-agent">agent:</span> {excerpt(answer.body)}
+          </span>
+        )}
         <span className="flex w-full items-center gap-2 text-xs text-muted-foreground">
-          <span className="truncate font-mono">
+          <span className="mr-auto truncate font-mono">
             {locationLabel(shown.path, shown.line)}
           </span>
+          {sends > 0 && (
+            <span
+              className="shrink-0 tabular-nums"
+              title={sends === 1 ? "Sent once" : `Went through ${sends} sends`}
+            >
+              R{sends}
+            </span>
+          )}
           {replies > 0 && (
-            <span className="ml-auto inline-flex shrink-0 items-center gap-1 tabular-nums">
+            <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
               <MessageSquareIcon className="size-3" />
               {replies}
             </span>

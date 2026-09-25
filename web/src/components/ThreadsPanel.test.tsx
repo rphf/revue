@@ -35,8 +35,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 import { api } from "../api";
 import ThreadsPanel from "./ThreadsPanel";
-import type { Send, Thread, ThreadPosition } from "../types";
-import { groupByRound } from "@/lib/rounds";
+import type { Comment, Thread, ThreadPosition } from "../types";
 
 function position(
   threadId: number,
@@ -71,7 +70,20 @@ function thread(
   };
 }
 
-const oneSend: Send[] = [{ id: 1, note: "", createdAt: "" }];
+function withComments(t: Thread, ...more: Partial<Comment>[]): Thread {
+  return {
+    ...t,
+    comments: [
+      ...t.comments,
+      ...more.map((c, i) => ({
+        ...t.comments[0],
+        id: t.id * 100 + i + 1,
+        sendId: undefined,
+        ...c,
+      })),
+    ],
+  };
+}
 
 describe("ThreadsPanel", () => {
   const threads = [
@@ -96,16 +108,19 @@ describe("ThreadsPanel", () => {
     const user = userEvent.setup();
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(threads, oneSend)}
+        threads={threads}
         positions={positions}
         onJump={() => {}}
         onClose={() => {}}
       />,
     );
 
-    // All by default.
-    expect(screen.getAllByTestId(/panel-thread-/)).toHaveLength(4);
+    // All by default, with the resolved section folded.
+    expect(screen.getAllByTestId(/panel-thread-/)).toHaveLength(3);
+    expect(screen.getByRole("button", { name: /Resolved/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
     await user.click(screen.getByRole("tab", { name: /live/ }));
     let rows = screen.getAllByTestId(/panel-thread-/);
@@ -127,8 +142,7 @@ describe("ThreadsPanel", () => {
   it("shows the live line for live threads and the origin otherwise", () => {
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(threads, oneSend)}
+        threads={threads}
         positions={positions}
         onJump={() => {}}
         onClose={() => {}}
@@ -147,8 +161,7 @@ describe("ThreadsPanel", () => {
     const onJump = vi.fn();
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(threads, oneSend)}
+        threads={threads}
         positions={positions}
         onJump={onJump}
         onClose={() => {}}
@@ -161,24 +174,15 @@ describe("ThreadsPanel", () => {
     expect(onJump).toHaveBeenCalledWith(threads[3], undefined);
   });
 
-  it("groups threads per send, newest first, older rounds collapsed", () => {
-    const sends: Send[] = [
-      { id: 1, note: "first pass", createdAt: "2026-09-20T10:00:00Z" },
-      { id: 2, note: "second pass", createdAt: "2026-09-20T11:00:00Z" },
-    ];
-    const draft = thread(3);
-    draft.comments[0] = {
-      ...draft.comments[0],
-      draft: true,
-      sendId: undefined,
-    };
+  it("groups threads by turn, yours and drafts open, the rest folded", () => {
+    const answered = withComments(thread(1), {
+      authorRole: "agent",
+      body: "done, renamed it",
+    });
+    const drafted = withComments(thread(2), { draft: true });
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(
-          [thread(1, { sendId: 1 }), thread(2, { sendId: 2 }), draft],
-          sends,
-        )}
+        threads={[thread(3), answered, thread(4, { resolved: true }), drafted]}
         positions={positions}
         onJump={() => {}}
         onClose={() => {}}
@@ -187,48 +191,89 @@ describe("ThreadsPanel", () => {
 
     const headers = screen.getAllByRole("button", { expanded: true });
     expect(headers.map((h) => h.textContent)).toEqual([
-      expect.stringContaining("Not sent yet"),
-      expect.stringContaining("Round 2"),
+      expect.stringContaining("Your turn"),
+      expect.stringContaining("Drafts"),
     ]);
-    expect(screen.getByTestId("panel-round-send-2")).toHaveTextContent(
-      "second pass",
+    expect(screen.getByTestId("panel-turn-yours")).toContainElement(
+      screen.getByTestId("panel-thread-1"),
     );
-    expect(screen.getByTestId("panel-thread-2")).toBeInTheDocument();
+    expect(screen.getByTestId("panel-turn-drafts")).toContainElement(
+      screen.getByTestId("panel-thread-2"),
+    );
+
+    const waiting = screen.getByRole("button", { name: /Waiting on agent/ });
+    expect(waiting).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("panel-thread-3")).not.toBeInTheDocument();
+    fireEvent.click(waiting);
     expect(screen.getByTestId("panel-thread-3")).toBeInTheDocument();
-
-    // The first send is collapsed: its header shows, its thread does not.
-    const first = screen.getByRole("button", { name: /Round 1/ });
-    expect(first).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: /Your turn/ }));
     expect(screen.queryByTestId("panel-thread-1")).not.toBeInTheDocument();
-
-    fireEvent.click(first);
-    expect(screen.getByTestId("panel-thread-1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Round 2/ }));
-    expect(screen.queryByTestId("panel-thread-2")).not.toBeInTheDocument();
   });
 
-  it("opens a collapsed round holding the thread on screen", () => {
-    const sends: Send[] = [
-      { id: 1, note: "", createdAt: "2026-09-20T10:00:00Z" },
-      { id: 2, note: "", createdAt: "2026-09-20T11:00:00Z" },
-    ];
+  it("opens the first section when nothing waits on the reviewer", () => {
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(
-          [thread(1, { sendId: 1 }), thread(2, { sendId: 2 })],
-          sends,
-        )}
+        threads={[thread(1), thread(2, { resolved: true })]}
         positions={positions}
-        activeId={1}
         onJump={() => {}}
         onClose={() => {}}
       />,
     );
-    expect(screen.getByTestId("panel-thread-1")).toHaveAttribute(
+    expect(
+      screen.getByRole("button", { name: /Waiting on agent/ }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("panel-thread-1")).toBeInTheDocument();
+  });
+
+  it("opens a folded section holding the thread on screen", () => {
+    render(
+      <ThreadsPanel
+        threads={[thread(1), thread(2, { resolved: true })]}
+        positions={positions}
+        activeId={2}
+        onJump={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("panel-thread-2")).toHaveAttribute(
       "aria-current",
       "true",
     );
+  });
+
+  it("shows the agent's answer, its notes, and the sends a thread went through", () => {
+    const answered = withComments(
+      thread(1),
+      { authorRole: "agent", body: "why not keep it?" },
+      { sendId: 2 },
+      { authorRole: "agent", body: "kept, as asked" },
+    );
+    const note = withComments(thread(2), {});
+    note.comments = [
+      {
+        ...note.comments[0],
+        authorRole: "agent",
+        body: "self review",
+        sendId: undefined,
+      },
+    ];
+    render(
+      <ThreadsPanel
+        threads={[answered, note]}
+        positions={positions}
+        onJump={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const row = screen.getByTestId("panel-thread-1");
+    expect(row).toHaveTextContent("agent: kept, as asked");
+    expect(row).toHaveTextContent("R2");
+    expect(row).not.toHaveTextContent("agent note");
+
+    const noteRow = screen.getByTestId("panel-thread-2");
+    expect(noteRow).toHaveTextContent("agent note");
+    expect(noteRow).not.toHaveTextContent("agent:");
+    expect(noteRow).not.toHaveTextContent(/R\d/);
   });
 
   it("switches to History and keeps each archived thread's resolution", async () => {
@@ -236,8 +281,7 @@ describe("ThreadsPanel", () => {
     const onOpenThread = vi.fn();
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(threads, oneSend)}
+        threads={threads}
         positions={positions}
         onJump={() => {}}
         onOpenThread={onOpenThread}
@@ -263,8 +307,7 @@ describe("ThreadsPanel", () => {
     const onOpenThread = vi.fn();
     render(
       <ThreadsPanel
-        sends={oneSend}
-        rounds={groupByRound(threads, oneSend)}
+        threads={threads}
         positions={positions}
         onJump={onJump}
         onOpenThread={onOpenThread}

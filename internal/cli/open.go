@@ -155,6 +155,49 @@ func (e *env) cmdReply(args []string) int {
 	return e.printJSON(out)
 }
 
+// cmdComment opens an agent thread on a line, a range, or a whole file,
+// published at once. The diff arguments come as for open: the thread is
+// anchored in that diff.
+func (e *env) cmdComment(args []string) int {
+	fs := newFlagSet("comment")
+	path := fs.String("path", "", "file to comment on (required)")
+	line := fs.Int("line", 0, "line to comment on; 0 for the whole file")
+	startLine := fs.Int("start-line", 0, "first line of a range ending at --line")
+	side := fs.String("side", store.SideAdditions, "additions (the new file) or deletions (the old one)")
+	message := fs.String("m", "", "comment body (reads stdin when omitted)")
+	fs.StringVar(message, "message", *message, "comment body")
+	flagArgs, pathArgs := splitAtDoubleDash(args)
+	if err := fs.Parse(flagArgs); err != nil {
+		return e.failValidation(err.Error())
+	}
+	if *path == "" {
+		return e.failValidation("--path is required")
+	}
+	if *startLine < 0 || *startLine > *line || (*startLine > 0 && *line == 0) {
+		return e.failValidation("--start-line must fall between 1 and --line")
+	}
+	body := *message
+	if body == "" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil || len(data) == 0 {
+			return e.failValidation("comment body required: pass -m or pipe stdin")
+		}
+		body = string(data)
+	}
+	req := map[string]any{
+		"role": store.RoleAgent, "args": append(append([]string{}, fs.Args()...), pathArgs...),
+		"path": *path, "side": *side, "line": *line, "body": body,
+	}
+	if *startLine > 0 && *startLine < *line {
+		req["startLine"] = *startLine
+	}
+	var out map[string]any
+	if err := e.client.do("POST", "/api/threads", req, &out); err != nil {
+		return e.fail(err)
+	}
+	return e.printJSON(out)
+}
+
 // cmdExport prints the server's markdown rendering of the threads.
 func (e *env) cmdExport(args []string) int {
 	fs := newFlagSet("export")

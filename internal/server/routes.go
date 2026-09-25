@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 const (
 	eventSent        = "sent"
 	eventReplied     = "thread.replied"
+	eventOpened      = "thread.opened"
 	eventResolved    = "thread.resolved"
 	eventUnresolved  = "thread.unresolved"
 	eventDiffChanged = "diff.changed"
@@ -356,16 +358,25 @@ type createThreadRequest struct {
 	StartLine *int     `json:"startLine,omitempty"`
 	Line      int      `json:"line"`
 	Body      string   `json:"body"`
+	// Empty for the reviewer.
+	Role string `json:"role,omitempty"`
 }
 
-// handleCreateThread starts a reviewer draft thread anchored in the
-// capture the reviewer is looking at, freezing that file's contents as
-// the thread's snapshot. Line 0 comments on the file as a whole, on the
-// side the file exists on. Drafts emit no events: they are invisible
-// until sent.
+// handleCreateThread starts a thread anchored in the capture for args,
+// freezing that file's contents as the thread's snapshot. Line 0
+// comments on the file as a whole, on the side the file exists on. The
+// reviewer's thread is a draft and emits no event: it is invisible
+// until sent. The agent's is published at once, like its replies.
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	var req createThreadRequest
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Role == "" {
+		req.Role = store.RoleReviewer
+	}
+	if req.Role != store.RoleReviewer && req.Role != store.RoleAgent {
+		httpError(w, http.StatusBadRequest, "validation", "role must be reviewer or agent")
 		return
 	}
 	if req.Path == "" || req.Line < 0 || req.Body == "" ||
@@ -403,22 +414,34 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	if h := anchor.Find(c.hunks, req.Path, side, req.Line); req.Line > 0 && h != nil {
 		nt.HunkHash, nt.HunkStart = h.Hash, h.Start(req.Side)
 	}
+	draft := req.Role == store.RoleReviewer
 	var thread *store.Thread
 	var comment *store.Comment
+	var evt *store.Event
 	err := s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		thread, comment, err = tx.CreateThread(nt, store.RoleReviewer, req.Body, true)
+		thread, comment, err = tx.CreateThread(nt, req.Role, req.Body, draft)
+		if err != nil || draft {
+			return err
+		}
+		evt, err = tx.AppendEvent(eventOpened, map[string]any{"thread": thread, "comment": comment})
 		return err
 	})
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"thread": thread, "comment": comment})
+	resp := map[string]any{"thread": thread, "comment": comment}
+	if !draft {
+		s.bus.notify()
+		resp["cursor"] = evt.ID
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // handleSnapshot serves the file as it was when the thread started, so
-// an outdated thread can be read against the code it was written on.
+// an outdated thread can be read against the code it was written on,
+// and the file in the working tree now, to show what changed since.
 func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.threadFromPath(w, r)
 	if !ok {
@@ -427,6 +450,10 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"path": t.Path, "oldPath": t.OldPath, "status": t.Status,
 		"oldContent": nil, "newContent": nil, "createdAt": t.CreatedAt,
+		"currentContent": nil,
+	}
+	if content, err := gitx.WorktreeContent(s.repoRoot, t.Path); err == nil {
+		resp["currentContent"] = string(content)
 	}
 	for _, side := range []struct{ hash, key string }{{t.OldBlob, "oldContent"}, {t.NewBlob, "newContent"}} {
 		if side.hash == "" {
@@ -611,6 +638,11 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		internalError(w, err)
 		return
+	}
+	// The send stands without its checkpoint: only the diff since the
+	// last send misses it.
+	if err := gitx.Checkpoint(s.repoRoot); err != nil {
+		log.Printf("revue: checkpoint: %v", err)
 	}
 	s.bus.notify()
 	writeJSON(w, http.StatusCreated, map[string]any{"send": send, "threads": published})

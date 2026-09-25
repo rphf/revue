@@ -33,6 +33,7 @@ Agent commands print JSON on stdout, except `export`, which prints markdown.
 | --- | --- |
 | `revue feedback [--since C]` | Every unresolved thread of the current branch with its sent comments and the code it was written on, the reviewer's last send with its note, and the events after cursor C. The output carries the new `cursor`, and `landed`: the ids of threads whose code was committed but that are not archived yet. |
 | `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent, which suits a reply over several lines. The text is GitHub-flavored markdown, rendered as the README describes. |
+| `revue comment --path P [--line N] [--start-line M] [--side deletions] -m TEXT [git-diff args]` | Open a thread, published at once. `--line` is the line to comment on, 0 (the default) for the whole file; `--start-line` makes it a range that ends at `--line`; `--side deletions` points at the old side of the diff. The git-diff arguments name the diff the thread is anchored in, as for `revue open`: pass the ones the reviewer's page shows. Reads stdin when `-m` is absent. The thread lands in the reviewer's "Your turn". |
 | `revue wait [--since C] [--timeout D]` | Block until the reviewer sends comments. The default timeout is 5m. |
 | `revue export` | Print the threads as markdown, grouped by file, with quoted code and every sent comment. Drafts are excluded. |
 | `revue archive --thread N [--thread M]` | Archive these threads. |

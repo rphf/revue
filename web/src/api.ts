@@ -120,7 +120,6 @@ export const api = {
     const qs = q.toString();
     return request<History>("GET", `/api/history${qs ? `?${qs}` : ""}`);
   },
-  listSends: () => request<{ sends: Send[] }>("GET", "/api/sends"),
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
 };

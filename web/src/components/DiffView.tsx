@@ -47,8 +47,9 @@ export type DiffStyle = "unified" | "split";
 // Metadata attached to each annotation; U6 renders threads and
 // pending comment forms through it. rev fingerprints the thread's
 // visible content so item versions bump only when something changed.
+// An outdated thread sits at line 0, under its file's header.
 export interface AnnotationMeta {
-  kind: "thread" | "pending" | "rich" | "image";
+  kind: "thread" | "outdated" | "pending" | "rich" | "image";
   threadId?: number;
   rev?: string;
   thread?: Thread;
@@ -152,6 +153,10 @@ const RICH_CAPTION = "Switch to Source to comment on lines.";
 // file's preview as the annotation above it.
 const BINARY_CAPTION = "Binary file: no line diff.";
 
+// A file with outdated threads but no change left in this diff is a
+// one-line file item too, so its threads stay in the diff.
+const GONE_CAPTION = "No change left in this file.";
+
 interface BinaryMemo {
   file: FileContents;
   rev?: string;
@@ -245,13 +250,30 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   // actually change, so CodeView re-processes exactly those items.
   const memoRef = useRef<Map<string, ItemMemo>>(new Map());
   const binaryMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
+  const goneMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
+
+  const gonePaths = useMemo(() => {
+    const inDiff = new Set([
+      ...files.map((f) => f.name),
+      ...binaryByPath.keys(),
+    ]);
+    return new Set(
+      [...(annotationsByFile?.entries() ?? [])]
+        .filter(
+          ([path, list]) =>
+            !inDiff.has(path) &&
+            list.some((a) => a.metadata?.kind === "outdated"),
+        )
+        .map(([path]) => path),
+    );
+  }, [files, binaryByPath, annotationsByFile]);
 
   const items = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
     const ordered = [
       ...files
         .filter((f) => !binaryByPath.has(f.name))
         .map((f) => ({ path: f.name, meta: f as FileDiffMetadata | null })),
-      ...[...binaryByPath.keys()].map((path) => ({
+      ...[...binaryByPath.keys(), ...gonePaths].map((path) => ({
         path,
         meta: null as FileDiffMetadata | null,
       })),
@@ -264,6 +286,38 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       const fileNotes = annotationsByFile
         ?.get(path)
         ?.filter((a) => a.lineNumber === 0);
+      if (gonePaths.has(path)) {
+        const notes = fileNotes?.filter((a) => a.metadata?.kind === "outdated");
+        const prev = goneMemoRef.current.get(path);
+        const memo: BinaryMemo = {
+          file: prev?.file ?? {
+            name: path,
+            contents: GONE_CAPTION,
+            lang: "text",
+          },
+          notes,
+          collapsed: isCollapsed,
+          version:
+            prev === undefined
+              ? 0
+              : prev.collapsed === isCollapsed &&
+                  annotationsEqual(prev.notes, notes)
+                ? prev.version
+                : prev.version + 1,
+        };
+        goneMemoRef.current.set(path, memo);
+        return {
+          id: path,
+          type: "file",
+          file: memo.file,
+          annotations: notes?.map(({ lineNumber, metadata }) => ({
+            lineNumber,
+            metadata,
+          })),
+          collapsed: isCollapsed,
+          version: memo.version,
+        } as CodeViewItem<AnnotationMeta>;
+      }
       if (meta === null) {
         const binary = binaryByPath.get(path);
         const image =
@@ -386,7 +440,15 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         version,
       } as CodeViewItem<AnnotationMeta>;
     });
-  }, [files, binaryByPath, annotationsByFile, richByFile, imageUrl, collapsed]);
+  }, [
+    files,
+    binaryByPath,
+    gonePaths,
+    annotationsByFile,
+    richByFile,
+    imageUrl,
+    collapsed,
+  ]);
 
   // The options object is stable across renders that do not change it,
   // as the library asks; a new object would re-configure the viewer.
@@ -468,6 +530,16 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   const renderHeaderMetadata = useCallback(
     (item: CodeViewItem<AnnotationMeta>) => {
       const path = pathFromItemId(item.id);
+      if (gonePaths.has(path)) {
+        return (
+          <span
+            className="font-sans text-xs text-muted-foreground"
+            data-testid={`gone-${path}`}
+          >
+            Not in this diff any more
+          </span>
+        );
+      }
       const commentButton = onFileComment && (
         <Button
           type="button"
@@ -545,6 +617,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       onToggleViewed,
       onFileComment,
       binaryByPath,
+      gonePaths,
       richByFile,
       onToggleRich,
     ],
@@ -564,17 +637,32 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     );
   }
 
+  // Only files kept for their outdated threads: the diff itself is
+  // empty, and says so above them.
+  const onlyGone = items.length === gonePaths.size;
   return (
-    <CodeView<AnnotationMeta>
-      ref={codeView}
-      className="diff-scroll"
-      items={items}
-      options={options}
-      onScroll={onScroll}
-      renderAnnotation={renderItemAnnotation}
-      renderHeaderPrefix={renderHeaderPrefix}
-      renderHeaderMetadata={renderHeaderMetadata}
-    />
+    <>
+      {onlyGone && (
+        <p
+          className="flex shrink-0 items-center gap-2 border-b px-4 py-2 text-sm text-muted-foreground"
+          data-testid="diff-empty"
+        >
+          <FileDiffIcon className="size-4 opacity-60" />
+          No changes in this diff. The threads below are on code that changed
+          since they started.
+        </p>
+      )}
+      <CodeView<AnnotationMeta>
+        ref={codeView}
+        className="diff-scroll"
+        items={items}
+        options={options}
+        onScroll={onScroll}
+        renderAnnotation={renderItemAnnotation}
+        renderHeaderPrefix={renderHeaderPrefix}
+        renderHeaderMetadata={renderHeaderMetadata}
+      />
+    </>
   );
 });
 

@@ -19,7 +19,6 @@ import type {
   ArchiveSelector,
   DiffResponse,
   Landed,
-  Send,
   Side,
   Thread as ThreadType,
   ThreadPosition,
@@ -29,6 +28,9 @@ import { type PanelSize, usePanelRef } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import ConnectionBanner from "../components/ConnectionBanner";
 import NotifyBanner from "../components/NotifyBanner";
+import OutdatedThread, {
+  type SnapshotMode,
+} from "../components/OutdatedThread";
 import DiffView, {
   type AnnotationMeta,
   type DiffStyle,
@@ -51,8 +53,8 @@ import { isTyping } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { useRichDocs } from "@/lib/richDiff";
-import { groupByRound } from "@/lib/rounds";
 import { locationLabel, threadRev } from "@/lib/threads";
+import { groupByTurn } from "@/lib/turns";
 import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
@@ -242,7 +244,6 @@ export default function DiffPage({
   const [load, setLoad] = useState<DiffLoad | null>(null);
   const [fetchNonce, setFetchNonce] = useState(0);
   const [threads, setThreads] = useState<ThreadType[]>([]);
-  const [sends, setSends] = useState<Send[]>([]);
   const [pending, setPending] = useState<PendingComment | null>(null);
   // The panel stays as it was left across reloads. It reopens without
   // taking the caret: that is for opening it.
@@ -268,6 +269,7 @@ export default function DiffPage({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
+  const [snapshotMode, setSnapshotMode] = useState<SnapshotMode>("then");
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(0);
@@ -342,9 +344,7 @@ export default function DiffPage({
     saveTreeOpen(open);
   }, []);
 
-  // Threads and the sends that group them into rounds load together,
-  // so a Send never shows its threads under the wrong round. Calls
-  // coalesce: one fetch at a time, and any number of calls while it is
+  // Thread loads coalesce: one fetch at a time, and any number of calls while it is
   // in flight make one more after it, so a burst of events (a replay on
   // connect, a send and its event) costs at most two fetches. Only the
   // latest request's answer lands; one overtaken by a later call is
@@ -361,12 +361,12 @@ export default function DiffPage({
       state.inFlight = true;
       state.again = false;
       const seq = ++state.seq;
-      Promise.all([api.listThreads(), api.listSends()])
+      api
+        .listThreads()
         .then(
-          ([t, s]) => {
+          (t) => {
             if (seq !== state.seq) return;
             setThreads(t.threads);
-            setSends(s.sends);
             setThreadsError(null);
           },
           (e: unknown) => {
@@ -380,7 +380,6 @@ export default function DiffPage({
     };
     run();
   }, []);
-  const rounds = useMemo(() => groupByRound(threads, sends), [threads, sends]);
   useEffect(loadThreads, [loadThreads]);
 
   const loadLanded = useCallback(() => {
@@ -615,8 +614,9 @@ export default function DiffPage({
   // re-render per keystroke.
   const pendingBody = useRef("");
 
-  // Inline annotations: every thread live in this diff, plus the single
-  // pending comment form. Each annotation's metadata carries what
+  // Inline annotations: every thread live in this diff, every open
+  // outdated one under its file's header, plus the single pending
+  // comment form. Each annotation's metadata carries what
   // rendering it needs, and DiffView compares annotation content per
   // file, so a thread reload re-renders only the files whose
   // annotations actually changed.
@@ -641,6 +641,31 @@ export default function DiffPage({
         },
       });
     }
+    // After the live ones, so a file's own threads come first under its
+    // header. A deleted file has only the old side to hang them on. A
+    // thread whose code landed waits for the offer to archive it. Only
+    // the working tree keeps a file out of the diff for its threads: a
+    // narrower diff shows what it names.
+    const landedIds = new Set(landed?.threadIds);
+    const workingTree = args.length === 0 || args[0] === "--";
+    for (const t of threads) {
+      const pos = positions.get(t.id);
+      if (t.resolved || pos?.state === "live" || landedIds.has(t.id)) continue;
+      const path = pos?.path ?? t.path;
+      if (!workingTree && !diffFiles.some((f) => f.path === path)) continue;
+      const deleted =
+        diffFiles.find((f) => f.path === path)?.status === "deleted";
+      push(path, {
+        side: deleted ? "deletions" : "additions",
+        lineNumber: 0,
+        metadata: {
+          kind: "outdated",
+          threadId: t.id,
+          rev: threadRev(t),
+          thread: t,
+        },
+      });
+    }
     if (pending) {
       push(pending.path, {
         side: pending.side,
@@ -653,7 +678,14 @@ export default function DiffPage({
       });
     }
     return next;
-  }, [threads, positions, pending]);
+  }, [threads, positions, pending, diffFiles, landed, args]);
+
+  const openSnapshot = useCallback((id: number, mode?: SnapshotMode) => {
+    setHistoryThread(null);
+    setSnapshotId(id);
+    setFocusedId(id);
+    if (mode) setSnapshotMode(mode);
+  }, []);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<AnnotationMeta>) => {
@@ -706,9 +738,19 @@ export default function DiffPage({
       if (meta?.kind === "thread" && meta.thread) {
         return <Thread thread={meta.thread} onChanged={loadThreads} />;
       }
+      if (meta?.kind === "outdated" && meta.thread) {
+        const id = meta.thread.id;
+        return (
+          <OutdatedThread
+            thread={meta.thread}
+            onChanged={loadThreads}
+            onOpen={(mode) => openSnapshot(id, mode)}
+          />
+        );
+      }
       return null;
     },
-    [args, loadThreads],
+    [args, loadThreads, openSnapshot],
   );
 
   const onLineSelect = useCallback((path: string, range: SelectedLineRange) => {
@@ -744,7 +786,8 @@ export default function DiffPage({
     parsedFiles !== null &&
     !parsedFiles.some((f) => f.name === pending.path);
 
-  // A live thread scrolls to its line; an outdated one opens on the
+  // A live thread scrolls to its line, an open outdated one to its
+  // file's header, where it waits; a resolved outdated one opens on the
   // file as it was when the thread started. Either way the thread is
   // outlined until the next click elsewhere.
   // A live thread on a line whose only change was whitespace is not in
@@ -768,6 +811,11 @@ export default function DiffPage({
           saveHideSpace(false);
           spaceJump.current = target;
         } else reveal(target);
+      } else if (!thread.resolved) {
+        setSnapshotId(null);
+        const path = position?.path ?? thread.path;
+        setSelectedPath(path);
+        reveal({ path });
       } else {
         setSnapshotId(thread.id);
       }
@@ -781,11 +829,6 @@ export default function DiffPage({
       reveal(target);
     }
   }, [shown, reveal]);
-  const openSnapshot = useCallback((id: number) => {
-    setHistoryThread(null);
-    setSnapshotId(id);
-    setFocusedId(id);
-  }, []);
   const closeSnapshot = useCallback(() => setSnapshotId(null), []);
 
   useEffect(() => {
@@ -810,12 +853,12 @@ export default function DiffPage({
   // back meanwhile.
   const outdated = useMemo(
     () =>
-      rounds
-        .flatMap((r) => r.threads)
+      groupByTurn(threads)
+        .flatMap((g) => g.threads)
         .filter(
           (t) => positions.get(t.id)?.state !== "live" || t.id === snapshotId,
         ),
-    [rounds, positions, snapshotId],
+    [threads, positions, snapshotId],
   );
   const snapshotIndex = outdated.findIndex((t) => t.id === snapshotId);
   const snapshotThread = snapshotIndex >= 0 ? outdated[snapshotIndex] : null;
@@ -1147,6 +1190,8 @@ export default function DiffPage({
                     theme={theme}
                     onChanged={loadThreads}
                     onClose={closeSnapshot}
+                    mode={snapshotMode}
+                    onModeChange={setSnapshotMode}
                   />
                 </div>
               )}
@@ -1180,7 +1225,7 @@ export default function DiffPage({
                   className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
                 >
                   <ThreadsPanel
-                    rounds={rounds}
+                    threads={threads}
                     positions={positions}
                     onJump={jumpToThread}
                     activeId={
@@ -1196,7 +1241,6 @@ export default function DiffPage({
                     archiveError={archiveError}
                     onOpenThread={openArchived}
                     signal={historySignal}
-                    sends={sends}
                     footer={
                       <SendComposer
                         draftCount={draftCount}

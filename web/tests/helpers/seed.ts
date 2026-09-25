@@ -118,9 +118,13 @@ export async function draftComment(
   await expect(async () => {
     await line.scrollIntoViewIfNeeded();
     await line.hover();
-    const plus = page.locator("[data-utility-button]").first();
+    // Rows drawn by the scroll can miss that first hover; a second
+    // move over the line brings its "+" up.
     const lineBox = await line.boundingBox();
-    const plusBox = await plus.boundingBox();
+    expect(lineBox).not.toBeNull();
+    await page.mouse.move(lineBox!.x + 4, lineBox!.y + lineBox!.height / 2);
+    const plus = page.locator("[data-utility-button]").first();
+    const plusBox = await plus.boundingBox({ timeout: 1000 });
     expect(lineBox).not.toBeNull();
     expect(plusBox).not.toBeNull();
     const lineMid = lineBox!.y + lineBox!.height / 2;

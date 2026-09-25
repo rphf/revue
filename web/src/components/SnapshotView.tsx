@@ -18,6 +18,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  FileDiffIcon,
   HistoryIcon,
 } from "lucide-react";
 import { api, errorMessage } from "../api";
@@ -28,6 +29,7 @@ import { locationLabel, threadRev } from "@/lib/threads";
 import { timeAgo } from "@/lib/time";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
   TooltipContent,
@@ -36,6 +38,7 @@ import {
 import { BASE_OPTIONS, LAYOUT, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import type { AnnotationMeta, DiffStyle } from "./DiffView";
 import LoadingBlocks from "./LoadingBlocks";
+import type { SnapshotMode } from "./OutdatedThread";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import Thread from "./Thread";
 
@@ -51,12 +54,23 @@ export interface SnapshotViewProps {
   theme: Theme;
   onChanged: () => void;
   onClose: () => void;
+  // The file as it was, or what changed in it since; without a handler
+  // the view shows the file as it was.
+  mode?: SnapshotMode;
+  onModeChange?: (mode: SnapshotMode) => void;
 }
 
 type SnapshotState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; file: FileDiffMetadata | null; createdAt: string };
+  | {
+      status: "ready";
+      file: FileDiffMetadata | null;
+      // From the file at the thread's start to the working tree now;
+      // null when neither holds text, or nothing changed.
+      since: FileDiffMetadata | null;
+      createdAt: string;
+    };
 
 // Page shortcuts stay out of the way of anything that takes text.
 function NavButton({
@@ -94,7 +108,9 @@ function NavButton({
 
 // An outdated thread, read against the code it was written on: the
 // file as it was when the thread started, rebuilt as a diff from the
-// thread's snapshot, with the thread at its origin line. It takes the
+// thread's snapshot, with the thread at its origin line. The other mode
+// diffs that file against the working tree now, with the thread above:
+// what the agent did about it. It takes the
 // place of the tree and the diff, so the threads panel stays at hand to
 // pick another thread; the header steps through the outdated ones.
 // Reply and resolve work as anywhere else.
@@ -108,7 +124,10 @@ export default function SnapshotView({
   theme,
   onChanged,
   onClose,
+  mode: requestedMode = "then",
+  onModeChange,
 }: SnapshotViewProps) {
+  const mode = onModeChange ? requestedMode : "then";
   const [snap, setSnap] = useState<SnapshotState>({ status: "loading" });
   const codeView = useRef<CodeViewHandle<AnnotationMeta, undefined>>(null);
   useStickyHeaderFix(codeView);
@@ -136,7 +155,17 @@ export default function SnapshotView({
         );
         // One missing side leaves the diff unkeyed.
         file.cacheKey ??= key;
-        setSnap({ status: "ready", file, createdAt: s.createdAt });
+        const then = s.newContent ?? s.oldContent;
+        const since =
+          then === s.currentContent
+            ? null
+            : parseDiffFromFile(
+                then !== null ? { name: s.path, contents: then } : null,
+                s.currentContent !== null
+                  ? { name: s.path, contents: s.currentContent }
+                  : null,
+              );
+        setSnap({ status: "ready", file, since, createdAt: s.createdAt });
       })
       .catch((e: unknown) => {
         if (!cancelled) setSnap({ status: "error", message: errorMessage(e) });
@@ -176,7 +205,20 @@ export default function SnapshotView({
   // The single item keeps its file object across renders: the
   // virtualizer lays it out once and refuses a different object later.
   const items = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
-    if (snap.status !== "ready" || snap.file === null) return [];
+    if (snap.status !== "ready") return [];
+    if (mode === "since") {
+      return snap.since === null
+        ? []
+        : [
+            {
+              id: thread.path,
+              type: "diff",
+              fileDiff: snap.since,
+              version: 0,
+            } as CodeViewItem<AnnotationMeta>,
+          ];
+    }
+    if (snap.file === null) return [];
     return [
       {
         id: thread.path,
@@ -197,11 +239,11 @@ export default function SnapshotView({
         version,
       } as CodeViewItem<AnnotationMeta>,
     ];
-  }, [snap, thread, rev, version]);
+  }, [snap, thread, rev, version, mode]);
 
   // Opens on the thread, not on the top of the file. The CodeView
   // takes its items in its own effect, so the jump waits a frame.
-  const ready = items.length > 0;
+  const ready = items.length > 0 && mode === "then";
   useEffect(() => {
     if (!ready) return;
     const frame = requestAnimationFrame(() =>
@@ -268,17 +310,47 @@ export default function SnapshotView({
         </Tooltip>
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 text-sm font-medium">
-            <HistoryIcon className="size-3.5 shrink-0 text-renamed" />
-            <span className="truncate">As it was when the thread started</span>
+            {mode === "since" ? (
+              <FileDiffIcon className="size-3.5 shrink-0 text-renamed" />
+            ) : (
+              <HistoryIcon className="size-3.5 shrink-0 text-renamed" />
+            )}
+            <span className="truncate">
+              {mode === "since"
+                ? "What changed since the thread started"
+                : "As it was when the thread started"}
+            </span>
           </p>
           <p className="truncate text-xs text-muted-foreground">
             <span className="font-mono">
               {locationLabel(thread.path, thread.line)}
             </span>
             {snap.status === "ready" && ` · ${timeAgo(snap.createdAt)}`}
-            {" · The code has changed since; reply and resolve still work."}
+            {mode === "since"
+              ? " · From the file then to the working tree now."
+              : " · The code has changed since; reply and resolve still work."}
           </p>
         </div>
+        {onModeChange && (
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={mode}
+            onValueChange={(v) => {
+              if (v) onModeChange(v as SnapshotMode);
+            }}
+            aria-label="Snapshot view"
+          >
+            <ToggleGroupItem value="then" className="h-7 px-2.5 text-xs">
+              As it was
+            </ToggleGroupItem>
+            <ToggleGroupItem value="since" className="h-7 px-2.5 text-xs">
+              Changes since
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
         {total > 0 && (
           <div className="flex shrink-0 items-center gap-1">
             {index >= 0 && (
@@ -318,12 +390,34 @@ export default function SnapshotView({
           <CircleAlertIcon className="size-4" />
           {snap.message}
         </p>
+      ) : mode === "since" ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="max-h-[45%] shrink-0 overflow-y-auto border-b p-3">
+            <Thread thread={thread} onChanged={onChanged} />
+          </div>
+          {items.length === 0 ? (
+            <p
+              className="p-4 text-sm text-muted-foreground"
+              data-testid="snapshot-no-change"
+            >
+              No change to this file since the thread started.
+            </p>
+          ) : (
+            <CodeView<AnnotationMeta>
+              key="since"
+              className="diff-scroll min-h-0 flex-1"
+              items={items}
+              options={options}
+            />
+          )}
+        </div>
       ) : items.length === 0 ? (
         <p className="p-4 text-sm text-muted-foreground">
           The snapshot holds no text for this file.
         </p>
       ) : (
         <CodeView<AnnotationMeta>
+          key="then"
           ref={codeView}
           className="diff-scroll min-h-0 flex-1"
           items={items}

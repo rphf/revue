@@ -120,6 +120,8 @@ export interface Snapshot {
   oldContent: string | null;
   newContent: string | null;
   createdAt: string;
+  // The file in the working tree now, null when it is not there.
+  currentContent: string | null;
 }
 
 export interface FileVersions {
