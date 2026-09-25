@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -113,42 +112,32 @@ func (h *harness) reviewerSend(note string) {
 	}
 }
 
-type feedback struct {
-	Cursor int64 `json:"cursor"`
-	Events []struct {
-		ID   int64  `json:"id"`
-		Type string `json:"type"`
-	} `json:"events"`
-	Threads []struct {
-		ID       int64  `json:"id"`
-		Path     string `json:"path"`
-		Line     int    `json:"line"`
-		Comments []struct {
-			AuthorRole string `json:"authorRole"`
-			Body       string `json:"body"`
-			Draft      bool   `json:"draft"`
-		} `json:"comments"`
-		Quote *struct {
-			Path  string   `json:"path"`
-			Lines []string `json:"lines"`
-		} `json:"quote"`
-	} `json:"threads"`
-	LastSend *struct {
-		Note string `json:"note"`
-	} `json:"lastSend"`
-}
-
-func (h *harness) feedback(since int64) feedback {
+// feedback runs feedback and returns its text.
+func (h *harness) feedback(since int64) string {
 	h.t.Helper()
 	code, out := h.run(h.cmdFeedback, "--since", fmt.Sprint(since))
 	if code != ExitOK {
-		h.t.Fatalf("feedback failed (%d): %s", code, out)
+		h.t.Fatalf("feedback failed (%d): %s", code, h.errOut.String())
 	}
-	var fb feedback
-	if err := json.Unmarshal([]byte(out), &fb); err != nil {
-		h.t.Fatalf("feedback output not JSON: %v\n%s", err, out)
+	return out
+}
+
+// cursorOf reads the cursor off the first line of feedback or wait.
+func cursorOf(t *testing.T, out string) int64 {
+	t.Helper()
+	var c int64
+	if _, err := fmt.Sscanf(out, "cursor %d\n", &c); err != nil {
+		t.Fatalf("no cursor line in %q", out)
 	}
-	return fb
+	return c
+}
+
+// resolve resolves a thread the way the reviewer's page does.
+func (h *harness) resolve(id int64) {
+	h.t.Helper()
+	if err := h.client.do("POST", fmt.Sprintf("/api/threads/%d/resolve", id), map[string]any{}, nil); err != nil {
+		h.t.Fatalf("resolve: %v", err)
+	}
 }
 
 // --- tests ---
@@ -243,75 +232,75 @@ func TestURLPrintsTheDefaultLoginLink(t *testing.T) {
 	}
 }
 
-func TestFeedbackShowsSentThreadsWithQuotedCode(t *testing.T) {
+func TestFeedbackPrintsThreadsWithQuotedCode(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)
-	h.reviewerDraft(4, "use fmt.Println")
+	id := h.reviewerDraft(4, "use fmt.Println\nand a newline")
 
 	// Drafts are invisible until sent.
-	fb := h.feedback(0)
-	if len(fb.Threads) != 0 || fb.LastSend != nil || fb.Cursor != 0 {
-		t.Fatalf("draft leaked: %+v", fb)
+	if out := h.feedback(0); out != "cursor 0\n" {
+		t.Fatalf("draft leaked: %q", out)
 	}
 
 	h.reviewerSend("one fix, then commit")
-	fb = h.feedback(0)
-	if len(fb.Threads) != 1 {
-		t.Fatalf("threads = %d, want 1", len(fb.Threads))
-	}
-	th := fb.Threads[0]
-	if th.Path != "main.go" || th.Line != 4 || th.Quote == nil || strings.Join(th.Quote.Lines, "\n") != "\tprintln(\"v2\")" {
-		t.Errorf("thread = %+v", th)
-	}
-	if len(th.Comments) != 1 || th.Comments[0].Body != "use fmt.Println" || th.Comments[0].Draft {
-		t.Errorf("comments = %+v", th.Comments)
-	}
-	if fb.LastSend == nil || fb.LastSend.Note != "one fix, then commit" {
-		t.Errorf("lastSend = %+v", fb.LastSend)
-	}
-	if len(fb.Events) != 1 || fb.Events[0].Type != "sent" || fb.Cursor != fb.Events[0].ID {
-		t.Errorf("events = %+v, cursor %d", fb.Events, fb.Cursor)
+	out := h.feedback(0)
+	want := fmt.Sprintf("cursor %d\nnote: one fix, then commit\n\n#%d main.go:4\n  | \tprintln(\"v2\")\nreviewer: use fmt.Println\n  and a newline\n", cursorOf(t, out), id)
+	if out != want {
+		t.Errorf("feedback =\n%s\nwant\n%s", out, want)
 	}
 }
 
-func TestSinceReturnsOnlyNewItemsAcrossReads(t *testing.T) {
+func TestSinceReturnsOnlyWhatTheReviewerDidAfterTheCursor(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)
-	id := h.reviewerDraft(4, "first")
+	first := h.reviewerDraft(4, "first")
 	h.reviewerSend("")
-	cursor := h.feedback(0).Cursor
+	cursor := cursorOf(t, h.feedback(0))
 
-	code, _ := h.run(h.cmdReply, "--thread", fmt.Sprint(id), "-m", "done")
-	if code != ExitOK {
-		t.Fatal("reply failed")
+	if code, _ := h.run(h.cmdReply, fmt.Sprint(first), "done"); code != ExitOK {
+		t.Fatalf("reply failed: %s", h.errOut.String())
 	}
-	h.reviewerDraft(1, "second")
+	second := h.reviewerDraft(1, "second")
 	h.reviewerSend("more")
+	h.resolve(first)
 
-	fb := h.feedback(cursor)
-	types := []string{}
-	for _, e := range fb.Events {
-		types = append(types, e.Type)
+	out := h.feedback(cursor)
+	want := fmt.Sprintf("cursor %d\nnote: more\n\n#%d main.go:1\n  | package main\nreviewer: second\n\nresolved: %d\n", cursorOf(t, out), second, first)
+	if out != want {
+		t.Errorf("feedback --since =\n%s\nwant\n%s", out, want)
 	}
-	if strings.Join(types, ",") != "thread.replied,sent" {
-		t.Errorf("events since %d = %v", cursor, types)
-	}
-	if len(fb.Threads) != 2 {
-		t.Errorf("threads = %d, want both unresolved threads", len(fb.Threads))
-	}
-	if again := h.feedback(fb.Cursor); len(again.Events) != 0 || again.Cursor != fb.Cursor {
-		t.Errorf("nothing new, got %+v", again)
+	next := cursorOf(t, out)
+	if again := h.feedback(next); again != fmt.Sprintf("cursor %d\n", next) {
+		t.Errorf("nothing new, got %q", again)
 	}
 }
 
-func TestWaitReturnsOnSendAndTimesOutDistinctly(t *testing.T) {
+func TestFeedbackMarksOutdatedThreads(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)
-	h.reviewerDraft(4, "pending")
+	id := h.reviewerDraft(4, "rename")
+	h.reviewerSend("")
+	h.modify("package main\n\nfunc main() {\n\tprintln(\"v3\")\n}\n")
+	// The server re-reads the diff at most every half second.
+	want := fmt.Sprintf("#%d main.go:4 outdated\n", id)
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		if out := h.feedback(0); strings.Contains(out, want) {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("feedback without %q: %s", want, out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestWaitPrintsTheSendAndTimesOutDistinctly(t *testing.T) {
+	h := newHarness(t)
+	h.modify(v2)
+	id := h.reviewerDraft(4, "pending")
 
 	code, out := h.run(h.cmdWait, "--timeout", "150ms")
-	if code != ExitWaitTimeout || !strings.Contains(out, `"outcome": "timeout"`) {
-		t.Errorf("timeout: exit %d, out %s", code, out)
+	if code != ExitWaitTimeout || out != "cursor 0\ntimeout\n" {
+		t.Errorf("timeout: exit %d, out %q", code, out)
 	}
 
 	go func() {
@@ -319,105 +308,71 @@ func TestWaitReturnsOnSendAndTimesOutDistinctly(t *testing.T) {
 		h.reviewerSend("go ahead")
 	}()
 	code, out = h.run(h.cmdWait, "--timeout", "5s")
-	if code != ExitOK || !strings.Contains(out, `"outcome": "sent"`) || !strings.Contains(out, `"note": "go ahead"`) {
+	if code != ExitOK || !strings.Contains(out, "note: go ahead\n") ||
+		!strings.Contains(out, fmt.Sprintf("#%d main.go:4\n", id)) || !strings.Contains(out, "reviewer: pending\n") {
 		t.Errorf("sent: exit %d, out %s", code, out)
 	}
 
-	code, _ = h.run(h.cmdWait, "--timeout", "0")
-	if code != ExitValidation {
+	if code, _ = h.run(h.cmdWait, "--timeout", "0"); code != ExitValidation {
 		t.Errorf("zero timeout: exit %d, want %d", code, ExitValidation)
 	}
 }
 
-func TestReplyPostsAgentCommentAndMapsErrors(t *testing.T) {
+func TestReplyPostsQuietlyAndReportsErrorsOnStderr(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)
 	id := h.reviewerDraft(4, "question")
 	h.reviewerSend("")
 
-	code, out := h.run(h.cmdReply, "--thread", fmt.Sprint(id), "-m", "answer")
-	if code != ExitOK {
-		t.Fatalf("reply: exit %d: %s", code, out)
+	code, out := h.run(h.cmdReply, fmt.Sprint(id), "the", "answer")
+	if code != ExitOK || out != "" {
+		t.Fatalf("reply: exit %d, out %q, stderr %s", code, out, h.errOut.String())
 	}
-	var parsed struct {
-		Comment struct {
-			AuthorRole string `json:"authorRole"`
-			Body       string `json:"body"`
-			Draft      bool   `json:"draft"`
-		} `json:"comment"`
-		Cursor int64 `json:"cursor"`
-	}
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Comment.AuthorRole != "agent" || parsed.Comment.Body != "answer" || parsed.Comment.Draft || parsed.Cursor == 0 {
-		t.Errorf("reply output = %+v", parsed)
-	}
-	if fb := h.feedback(0); len(fb.Threads[0].Comments) != 2 || fb.Threads[0].Comments[1].AuthorRole != "agent" {
-		t.Errorf("reply not in feedback: %+v", fb.Threads[0].Comments)
+	if fb := h.feedback(0); !strings.HasSuffix(fb, "reviewer: question\nagent: the answer\n") {
+		t.Errorf("reply not in feedback: %s", fb)
 	}
 
-	code, out = h.run(h.cmdReply, "-m", "no thread")
-	if code != ExitValidation || !strings.Contains(out, `"validation"`) {
-		t.Errorf("missing --thread: exit %d, out %s", code, out)
+	code, out = h.run(h.cmdReply)
+	if code != ExitValidation || out != "" || !strings.HasPrefix(h.errOut.String(), "revue: usage: revue reply") {
+		t.Errorf("no id: exit %d, out %q, stderr %q", code, out, h.errOut.String())
 	}
-	code, out = h.run(h.cmdReply, "--thread", "999", "-m", "ghost")
-	if code != ExitValidation || !strings.Contains(out, `"not_found"`) {
-		t.Errorf("unknown thread: exit %d, out %s", code, out)
+	code, _ = h.run(h.cmdReply, "999", "ghost")
+	if code != ExitValidation || !strings.HasPrefix(h.errOut.String(), "revue: ") || strings.Count(h.errOut.String(), "\n") != 1 {
+		t.Errorf("unknown thread: exit %d, stderr %q", code, h.errOut.String())
 	}
 }
 
-func TestCommentOpensAPublishedAgentThread(t *testing.T) {
+func TestCommentOpensAnAgentThreadAndPrintsItsID(t *testing.T) {
 	h := newHarness(t)
 	h.modify(v2)
 
-	code, out := h.run(h.cmdComment, "--path", "main.go", "--line", "4", "--start-line", "3", "-m", "why v2", "--", "main.go")
+	code, out := h.run(h.cmdComment, "main.go:3-4", "why", "v2")
 	if code != ExitOK {
-		t.Fatalf("comment: exit %d: %s", code, out)
+		t.Fatalf("comment: exit %d: %s", code, h.errOut.String())
 	}
-	var parsed struct {
-		Thread struct {
-			ID        int64    `json:"id"`
-			Line      int      `json:"line"`
-			StartLine *int     `json:"startLine"`
-			Args      []string `json:"args"`
-		} `json:"thread"`
-		Comment struct {
-			AuthorRole string `json:"authorRole"`
-			Draft      bool   `json:"draft"`
-		} `json:"comment"`
-		Cursor int64 `json:"cursor"`
-	}
-	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Comment.AuthorRole != "agent" || parsed.Comment.Draft || parsed.Cursor == 0 {
-		t.Errorf("comment = %+v", parsed.Comment)
-	}
-	if parsed.Thread.Line != 4 || parsed.Thread.StartLine == nil || *parsed.Thread.StartLine != 3 ||
-		strings.Join(parsed.Thread.Args, " ") != "-- main.go" {
-		t.Errorf("thread = %+v", parsed.Thread)
-	}
-	fb := h.feedback(0)
-	if len(fb.Threads) != 1 || fb.Threads[0].Comments[0].Body != "why v2" {
-		t.Errorf("agent thread not in feedback: %+v", fb.Threads)
+	id := strings.TrimSpace(out)
+	if fb := h.feedback(0); !strings.Contains(fb, "#"+id+" main.go:3-4\n  | func main() {\n  | \tprintln(\"v2\")\nagent: why v2\n") {
+		t.Errorf("agent thread not in feedback: %s", fb)
 	}
 
-	code, out = h.run(h.cmdComment, "--path", "main.go", "-m", "whole file")
-	if code != ExitOK || !strings.Contains(out, `"line": 0`) {
-		t.Errorf("file comment: exit %d, out %s", code, out)
+	if code, out = h.run(h.cmdComment, "main.go", "whole file"); code != ExitOK {
+		t.Errorf("file comment: exit %d, stderr %s", code, h.errOut.String())
+	} else if fb := h.feedback(0); !strings.Contains(fb, "#"+strings.TrimSpace(out)+" main.go\nagent: whole file\n") {
+		t.Errorf("file comment not in feedback: %s", fb)
 	}
-	code, out = h.run(h.cmdComment, "--line", "4", "-m", "no path")
-	if code != ExitValidation || !strings.Contains(out, `"validation"`) {
-		t.Errorf("missing --path: exit %d, out %s", code, out)
+	if code, out = h.run(h.cmdComment, "main.go:4", "--old", "old side", "--", "HEAD"); code != ExitOK {
+		t.Errorf("old side in a HEAD diff: exit %d, stderr %s", code, h.errOut.String())
+	} else if fb := h.feedback(0); !strings.Contains(fb, "#"+strings.TrimSpace(out)+" main.go:4 old\n  | \tprintln(\"v1\")\n") {
+		t.Errorf("old-side comment not in feedback: %s", fb)
 	}
-	code, out = h.run(h.cmdComment, "--path", "main.go", "--line", "2", "--start-line", "3", "-m", "bad range")
-	if code != ExitValidation {
-		t.Errorf("start after line: exit %d, out %s", code, out)
+
+	for _, args := range [][]string{{}, {"main.go:4-2", "bad range"}, {"main.go:4", "--side", "x"}} {
+		if code, _ := h.run(h.cmdComment, args...); code != ExitValidation {
+			t.Errorf("comment %v: exit %d, want %d", args, code, ExitValidation)
+		}
 	}
-	code, out = h.run(h.cmdComment, "--path", "gone.go", "--line", "1", "-m", "not in the diff")
-	if code != ExitValidation || !strings.Contains(out, `"stale_diff"`) {
-		t.Errorf("file not in the diff: exit %d, out %s", code, out)
+	if code, _ := h.run(h.cmdComment, "gone.go:1", "not in the diff"); code != ExitValidation {
+		t.Errorf("file not in the diff: exit %d, stderr %s", code, h.errOut.String())
 	}
 }
 

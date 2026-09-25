@@ -1,14 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { authenticate, cli, cliJSON, draftComment } from "./helpers/seed";
-
-interface Feedback {
-  threads: {
-    id: number;
-    comments: { body: string; authorRole: string }[];
-    quote?: { path: string; lines: string[] };
-  }[];
-  lastSend: { note: string } | null;
-}
+import { authenticate, cli, draftComment, threadIds } from "./helpers/seed";
 
 // Drafts stay invisible until the reviewer sends; then the agent's read
 // returns everything at once with the note. The agent's reply appears
@@ -27,9 +18,8 @@ test("draft -> send with a note -> CLI feedback -> live agent reply", async ({
   await expect(page.getByText("Draft", { exact: true }).first()).toBeVisible();
 
   // The agent sees nothing before the send.
-  const before = cliJSON<Feedback>(await cli(["feedback"]));
-  expect(before.threads).toHaveLength(0);
-  expect(before.lastSend).toBeNull();
+  const before = await cli(["feedback"]);
+  expect(before.stdout).toBe("cursor 0\n");
 
   await page.getByTestId("open-send").click();
   const composer = page.getByTestId("send-composer");
@@ -40,25 +30,19 @@ test("draft -> send with a note -> CLI feedback -> live agent reply", async ({
   // The agent receives the comment, the quoted code and the note at once.
   const result = await cli(["feedback"]);
   expect(result.code).toBe(0);
-  const fb = cliJSON<Feedback>(result);
-  expect(fb.threads).toHaveLength(1);
-  expect(fb.threads[0].comments[0].body).toBe(
-    "use fmt.Println instead of println",
+  const [id] = threadIds(result);
+  expect(threadIds(result)).toHaveLength(1);
+  expect(result.stdout).toContain(`\n#${id} alpha.go:6\n`);
+  expect(result.stdout).toContain('\n  | \tprintln("alpha three v2")\n');
+  expect(result.stdout).toContain(
+    "\nreviewer: use fmt.Println instead of println\n",
   );
-  expect(fb.threads[0].quote?.path).toBe("alpha.go");
-  expect(fb.threads[0].quote?.lines.join("\n")).toContain("alpha three v2");
-  expect(fb.lastSend?.note).toBe("one naming fix");
+  expect(result.stdout).toContain("\nnote: one naming fix\n");
 
   // The agent replies; the browser shows it without any reload.
-  const reply = await cli([
-    "reply",
-    "--thread",
-    String(fb.threads[0].id),
-    "-m",
-    "switched to fmt.Println",
-  ]);
+  const reply = await cli(["reply", String(id), "switched to fmt.Println"]);
   expect(reply.code).toBe(0);
-  const card = page.getByTestId(`thread-${fb.threads[0].id}`);
+  const card = page.getByTestId(`thread-${id}`);
   await expect(card.getByText("switched to fmt.Println")).toBeVisible();
   await expect(card.getByText("agent", { exact: true })).toBeVisible();
 

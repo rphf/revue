@@ -65,8 +65,11 @@ export function git(args: string[]): Promise<CliResult> {
   });
 }
 
-export function cliJSON<T>(res: CliResult): T {
-  return JSON.parse(res.stdout) as T;
+// threadIds reads the "#ID PATH..." headers off feedback or wait output.
+export function threadIds(res: CliResult, path?: string): number[] {
+  return [...res.stdout.matchAll(/^#(\d+) (\S+?)(?::|\s|$)/gm)]
+    .filter((m) => path === undefined || m[2] === path)
+    .map((m) => Number(m[1]));
 }
 
 // api calls the server the way the CLI does (header token).

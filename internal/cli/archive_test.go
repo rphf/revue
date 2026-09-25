@@ -2,10 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,50 +19,42 @@ func TestArchiveValidatesAndArchivesLandedThreads(t *testing.T) {
 	id := h.reviewerDraft(4, "rename")
 	h.reviewerSend("")
 
-	for _, args := range [][]string{{}, {"--landed", "--all"}, {"--thread", "x"}} {
+	for _, args := range [][]string{{}, {"--landed", "--all"}, {"x"}, {"1", "--landed"}} {
 		if code, _ := h.run(h.cmdArchive, args...); code != ExitValidation {
 			t.Fatalf("archive %v = %d, want %d", args, code, ExitValidation)
 		}
 	}
-	if code, _ := h.run(h.cmdArchive, "--thread", "999"); code != ExitValidation {
+	if code, _ := h.run(h.cmdArchive, "999"); code != ExitValidation {
 		t.Fatalf("archive of an unknown thread = %d", code)
 	}
 
 	gittest.Git(t, h.repo, "commit", "-qam", "fix")
 	// The server re-reads HEAD and the diff at most every half second.
-	var fb struct {
-		Landed []int64 `json:"landed"`
-	}
-	var out string
+	want := fmt.Sprintf("landed: %d\n", id)
 	for deadline := time.Now().Add(3 * time.Second); ; {
-		_, out = h.run(h.cmdFeedback)
-		if err := json.Unmarshal([]byte(out), &fb); err == nil && slices.Equal(fb.Landed, []int64{id}) {
+		if out := h.feedback(0); strings.HasSuffix(out, want) {
 			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("feedback landed = %v: %s", fb.Landed, out)
+		} else if time.Now().After(deadline) {
+			t.Fatalf("feedback without %q: %s", want, out)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	code, out := h.run(h.cmdArchive, "--landed")
-	var res struct {
-		Archived []int64 `json:"archived"`
+	if code, out := h.run(h.cmdArchive, "--landed"); code != ExitOK || out != fmt.Sprintf("archived: %d\n", id) {
+		t.Fatalf("archive --landed = %d %q", code, out)
 	}
-	if code != ExitOK || json.Unmarshal([]byte(out), &res) != nil || !slices.Equal(res.Archived, []int64{id}) {
-		t.Fatalf("archive --landed = %d %s", code, out)
-	}
-	_, out = h.run(h.cmdFeedback)
-	var after feedback
-	if err := json.Unmarshal([]byte(out), &after); err != nil || len(after.Threads) != 0 {
+	if out := h.feedback(0); strings.Contains(out, "#") {
 		t.Fatalf("feedback after archiving = %s", out)
+	}
+	if code, out := h.run(h.cmdArchive, "--landed"); code != ExitOK || out != "archived: none\n" {
+		t.Fatalf("archive with nothing landed = %d %q", code, out)
 	}
 
 	if code, _ := h.run(h.cmdUnarchive); code != ExitValidation {
-		t.Fatalf("unarchive without --thread = %d", code)
+		t.Fatalf("unarchive without an id = %d", code)
 	}
-	if code, out := h.run(h.cmdUnarchive, "--thread", "1"); code != ExitOK {
-		t.Fatalf("unarchive = %d %s", code, out)
+	if code, out := h.run(h.cmdUnarchive, fmt.Sprint(id)); code != ExitOK || out != "" {
+		t.Fatalf("unarchive = %d %q", code, out)
 	}
 }
 

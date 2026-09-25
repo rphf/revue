@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// cmdWait blocks until the reviewer sends after the cursor. It is a
-// resumable convenience over the same event log the cursor reads use:
-// a send that lands between invocations is delivered by the next one.
-// Exit codes are distinct for a send (0) and a timeout (3).
+// cmdWait blocks until the reviewer sends after the cursor, then prints
+// what feedback --since would. A send that lands between invocations is
+// delivered by the next one. A timeout prints the cursor to wait from
+// and exits 3.
 func (e *env) cmdWait(args []string) int {
 	fs := newFlagSet("wait")
-	since := fs.Int64("since", 0, "cursor: only consider events after this id")
+	since := fs.Int64("since", 0, "cursor from the previous feedback or wait")
 	timeout := fs.Duration("timeout", 5*time.Minute, "give up after this duration")
 	if err := fs.Parse(args); err != nil {
 		return e.failValidation(err.Error())
@@ -28,22 +28,19 @@ func (e *env) cmdWait(args []string) int {
 
 	path := fmt.Sprintf("/api/wait?since=%d&timeout=%s", *since, url.QueryEscape(timeout.String()))
 	var out struct {
-		Outcome string         `json:"outcome"`
-		Cursor  int64          `json:"cursor"`
-		Send    map[string]any `json:"send,omitempty"`
+		Outcome string `json:"outcome"`
+		Cursor  int64  `json:"cursor"`
 	}
 	if err := client.do("GET", path, nil, &out); err != nil {
 		return e.fail(err)
 	}
-	if code := e.printJSON(out); code != ExitOK {
-		return code
-	}
 	switch out.Outcome {
 	case "sent":
-		return ExitOK
+		return e.printFeedback(*since)
 	case "timeout":
+		_, _ = fmt.Fprintf(e.stdout, "cursor %d\ntimeout\n", out.Cursor)
 		return ExitWaitTimeout
 	default:
-		return ExitError
+		return e.fail(fmt.Errorf("unexpected wait outcome %q", out.Outcome))
 	}
 }

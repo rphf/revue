@@ -2,7 +2,7 @@
 
 # revue
 
-Local code review for diffs that a coding agent wrote. The reviewer gets a GitHub-style browser UI over anything `git diff` can express. The agent gets a CLI to read the feedback and to reply in threads. Everything stays on one machine: no remote, no accounts.
+Review what your coding agent wrote the way you review a pull request, without pushing anything. revue shows the agent's changes as a GitHub-style diff in your browser, and the agent reads your comments and answers them through a small CLI. Everything stays on one machine: no remote, no accounts.
 
 <img width="1580" height="1084" alt="Screenshot 2026-09-23 at 21 58 31" src="https://github.com/user-attachments/assets/3b849e93-6e7f-4768-b5d7-75a774071ce4" />
 
@@ -10,12 +10,18 @@ Local code review for diffs that a coding agent wrote. The reviewer gets a GitHu
 
 Binaries for Linux and macOS, amd64 and arm64, are on the [releases page](https://github.com/rphf/revue/releases). See [docs/install.md](docs/install.md) for download one-liners and building from source.
 
+## Why review through revue
+
+- **No branch, no PR, no commit.** The page follows the agent's working tree live. You review the code as it is now and commit when it is right.
+- **One handoff each way.** The agent can annotate its change before you read it. You send all your comments at once, with a note, and the agent's `revue wait` returns with exactly what to act on.
+- **You see what the agent did about each comment.** Threads are sorted by whose turn it is. A thread whose code the agent rewrote stays under its file, with the old code and the change one click away, and "Since my last send" shows only what changed since.
+- **Cheap for the agent.** Compact text output, with the quoted code in every thread: no diff to read.
+
 ## Quick start
 
-1. Go to a git repository that has changes.
-2. Run `revue`. The browser opens on the working tree's diff against HEAD and follows it as files change.
-3. Comment on lines. Comments stay drafts until you send them.
-4. Press Send, with a note if you like. The agent reads the comments with `revue feedback`.
+1. In a git repository with changes, run `revue`. The browser opens on the working tree against HEAD.
+2. Comment on lines, then press Send, with a note if you like.
+3. The agent reads it with `revue feedback` or `revue wait` and answers with `revue reply`; its edits and answers show up live. Put [the agent loop](docs/agent-loop.md) in its instructions.
 
 `revue open` accepts the same arguments as `git diff`. Examples:
 
@@ -30,15 +36,9 @@ revue open abc123 def456      # two commits
 
 ## How it works
 
-The page shows one diff, named by its `git diff` arguments, and keeps it current: while a browser is connected the server watches the repository, and the diff updates in place, the way lazygit does. A thread remembers the code it was written on. While that hunk is in the diff the thread sits on it, at its current line even when code moved above it. When the hunk changed or left the diff, the thread is outdated: it moves under its file's header, where the conversation goes on, with the file as it was and what changed in it since one click away. A file with outdated threads and no change left keeps a header of its own. A thread comes back when its code does. The threads panel groups threads by whose turn it is: yours when the agent wrote last, your drafts, the ones waiting on the agent, and the resolved ones.
+The page shows one diff, named by its `git diff` arguments, and keeps it current. A thread remembers the code it was written on: it follows its hunk as code moves, goes outdated when that hunk changes, and comes back if the code does. The agent can reply; only you resolve.
 
-Comments are drafts until you send them, all at once, with an optional note. The agent reads the send with `revue feedback` and replies in threads with `revue reply`. The agent can also open threads of its own with `revue comment`, to explain a change before you read it. The reviewer resolves threads; the agent can reply but cannot resolve.
-
-A send also records the working tree, untracked files included, under `refs/revue/last-send`: a commit on no branch, which a plain `git push` leaves behind. The index, the working tree, and the branch stay as they are. "Since my last send" in the diff picker shows what changed after it, which is what the agent did with your comments.
-
-Threads belong to the branch they were written on. A commit ends the conversation the way a merge does on GitHub: the threads whose code it contains land, the page offers to archive them (or does it at once, if you turn that on), and History keeps them under that commit.
-
-Comment bodies are GitHub-flavored markdown, written in a box with Write and Preview tabs and a formatting toolbar. A newline is a line break, fenced code is highlighted by language, and tables, task lists, collapsible `<details>` sections, and GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, and the like) render as on GitHub. Links and images render too, so an agent can point at a screenshot or a test report that it serves elsewhere. A markdown file in the diff has a rich view, like GitHub's: the rendered document with the changed paragraphs marked.
+A send records the working tree under `refs/revue/last-send`, a commit on no branch that a plain `git push` leaves behind. Threads belong to their branch, and a commit ends the conversation as a merge does on GitHub: its threads land, and History keeps them. Comments are GitHub-flavored markdown, and markdown files have a rendered view.
 
 ## Documentation
 

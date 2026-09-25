@@ -14,7 +14,7 @@ happens live, in revue, on the current working tree:
    returns (a tracked background task, not a detached `&`). A CLI call from
    a newer build replaces a running server from an older one, so no manual
    restart.
-4. When the wait returns, read the comments with `bin/revue feedback --since C`.
+4. The wait prints the comments when it returns, with the next cursor.
    Fix what they ask, rebuild, and wait again. Reply with `bin/revue reply`
    only when a comment needs an answer: a question, a choice to make, or a
    reason why you did not do something. An instruction you carried out, such

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rphf/revue/internal/server"
-	"github.com/rphf/revue/internal/store"
 )
 
 func newFlagSet(name string) *flag.FlagSet {
@@ -72,7 +71,7 @@ func (e *env) cmdOpen(args []string) int {
 		Files []struct{} `json:"files"`
 	}
 	if err := e.client.do("GET", "/api/diff"+argsQuery(diffArgs), nil, &diff); err != nil {
-		return e.failText(err)
+		return e.fail(err)
 	}
 	link := e.state.AuthURL(pagePath(diffArgs))
 	_, _ = fmt.Fprintln(e.stdout, link)
@@ -80,7 +79,7 @@ func (e *env) cmdOpen(args []string) int {
 		return ExitOK
 	}
 	if e.focusOpenPage(diffArgs) {
-		_, _ = fmt.Fprintln(e.stderr, "revue is already open on this diff; its tab shows a notification that brings it forward.")
+		_, _ = fmt.Fprintln(e.stderr, "already open: that tab shows a notification")
 		return ExitOK
 	}
 	if err := e.openURL(link); err != nil {
@@ -123,79 +122,6 @@ func (e *env) cmdURL(args []string) int {
 	}
 	_, _ = fmt.Fprintln(e.stdout, e.state.AuthURL("/"))
 	return ExitOK
-}
-
-// cmdReply posts an agent reply in a thread. The agent can reply but
-// never resolve: there is no resolve command.
-func (e *env) cmdReply(args []string) int {
-	fs := newFlagSet("reply")
-	thread := fs.Int64("thread", 0, "thread id (required)")
-	message := fs.String("m", "", "reply body (reads stdin when omitted)")
-	fs.StringVar(message, "message", *message, "reply body")
-	if err := fs.Parse(args); err != nil {
-		return e.failValidation(err.Error())
-	}
-	if *thread <= 0 {
-		return e.failValidation("--thread is required")
-	}
-	body := *message
-	if body == "" {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil || len(data) == 0 {
-			return e.failValidation("reply body required: pass -m or pipe stdin")
-		}
-		body = string(data)
-	}
-	var out map[string]any
-	if err := e.client.do("POST", fmt.Sprintf("/api/threads/%d/comments", *thread), map[string]any{
-		"role": store.RoleAgent, "body": body,
-	}, &out); err != nil {
-		return e.fail(err)
-	}
-	return e.printJSON(out)
-}
-
-// cmdComment opens an agent thread on a line, a range, or a whole file,
-// published at once. The diff arguments come as for open: the thread is
-// anchored in that diff.
-func (e *env) cmdComment(args []string) int {
-	fs := newFlagSet("comment")
-	path := fs.String("path", "", "file to comment on (required)")
-	line := fs.Int("line", 0, "line to comment on; 0 for the whole file")
-	startLine := fs.Int("start-line", 0, "first line of a range ending at --line")
-	side := fs.String("side", store.SideAdditions, "additions (the new file) or deletions (the old one)")
-	message := fs.String("m", "", "comment body (reads stdin when omitted)")
-	fs.StringVar(message, "message", *message, "comment body")
-	flagArgs, pathArgs := splitAtDoubleDash(args)
-	if err := fs.Parse(flagArgs); err != nil {
-		return e.failValidation(err.Error())
-	}
-	if *path == "" {
-		return e.failValidation("--path is required")
-	}
-	if *startLine < 0 || *startLine > *line || (*startLine > 0 && *line == 0) {
-		return e.failValidation("--start-line must fall between 1 and --line")
-	}
-	body := *message
-	if body == "" {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil || len(data) == 0 {
-			return e.failValidation("comment body required: pass -m or pipe stdin")
-		}
-		body = string(data)
-	}
-	req := map[string]any{
-		"role": store.RoleAgent, "args": append(append([]string{}, fs.Args()...), pathArgs...),
-		"path": *path, "side": *side, "line": *line, "body": body,
-	}
-	if *startLine > 0 && *startLine < *line {
-		req["startLine"] = *startLine
-	}
-	var out map[string]any
-	if err := e.client.do("POST", "/api/threads", req, &out); err != nil {
-		return e.fail(err)
-	}
-	return e.printJSON(out)
 }
 
 // cmdExport prints the server's markdown rendering of the threads.

@@ -31,38 +31,47 @@ const (
 // Version is stamped by the release build.
 var Version = "dev"
 
-const usage = `revue — local code review on a live diff
+const usage = `revue: code review on a live git diff. The reviewer comments in a
+browser and sends; the agent reads and answers here.
 
-Human commands:
-  revue [open] [git-diff args]  open the browser on that diff (default: the working tree)
-                                --no-browser prints the URL only
-  revue url                     print a login link for the default diff
-  revue serve                   run the server in the foreground (a container entry point;
-                                the other commands start it in the background)
-  revue servers [--json]        list the running servers, one per repository
-  revue stop [--all]            stop this repository's server; --all also stops
-                                the servers of your other repositories
-  revue update [--check]        replace this binary with the latest release and
-                                restart the running servers on it
-  revue prune [--dry-run]       remove the data of repositories that no longer exist
+Agent:
+  feedback [--since C]     what to act on; with C, only what came after it
+  wait [--since C] [--timeout 5m]
+                           block until the reviewer sends, then print as
+                           feedback --since C; exit 3 on timeout
+  reply ID [TEXT]          answer thread ID (TEXT from stdin when absent)
+  comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]
+                           open a thread, e.g. to explain a change before
+                           review; prints its ID. No LINE: the whole file.
+                           --old: LINE is in the old file. Default diff:
+                           the working tree
+  archive ID... | --landed | --resolved | --all
+  unarchive ID
+  export                   every thread as markdown
 
-Agent commands (JSON output; exit codes in docs/cli.md):
-  feedback [--since C]            unresolved threads with quoted code, plus what happened since C
-  reply --thread N -m TEXT        reply in a thread (reads stdin when -m is absent)
-  comment --path P [--line N] [--start-line M] [--side deletions] -m TEXT [git-diff args]
-                                  open a thread on a line, a range, or a whole file,
-                                  in the diff those args name (as for open)
-  wait [--since C] [--timeout D]  block until the reviewer sends
-  export                          threads as markdown
-  archive --thread N | --landed | --resolved | --all
-                                  archive threads of this branch
-  unarchive --thread N            bring an archived thread back
+feedback and wait print:
+  cursor C                 pass it as --since next time
+  note: TEXT               the reviewer's note with the send
+  #ID PATH:LINE[-END] [old] [outdated]
+    | the code as it was when commented
+  reviewer: TEXT           comments in order; lines after the first of a
+  agent: TEXT              text are indented by two spaces
+  resolved: ID...          resolved by the reviewer; nothing to do
+  landed: ID...            code committed; archive --landed when asked
+outdated: the code changed since the comment. The reviewer resolves
+threads; an agent cannot.
 
-Exit codes: 0 ok, 1 error, 2 bad arguments or invalid request, 3 wait timed out
+Human:
+  [open] [GIT-DIFF-ARGS] [--no-browser]
+                           show a diff in the browser; prints the login URL
+  url                      print a login URL for the working tree
+  serve                    run the server in the foreground (containers)
+  servers [--json] | stop [--all] | update [--check] [--force]
+  prune [--dry-run] | version
 
-Environment (read when a server starts; see docs/configuration.md):
-  REVUE_BIND, REVUE_PORT, REVUE_PUBLIC_URL, REVUE_IDLE_TIMEOUT, REVUE_DATA_DIR,
-  REVUE_ARCHIVE_RETENTION
+Exit: 0 ok, 1 error, 2 bad request, 3 wait timed out. Errors: one line on
+stderr. Env, read at server start: REVUE_BIND REVUE_PORT REVUE_PUBLIC_URL
+REVUE_IDLE_TIMEOUT REVUE_DATA_DIR REVUE_ARCHIVE_RETENTION.
 `
 
 // env carries everything a command needs, so tests can inject a
@@ -95,6 +104,10 @@ func Main(args []string) int {
 	cmd, rest := "open", args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, rest = args[0], args[1:]
+	}
+	if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
+		_, _ = fmt.Fprint(os.Stdout, usage)
+		return ExitOK
 	}
 
 	switch cmd {
@@ -252,19 +265,6 @@ func (c *Client) do(method, path string, body any, out any) error {
 
 // --- output and error mapping ---
 
-// printJSON writes indented JSON to stdout: the machine-readable
-// surface.
-func (e *env) printJSON(v any) int {
-	enc := json.NewEncoder(e.stdout)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		_, _ = fmt.Fprintln(e.stderr, err)
-		return ExitError
-	}
-	return ExitOK
-}
-
 // exitCodeFor maps a server error to the exit-code contract: anything
 // the caller could have asked differently is a validation failure.
 func exitCodeFor(err error) int {
@@ -278,33 +278,21 @@ func exitCodeFor(err error) int {
 	return ExitError
 }
 
-// fail prints a machine-readable error object and returns the mapped
-// exit code. Errors go to stdout: they are part of the agent contract,
-// not diagnostics.
+// fail prints the error as one line on stderr and returns the mapped
+// exit code, which tells the agent what kind of failure it was.
 func (e *env) fail(err error) int {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
-		e.printJSON(apiErr)
+		_, _ = fmt.Fprintln(e.stderr, "revue:", apiErr.Message)
 	} else {
-		e.printJSON(&APIError{Code: "error", Message: err.Error()})
+		_, _ = fmt.Fprintln(e.stderr, "revue:", err)
 	}
 	return exitCodeFor(err)
 }
 
 func (e *env) failValidation(msg string) int {
-	e.printJSON(&APIError{Code: "validation", Message: msg})
+	_, _ = fmt.Fprintln(e.stderr, "revue:", msg)
 	return ExitValidation
-}
-
-// failText is fail for the human commands: one line on stderr.
-func (e *env) failText(err error) int {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		_, _ = fmt.Fprintln(e.stderr, apiErr.Message)
-	} else {
-		_, _ = fmt.Fprintln(e.stderr, err.Error())
-	}
-	return exitCodeFor(err)
 }
 
 // --- serve ---

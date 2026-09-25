@@ -3,7 +3,6 @@ import {
   api,
   authenticate,
   cli,
-  cliJSON,
   draftComment,
   git,
   readFixtureFile,
@@ -42,17 +41,9 @@ test("self-review, send, agent edit and answer, diff since the last send", async
   });
 
   // The agent opens a thread of its own; it shows at once, inline.
-  const note = await cli([
-    "comment",
-    "--path",
-    "delta.go",
-    "--line",
-    "3",
-    "-m",
-    "renamed for the new API",
-  ]);
+  const note = await cli(["comment", "delta.go:3", "renamed for the new API"]);
   expect(note.code).toBe(0);
-  const noteId = cliJSON<{ thread: { id: number } }>(note).thread.id;
+  const noteId = Number(note.stdout.trim());
   const noteCard = page.getByTestId(`thread-${noteId}`);
   await expect(noteCard.getByText("renamed for the new API")).toBeVisible();
 
@@ -97,21 +88,18 @@ test("self-review, send, agent edit and answer, diff since the last send", async
   await expect(page.getByText("delta line 13 v3").first()).toBeVisible({
     timeout: 10_000,
   });
-  const fb = cliJSON<{
-    threads: { id: number; comments: { body: string }[] }[];
-  }>(await cli(["feedback"]));
-  const asked = fb.threads.find((t) => t.comments[0].body === "why v2 here?");
-  expect(asked).toBeDefined();
+  // The agent's feedback marks the thread outdated too.
+  let asked: { id: number } | undefined;
+  await expect(async () => {
+    const m = (await cli(["feedback"])).stdout.match(
+      /^#(\d+) delta\.go:13 outdated\n(?: {2}\|.*\n)*reviewer: why v2 here\?$/m,
+    );
+    expect(m).not.toBeNull();
+    asked = { id: Number(m![1]) };
+  }).toPass({ timeout: 5_000 });
   expect(
-    (
-      await cli([
-        "reply",
-        "--thread",
-        String(asked!.id),
-        "-m",
-        "v3 now, v2 broke the build",
-      ])
-    ).code,
+    (await cli(["reply", String(asked!.id), "v3 now, v2 broke the build"]))
+      .code,
   ).toBe(0);
 
   // The reviewer's thread is outdated but still in the diff, under the

@@ -248,6 +248,9 @@ type threadView struct {
 	*store.Thread
 	Comments []*store.Comment `json:"comments"`
 	Quote    *quote           `json:"quote,omitempty"`
+	// Set in feedback: the code the thread was written on is gone from
+	// the diff it was written in.
+	Outdated bool `json:"outdated,omitempty"`
 }
 
 // quote is snapshot context for agent feedback: where the thread
@@ -683,6 +686,13 @@ func (s *Server) handleFeedback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		internalError(w, err)
 		return
+	}
+	captures := map[string]*capture{}
+	// A diff that no longer reads, such as a deleted branch, leaves its
+	// threads outdated.
+	for _, v := range views {
+		live, err := s.liveIn(v.Thread, captures)
+		v.Outdated = err != nil || !live
 	}
 	last, err := s.store.LastSend()
 	if err != nil {

@@ -27,26 +27,51 @@ revue open abc123 def456      # two commits
 
 ## Agent commands
 
-Agent commands print JSON on stdout, except `export`, which prints markdown.
+Agent commands print plain text, compact for an agent to read, and nothing on
+success when there is nothing to say. An error is one line on stderr; the exit
+code says what kind. `revue help` prints the same reference.
 
 | Command | Effect |
 | --- | --- |
-| `revue feedback [--since C]` | Every unresolved thread of the current branch with its sent comments and the code it was written on, the reviewer's last send with its note, and the events after cursor C. The output carries the new `cursor`, and `landed`: the ids of threads whose code was committed but that are not archived yet. |
-| `revue reply --thread N -m TEXT` | Reply in a thread. Reads stdin when `-m` is absent, which suits a reply over several lines. The text is GitHub-flavored markdown, rendered as the README describes. |
-| `revue comment --path P [--line N] [--start-line M] [--side deletions] -m TEXT [git-diff args]` | Open a thread, published at once. `--line` is the line to comment on, 0 (the default) for the whole file; `--start-line` makes it a range that ends at `--line`; `--side deletions` points at the old side of the diff. The git-diff arguments name the diff the thread is anchored in, as for `revue open`: pass the ones the reviewer's page shows. Reads stdin when `-m` is absent. The thread lands in the reviewer's "Your turn". |
-| `revue wait [--since C] [--timeout D]` | Block until the reviewer sends comments. The default timeout is 5m. |
-| `revue export` | Print the threads as markdown, grouped by file, with quoted code and every sent comment. Drafts are excluded. |
-| `revue archive --thread N [--thread M]` | Archive these threads. |
-| `revue archive --landed \| --resolved \| --all` | Archive the threads of the current branch whose code landed, the resolved and outdated ones, or all of them. Exactly one selector. The output lists the `archived` ids and the `skipped` ones: a thread holding a reviewer draft is never archived. |
-| `revue unarchive --thread N` | Bring an archived thread back. It stays: it does not land again. |
+| `revue feedback [--since C]` | What the agent has to act on. Without `--since`: every unresolved thread of the current branch and the last send's note. With it: only the threads the reviewer sent or reopened after cursor C, the note of a send after C, and the threads resolved after C. |
+| `revue wait [--since C] [--timeout D]` | Block until the reviewer sends after C, then print what `feedback --since C` would. On timeout (5m by default) it prints the cursor and `timeout`, and exits 3. |
+| `revue reply ID [TEXT]` | Answer thread ID. TEXT is GitHub-flavored markdown; without it, stdin is read, which suits several lines. |
+| `revue comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]` | Open a thread, published at once, and print its ID: to explain a change before the reviewer reads it. No LINE comments on the whole file; `--old` points at the old side. The thread is anchored in the working-tree diff, or in the one the arguments after `--` name, as for `revue open`. It lands in the reviewer's "Your turn". |
+| `revue archive ID... \| --landed \| --resolved \| --all` | Archive these threads, or those of the current branch whose code landed, the resolved and outdated ones, or all of them. Prints `archived: ID...`, and `skipped (holds a draft): ID...` for threads with a reviewer draft, which are never archived. |
+| `revue unarchive ID` | Bring an archived thread back. It stays: it does not land again. |
+| `revue export` | Print every thread as markdown, grouped by file, with quoted code and every sent comment, for a human to read or paste. Drafts are excluded. |
+
+`feedback` and `wait` print:
+
+```text
+cursor 69
+note: one fix, then commit
+
+#20 docs/agent-loop.md:18-20 outdated
+  | the code as it was
+  | when the reviewer commented
+reviewer: can this be shorter?
+agent: done
+  a second line of the same comment
+
+resolved: 19
+landed: 12 14
+```
+
+Pass the cursor as `--since` next time. A thread header is `#ID PATH`, with
+`:LINE` or `:START-END` unless the thread is on the whole file, then `old`
+for a line of the old side and `outdated` when the code changed since the
+comment. The quoted lines are the code the comment was written on, so the
+agent never needs the diff to know what it refers to. Comments follow in
+order; every line after the first of a text is indented by two spaces, so
+anything at column 0 starts an item. `landed` lists threads whose code was
+committed but that are not archived yet.
 
 Threads belong to the branch they were written on, not to a diff. On a
 detached HEAD, a thread belongs to every checkout that contains the commit it
 was written on. Threads from before revue recorded this show on every branch.
-`feedback` quotes the code each thread was written on, so the agent never
-needs to look at the diff to know what a comment refers to. A thread with
-`"line": 0` is about the file as a whole: it has no quote, and it stays live
-while the file is in the diff.
+A thread on the whole file has no quote, and it stays live while the file is
+in the diff.
 
 A thread lands when its code is committed: HEAD moved past the commit it was
 written on and its hunk is gone from the diff. A thread written on a range

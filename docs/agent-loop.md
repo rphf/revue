@@ -4,15 +4,14 @@ These steps are written for an agent. Put them in the agent's instructions.
 
 1. Finish the change. Run the tests.
 2. Optionally, review your own change first: for each line you want to
-   explain, run `revue comment --path <file> --line <n> -m "..."`, with the
-   same diff arguments as the reviewer's page (for example `-- <paths>`).
+   explain, run `revue comment <file>:<line> "..."`.
 3. Say that the change is ready for review. The reviewer's browser follows
    the working tree, so there is nothing to open; when the reviewer needs a
    link, `revue url` prints one. Then end your turn.
 4. When the human resumes you, run `revue feedback`. The output has every
    unresolved thread with the code it was written on, the note of the
    reviewer's last send, and a `cursor`.
-5. If a comment needs an answer, run `revue reply --thread <id> -m "..."`.
+5. If a comment needs an answer, run `revue reply <id> "..."`.
 6. If the note or the comments ask for changes, change the code. The
    reviewer sees the new diff as you save. A thread whose code you changed
    goes outdated: it moves under its file's header, where the reviewer

@@ -52,11 +52,10 @@ would need a history rewrite before a push.
    untracked files are marked intent-to-add: `git diff <ref>` alone calls
    a file untracked at both points deleted and leaves new ones out.
    "Uncommitted changes" stays the default.
-5. **The agent can open a thread.** `revue comment --path F --line N
-   [--start-line M] [--side deletions] [-m body] [-- <paths>]` posts a
-   published agent thread, the way `revue reply` posts a reply. The
-   `-- <paths>` are those given to `revue open`: a thread is anchored in
-   the diff for those arguments. It lands in Your turn.
+5. **The agent can open a thread.** `revue comment PATH[:LINE[-END]]
+   [TEXT]` posts a published agent thread, the way `revue reply` posts a
+   reply. It is anchored in the working-tree diff unless the arguments
+   after `--` name another. It lands in Your turn.
 
 History is unchanged: it serves committed work, after the loop.
 

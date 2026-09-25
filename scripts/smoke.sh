@@ -77,21 +77,21 @@ curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' \
   -d '{"args":[],"path":"main.go","side":"additions","line":4,"body":"use fmt.Println"}' \
   "$BASE/api/threads" > "$WORK/thread.json"
 THREAD_ID=$(json "$WORK/thread.json" "data['thread']['id']")
-"$BIN" feedback > "$WORK/pre.json"
-[ "$(json "$WORK/pre.json" "len(data['threads'])")" = "0" ] || fail "draft leaked before send"
+"$BIN" feedback > "$WORK/pre.txt"
+! grep -q '^#' "$WORK/pre.txt" || fail "draft leaked before send"
 
 step "reviewer sends with a note"
 curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"one fix"}' \
   "$BASE/api/send" > /dev/null
-"$BIN" feedback > "$WORK/fb.json"
-[ "$(json "$WORK/fb.json" "len(data['threads'])")" = "1" ] || fail "sent thread missing"
-[ "$(json "$WORK/fb.json" "data['threads'][0]['quote']['lines'][0]")" = '	println("v2")' ] || fail "quoted snapshot wrong"
-[ "$(json "$WORK/fb.json" "data['lastSend']['note']")" = "one fix" ] || fail "note missing"
-CURSOR=$(json "$WORK/fb.json" "data['cursor']")
+"$BIN" feedback > "$WORK/fb.txt"
+grep -qx "#$THREAD_ID main.go:4" "$WORK/fb.txt" || fail "sent thread missing"
+grep -qxF '  | 	println("v2")' "$WORK/fb.txt" || fail "quoted snapshot wrong"
+grep -qx "note: one fix" "$WORK/fb.txt" || fail "note missing"
+CURSOR=$(sed -n 's/^cursor //p' "$WORK/fb.txt")
 
 step "agent replies in thread"
-"$BIN" reply --thread "$THREAD_ID" -m "switched to fmt.Println" > "$WORK/reply.json"
-[ "$(json "$WORK/reply.json" "data['comment']['authorRole']")" = "agent" ] || fail "reply not recorded as agent"
+"$BIN" reply "$THREAD_ID" "switched to fmt.Println" || fail "reply failed"
+"$BIN" feedback | grep -qx "agent: switched to fmt.Println" || fail "reply not recorded as agent"
 
 step "an edit on disk outdates the thread; reverting brings it back"
 printf 'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("v2")\n}\n' > "$FIXTURE/main.go"
@@ -119,7 +119,7 @@ curl -sf "${AUTH[@]}" "$BASE/api/threads" > "$WORK/threads.json"
 
 step "wait: timeout is distinct (exit 3)"
 set +e
-"$BIN" wait --since "$CURSOR" --timeout 1s > "$WORK/wait1.json"
+"$BIN" wait --since "$CURSOR" --timeout 1s > "$WORK/wait1.txt"
 CODE=$?
 set -e
 [ "$CODE" = "3" ] || fail "wait timeout exit = $CODE, want 3"
@@ -128,11 +128,11 @@ step "wait: a send unblocks (exit 0)"
 ( sleep 0.3 && curl -sf "${AUTH[@]}" -H 'Content-Type: application/json' -d '{"note":"go"}' \
     "$BASE/api/send" > /dev/null ) &
 set +e
-"$BIN" wait --since "$CURSOR" --timeout 30s > "$WORK/wait2.json"
+"$BIN" wait --since "$CURSOR" --timeout 30s > "$WORK/wait2.txt"
 CODE=$?
 set -e
 wait
 [ "$CODE" = "0" ] || fail "wait send exit = $CODE, want 0"
-[ "$(json "$WORK/wait2.json" "data['outcome']")" = "sent" ] || fail "wait outcome not sent"
+grep -qx "note: go" "$WORK/wait2.txt" || fail "wait did not print the send"
 
 echo "SMOKE OK"
