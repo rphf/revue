@@ -25,6 +25,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import DiffPicker from "./DiffPicker";
+import AppearancePicker from "./AppearancePicker";
 import ThemeToggle from "./ThemeToggle";
 
 // The mark, same drawing as public/favicon.svg: a hunk with its last
@@ -246,6 +247,7 @@ export default function TopBar({
 
         <Separator orientation="vertical" className="mx-1 h-5!" />
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <AppearancePicker />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -314,7 +316,7 @@ export default function TopBar({
             <TooltipTrigger asChild>
               <Button
                 size="sm"
-                className="rounded-l-none border-l border-primary-foreground/20 px-2"
+                className="rounded-l-none px-2"
                 aria-label="Send with a note"
                 data-testid="open-send"
                 onClick={onCompose}

@@ -16,6 +16,9 @@
             : matchMedia("(prefers-color-scheme: dark)").matches
               ? "dark"
               : "light";
+        var look = JSON.parse(localStorage.getItem("revue-appearance") || "{}");
+        document.documentElement.dataset.palette = look.palette || "neutral";
+        document.documentElement.dataset.accent = look.accent || "none";
       } catch (e) {
         document.documentElement.dataset.theme = "light";
       }

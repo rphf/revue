@@ -3,8 +3,11 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "./appearance.css";
 
-/* theme.ts stamps data-theme on <html>; it is the only dark-mode switch. */
+/* theme.ts stamps data-theme on <html>; it is the only dark-mode switch.
+   appearance.css overrides these tokens under data-palette and
+   data-accent. */
 @custom-variant dark (&:is([data-theme="dark"] *));
 
 @theme inline {
