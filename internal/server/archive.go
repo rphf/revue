@@ -101,10 +101,11 @@ func (s *Server) isAncestor(a, b string) bool {
 
 // inScope reports whether a thread belongs to the checkout at commit on
 // branch: its own branch, or on a detached HEAD, a commit HEAD contains.
-// A thread without an origin belongs everywhere.
+// A thread from before origins were recorded belongs nowhere: no branch
+// can claim it.
 func (s *Server) inScope(t *store.Thread, commit, branch string) bool {
 	if !t.HasOrigin() {
-		return true
+		return false
 	}
 	if t.Branch != "" && branch != "" {
 		return t.Branch == branch
@@ -134,16 +135,14 @@ func (s *Server) threadViews(includeDrafts, withQuotes, unresolvedOnly bool) ([]
 	return viewsOf(s.store, threads, includeDrafts, withQuotes)
 }
 
-// branchThreadViews lists the unarchived threads written on a branch,
-// with those from before origins were recorded, which belong to every
-// branch.
+// branchThreadViews lists the unarchived threads written on a branch.
 func (s *Server) branchThreadViews(branch string, includeDrafts, withQuotes bool) ([]*threadView, error) {
 	threads, err := s.store.ListThreads(includeDrafts)
 	if err != nil {
 		return nil, err
 	}
 	threads = slices.DeleteFunc(threads, func(t *store.Thread) bool {
-		return t.HasOrigin() && t.Branch != branch
+		return !t.HasOrigin() || t.Branch != branch
 	})
 	return viewsOf(s.store, threads, includeDrafts, withQuotes)
 }
@@ -572,15 +571,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	// A thread from before origins were recorded belongs to every
-	// branch, in History as in the lists.
+	// A thread from before origins were recorded is in no branch's
+	// History, as in no branch's lists.
 	counts := map[string]int{}
 	var mine []*store.Thread
 	for _, t := range archived {
-		if t.HasOrigin() {
-			counts[t.Branch]++
+		if !t.HasOrigin() {
+			continue
 		}
-		if t.Branch == branch || !t.HasOrigin() {
+		counts[t.Branch]++
+		if t.Branch == branch {
 			mine = append(mine, t)
 		}
 	}

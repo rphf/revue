@@ -69,7 +69,8 @@ committed but that are not archived yet.
 
 Threads belong to the branch they were written on, not to a diff. On a
 detached HEAD, a thread belongs to every checkout that contains the commit it
-was written on. Threads from before revue recorded this show on every branch.
+was written on. Threads from before revue recorded this belong to no branch,
+so no list shows them; `archive ID` and `unarchive ID` still reach them.
 A thread on the whole file has no quote, and it stays live while the file is
 in the diff.
 

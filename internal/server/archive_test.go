@@ -402,9 +402,9 @@ func TestServerRecordsItsRepository(t *testing.T) {
 	}
 }
 
-// Threads from before origins were recorded show in every branch's
-// History, the way they show in every branch's lists.
-func TestHistoryShowsThreadsWithoutOriginOnEveryBranch(t *testing.T) {
+// Threads from before origins were recorded belong to no branch: no
+// list, branch view or History shows them, archived or not.
+func TestThreadsWithoutOriginShowNowhere(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)
 	id := ts.sentThread(t, "old thread")
@@ -416,15 +416,30 @@ func TestHistoryShowsThreadsWithoutOriginOnEveryBranch(t *testing.T) {
 	if _, err := db.Exec("UPDATE threads SET branch = '', head = '', base = '' WHERE id = ?", id); err != nil {
 		t.Fatal(err)
 	}
+
+	var list struct {
+		Threads []*threadView `json:"threads"`
+	}
+	for _, path := range []string{"/api/threads", "/api/threads?branch=main", "/api/threads?branch="} {
+		ts.mustStatus(t, ts.do(t, "GET", path, nil, &list), http.StatusOK)
+		if len(list.Threads) != 0 {
+			t.Fatalf("%s = %+v", path, list.Threads)
+		}
+	}
+
 	var out struct {
 		Archived []int64 `json:"archived"`
 	}
-	ts.mustStatus(t, ts.do(t, "POST", "/api/threads/archive", map[string]any{"all": true}, &out), http.StatusOK)
-
+	ts.mustStatus(t, ts.do(t, "POST", "/api/threads/archive", map[string]any{"ids": []int64{id}}, &out), http.StatusOK)
+	if len(out.Archived) != 1 {
+		t.Fatalf("archived = %v", out.Archived)
+	}
 	var h historyResponse
 	ts.mustStatus(t, ts.do(t, "GET", "/api/history", nil, &h), http.StatusOK)
-	if h.Branch != "main" || len(h.Commits) != 1 || !h.Commits[0].OnBranch || len(h.Commits[0].Threads) != 1 {
-		t.Fatalf("history on main = %+v", h)
+	for _, c := range h.Commits {
+		if len(c.Threads) != 0 {
+			t.Fatalf("history on main = %+v", h)
+		}
 	}
 	for _, b := range h.Branches {
 		if b.Name == "" {
