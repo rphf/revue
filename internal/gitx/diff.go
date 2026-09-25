@@ -41,16 +41,11 @@ type File struct {
 	// blob, or no blob when the new side is only in the working tree.
 	OldOID, NewOID   string
 	OldSize, NewSize int64
-
-	// Untracked marks a working-tree file git does not track yet.
-	Untracked bool
 }
 
 type Result struct {
 	Patch string
 	Files []File
-	// UntrackedPatch is the part of Patch for untracked files.
-	UntrackedPatch string
 }
 
 // Empty reports whether the capture contains no changes.
@@ -124,9 +119,12 @@ func runGitEnv(repoRoot string, env []string, stdin []byte, exit1OK bool, args .
 	return stdout.Bytes(), nil
 }
 
-// patchArgs is the diff command whose output is the patch revue serves.
-func patchArgs(args []string) []string {
-	return append(append([]string{"diff", "--no-color", "--full-index"}, forcedDiffFlags...), args...)
+// patchFlags make the diff whose output is the patch revue serves.
+var patchFlags = append([]string{"--no-color", "--full-index"}, forcedDiffFlags...)
+
+// runDiff runs git diff with flags on args.
+func runDiff(repoRoot string, env []string, flags, args []string) ([]byte, error) {
+	return runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff"}, flags...), args...)...)
 }
 
 func isZeroOID(s string) bool { return strings.Trim(s, "0") == "" }
@@ -139,27 +137,28 @@ type rawEntry struct {
 
 // Capture turns a git-diff expression into patch text, file metadata,
 // and old/new contents. Working-tree captures (no revisions, not
-// staged) also include untracked non-ignored files as added files.
+// staged) also include untracked non-ignored files, as added files or
+// the new side of a rename.
 // patch is the tracked-file patch Fingerprint returned for the same
 // args; nil runs the diff here.
 func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {
 	if err := ValidateArgs(args); err != nil {
 		return nil, err
 	}
-	env, done, err := diffEnv(repoRoot, args)
+	env, done, untracked, err := diffEnv(repoRoot, args)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
 
-	if patch == nil {
-		if patch, err = runGitEnv(repoRoot, env, nil, false, patchArgs(args)...); err != nil {
+	// The fingerprint's patch leaves untracked files out.
+	if patch == nil || untracked {
+		if patch, err = runDiff(repoRoot, env, patchFlags, args); err != nil {
 			return nil, err
 		}
 	}
 
-	listArgs := append(append([]string{"diff", "--raw", "--numstat", "-z", "--abbrev=64"}, forcedDiffFlags...), args...)
-	listOut, err := runGitEnv(repoRoot, env, nil, false, listArgs...)
+	listOut, err := runDiff(repoRoot, env, append([]string{"--raw", "--numstat", "-z", "--abbrev=64"}, forcedDiffFlags...), args)
 	if err != nil {
 		return nil, err
 	}
@@ -234,40 +233,27 @@ func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {
 		}
 	}
 
-	out := joinTypeChanges(string(patch))
-
-	if isWorkingTreeCapture(args) {
-		untracked, upatch, err := captureUntracked(repoRoot, pathspecs(args))
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, untracked...)
-		out += upatch
-		return &Result{Patch: out, Files: files, UntrackedPatch: upatch}, nil
-	}
-
-	return &Result{Patch: out, Files: files}, nil
+	return &Result{Patch: joinTypeChanges(string(patch)), Files: files}, nil
 }
 
 // IgnoringSpace reads r's diff again with whitespace changes left out,
-// as git diff -w prints it. The tracked part is diffed again; the
-// untracked part, all additions, is r's own. hidden lists the files
-// whose only changes were whitespace, which git -w leaves out.
+// as git diff -w prints it. hidden lists the files whose only changes
+// were whitespace, which git -w leaves out.
 func IgnoringSpace(repoRoot string, args []string, r *Result) (patch string, hidden map[string]bool, err error) {
 	if err := ValidateArgs(args); err != nil {
 		return "", nil, err
 	}
-	env, done, err := diffEnv(repoRoot, args)
+	env, done, _, err := diffEnv(repoRoot, args)
 	if err != nil {
 		return "", nil, err
 	}
 	defer done()
 	flags := append(append([]string{}, forcedDiffFlags...), "--ignore-all-space")
-	out, err := runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff", "--no-color", "--full-index"}, flags...), args...)...)
+	out, err := runDiff(repoRoot, env, append([]string{"--no-color", "--full-index"}, flags...), args)
 	if err != nil {
 		return "", nil, err
 	}
-	names, err := runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff", "--name-only", "-z"}, flags...), args...)...)
+	names, err := runDiff(repoRoot, env, append([]string{"--name-only", "-z"}, flags...), args)
 	if err != nil {
 		return "", nil, err
 	}
@@ -277,11 +263,11 @@ func IgnoringSpace(repoRoot string, args []string, r *Result) (patch string, hid
 	}
 	hidden = map[string]bool{}
 	for _, f := range r.Files {
-		if !f.Untracked && !kept[f.Path] {
+		if !kept[f.Path] {
 			hidden[f.Path] = true
 		}
 	}
-	return joinTypeChanges(string(out)) + r.UntrackedPatch, hidden, nil
+	return joinTypeChanges(string(out)), hidden, nil
 }
 
 func hasOldBlob(f *File, e rawEntry) bool {
@@ -438,61 +424,6 @@ func pathspecs(args []string) []string {
 		}
 	}
 	return nil
-}
-
-// captureUntracked enumerates untracked non-ignored files and
-// synthesizes added-file patches for them via git diff --no-index.
-func captureUntracked(repoRoot string, paths []string) ([]File, string, error) {
-	lsArgs := []string{"ls-files", "--others", "--exclude-standard", "-z"}
-	if len(paths) > 0 {
-		lsArgs = append(lsArgs, "--")
-		lsArgs = append(lsArgs, paths...)
-	}
-	out, err := git(repoRoot, lsArgs...)
-	if err != nil {
-		return nil, "", err
-	}
-	var files []File
-	var patch strings.Builder
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p == "" {
-			continue
-		}
-		full := filepath.Join(repoRoot, p)
-		info, err := os.Lstat(full)
-		if err != nil {
-			return nil, "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			f, linkPatch, err := untrackedSymlink(repoRoot, p, full)
-			if err != nil {
-				return nil, "", err
-			}
-			patch.WriteString(linkPatch)
-			f.Untracked = true
-			files = append(files, f)
-			continue
-		}
-		// One call prints the numstat line, a blank line, then the patch.
-		out, err := runGit(repoRoot, nil, true, "diff", "--no-index", "--no-ext-diff", "--no-color", "--full-index", "--numstat", "-p", "--", os.DevNull, p)
-		if err != nil {
-			return nil, "", err
-		}
-		numstat, filePatch, _ := bytes.Cut(out, []byte("\n\n"))
-		isBinary := bytes.HasPrefix(numstat, []byte("-\t-\t"))
-		patch.Write(filePatch)
-
-		f := File{Path: p, Status: StatusAdded, IsBinary: isBinary, NewSize: info.Size(), Untracked: true}
-		if !isBinary {
-			content, err := os.ReadFile(filepath.Join(repoRoot, p))
-			if err != nil {
-				return nil, "", err
-			}
-			f.NewContent = content
-		}
-		files = append(files, f)
-	}
-	return files, patch.String(), nil
 }
 
 // joinTypeChanges rewrites each type change (a file that became a
@@ -693,58 +624,37 @@ func parseNumstatBinaries(fields []string) map[string]bool {
 	return binaries
 }
 
-// untrackedSymlink builds the added-file entry git would print for a
-// new symlink: a mode 120000 blob whose content is the link target.
-// git diff --no-index cannot produce it when the link points at a
-// directory, so the patch is assembled from the target directly.
-func untrackedSymlink(repoRoot, path, full string) (File, string, error) {
-	target, err := os.Readlink(full)
-	if err != nil {
-		return File{}, "", err
-	}
-	oid, err := runGit(repoRoot, []byte(target), false, "hash-object", "--stdin")
-	if err != nil {
-		return File{}, "", err
-	}
-	hash := strings.TrimSpace(string(oid))
-	patch := fmt.Sprintf("diff --git a/%s b/%s\nnew file mode 120000\nindex %s..%s\n--- /dev/null\n+++ b/%s\n@@ -0,0 +1 @@\n+%s\n\\ No newline at end of file\n",
-		path, path, strings.Repeat("0", len(hash)), hash, path, target)
-	return File{Path: path, Status: StatusAdded, NewContent: []byte(target)}, patch, nil
-}
-
 // Fingerprint identifies the state a Capture of args would see, at a
-// fraction of its cost: the raw patch git prints, plus the untracked
-// files with their sizes and mtimes when the working tree is the new
-// side. Two equal fingerprints mean nothing changed for this diff. The
-// patch is returned too, for Capture to reuse.
+// fraction of its cost: the raw patch git prints for tracked files, plus
+// the untracked files with their sizes and mtimes when the working tree
+// is the new side. Two equal fingerprints mean nothing changed for this
+// diff. The patch is returned too, for Capture to reuse when there are
+// no untracked files.
 func Fingerprint(repoRoot string, args []string) (string, []byte, error) {
 	if err := ValidateArgs(args); err != nil {
 		return "", nil, err
 	}
-	env, done, err := diffEnv(repoRoot, args)
-	if err != nil {
-		return "", nil, err
+	var env []string
+	if isCheckpointCapture(args) {
+		var done func()
+		var err error
+		if env, done, err = checkpointEnv(repoRoot); err != nil {
+			return "", nil, err
+		}
+		defer done()
 	}
-	defer done()
 	h := sha256.New()
-	patch, err := runGitEnv(repoRoot, env, nil, false, patchArgs(args)...)
+	patch, err := runDiff(repoRoot, env, patchFlags, args)
 	if err != nil {
 		return "", nil, err
 	}
 	h.Write(patch)
 	if isWorkingTreeCapture(args) {
-		lsArgs := []string{"ls-files", "--others", "--exclude-standard", "-z"}
-		if paths := pathspecs(args); len(paths) > 0 {
-			lsArgs = append(append(lsArgs, "--"), paths...)
-		}
-		out, err := git(repoRoot, lsArgs...)
+		files, err := listUntracked(repoRoot, pathspecs(args))
 		if err != nil {
 			return "", nil, err
 		}
-		for _, p := range strings.Split(string(out), "\x00") {
-			if p == "" {
-				continue
-			}
+		for _, p := range files {
 			info, err := os.Lstat(filepath.Join(repoRoot, p))
 			if err != nil {
 				continue // vanished between the listing and the stat

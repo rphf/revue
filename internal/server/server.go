@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -295,6 +296,10 @@ func Start(cfg Config) (*Server, error) {
 	}
 	s.ln = ln
 	s.http = &http.Server{Handler: s.Handler()}
+	// Scratch indexes a killed server left in the temp directory.
+	if n := gitx.SweepScratch(); n > 0 {
+		log.Printf("revue: removed %d leftover scratch files", n)
+	}
 	if err := errors.Join(s.recordRepo(), s.seedDelivered()); err != nil {
 		_ = st.Close()
 		_ = ln.Close()
@@ -346,6 +351,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// them to drain first or http.Shutdown would never return.
 		close(s.closing)
 		err = s.http.Shutdown(ctx)
+		gitx.RemoveScratch(s.repoRoot)
 		_ = s.store.Close()
 		close(s.done)
 	})

@@ -274,6 +274,41 @@ func TestUntrackedFileAppearsAsAdded(t *testing.T) {
 	}
 }
 
+// A tracked file deleted and recreated under a new name, not staged,
+// pairs up as a rename, as git diff --staged would show it once added.
+func TestUntrackedCopyOfADeletedFileIsARename(t *testing.T) {
+	repo := gittest.Init(t)
+	body := strings.Repeat("a line that stays the same\n", 20)
+	write(t, repo, "page-layout.tsx", body+"export const Page = 1\n")
+	commitAll(t, repo, "c1")
+	if err := os.Remove(filepath.Join(repo, "page-layout.tsx")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, repo, "step-layout.tsx", body+"export const Step = 1\n")
+	statusBefore := gittest.Git(t, repo, "status", "--porcelain")
+
+	res, err := Capture(repo, nil, nil)
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("files = %+v, want one rename", res.Files)
+	}
+	f := res.Files[0]
+	if f.Status != StatusRenamed || f.OldPath != "page-layout.tsx" || f.Path != "step-layout.tsx" {
+		t.Errorf("file = %s %s -> %s, want a rename", f.Status, f.OldPath, f.Path)
+	}
+	if !strings.HasSuffix(string(f.OldContent), "Page = 1\n") || !strings.HasSuffix(string(f.NewContent), "Step = 1\n") {
+		t.Errorf("sides = %q / %q", f.OldContent, f.NewContent)
+	}
+	if !strings.Contains(res.Patch, "rename from page-layout.tsx") || !strings.Contains(res.Patch, "+export const Step = 1") {
+		t.Errorf("patch is not a rename:\n%s", res.Patch)
+	}
+	if got := gittest.Git(t, repo, "status", "--porcelain"); got != statusBefore {
+		t.Errorf("the capture touched the index: %q, was %q", got, statusBefore)
+	}
+}
+
 func TestUntrackedExcludedFromStagedAndRangeCaptures(t *testing.T) {
 	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "v1\n")

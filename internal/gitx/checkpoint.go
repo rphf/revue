@@ -2,7 +2,6 @@ package gitx
 
 import (
 	"errors"
-	"os"
 	"strings"
 )
 
@@ -60,14 +59,43 @@ func isCheckpointCapture(args []string) bool {
 }
 
 // diffEnv is the environment a diff of args runs in, with a cleanup to
-// call after. A checkpoint diff reads a copy of the index where
-// untracked files are marked intent-to-add: git then compares them with
-// the checkpoint instead of calling them deleted or leaving new ones
-// out.
-func diffEnv(repoRoot string, args []string) ([]string, func(), error) {
-	if !isCheckpointCapture(args) {
-		return nil, func() {}, nil
+// call after. A diff whose new side is the working tree reads a copy of
+// the index where untracked files are marked intent-to-add: git then
+// diffs them with everything else, so a deleted file and its recreated
+// copy pair up as a rename. untracked reports whether it did.
+func diffEnv(repoRoot string, args []string) (env []string, done func(), untracked bool, err error) {
+	if isCheckpointCapture(args) {
+		env, done, err := checkpointEnv(repoRoot)
+		return env, done, false, err
 	}
+	noop := func() {}
+	if !isWorkingTreeCapture(args) {
+		return nil, noop, false, nil
+	}
+	files, err := listUntracked(repoRoot, pathspecs(args))
+	if err != nil || len(files) == 0 {
+		return nil, noop, false, err
+	}
+	env, done, err = scratchIndex(repoRoot)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	// Only the untracked files: --all would record deletions too, and
+	// hide them from the diff. The names are literal, not patterns.
+	env = append(env, "GIT_LITERAL_PATHSPECS=1")
+	stdin := []byte(strings.Join(files, "\x00"))
+	if _, err := runGitEnv(repoRoot, env, stdin, false, "add", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		done()
+		return nil, nil, false, err
+	}
+	return env, done, true, nil
+}
+
+// checkpointEnv is the environment of a diff since the last send: a
+// copy of the index where every untracked file is marked intent-to-add,
+// so git compares them with the checkpoint instead of calling them
+// deleted or leaving new ones out.
+func checkpointEnv(repoRoot string) ([]string, func(), error) {
 	if _, ok := ResolveRef(repoRoot, LastSendRef); !ok {
 		return nil, nil, ErrNoCheckpoint
 	}
@@ -82,32 +110,22 @@ func diffEnv(repoRoot string, args []string) ([]string, func(), error) {
 	return env, done, nil
 }
 
-// scratchIndex copies the index to a temporary file and returns the
-// environment that points git at it, with a cleanup that removes it.
-func scratchIndex(repoRoot string) ([]string, func(), error) {
-	out, err := git(repoRoot, "rev-parse", "--path-format=absolute", "--git-path", "index")
+// listUntracked lists the untracked files git does not ignore, within
+// paths when given.
+func listUntracked(repoRoot string, paths []string) ([]string, error) {
+	args := []string{"ls-files", "--others", "--exclude-standard", "-z"}
+	if len(paths) > 0 {
+		args = append(append(args, "--"), paths...)
+	}
+	out, err := git(repoRoot, args...)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	data, err := os.ReadFile(strings.TrimSpace(string(out)))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, err
+	var files []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			files = append(files, p)
+		}
 	}
-	f, err := os.CreateTemp("", "revue-index-*")
-	if err != nil {
-		return nil, nil, err
-	}
-	name := f.Name()
-	_, werr := f.Write(data)
-	cerr := f.Close()
-	done := func() { _ = os.Remove(name) }
-	if err := errors.Join(werr, cerr); err != nil {
-		done()
-		return nil, nil, err
-	}
-	// git refuses an empty index file but creates a missing one.
-	if len(data) == 0 {
-		done()
-	}
-	return []string{"GIT_INDEX_FILE=" + name}, done, nil
+	return files, nil
 }
