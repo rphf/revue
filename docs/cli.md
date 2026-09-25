@@ -4,7 +4,7 @@
 `git diff`, and the page follows the working tree as files change:
 
 ```sh
-revue                         # working tree against HEAD, untracked files included
+revue                         # working tree against HEAD, staged or not, untracked included
 revue open -- web docs        # the same, limited to paths under web/ and docs/
 revue open --staged           # index
 revue open main               # working tree against main

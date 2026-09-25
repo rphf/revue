@@ -29,7 +29,7 @@ Binaries for Linux and macOS, amd64 and arm64, are on the [releases page](https:
 `revue open` accepts the same arguments as `git diff`. Examples:
 
 ```sh
-revue                         # working tree against HEAD, untracked files included
+revue                         # working tree against HEAD, staged or not, untracked included
 revue open -- web docs        # the same, limited to paths under web/ and docs/
 revue open --staged           # index
 revue open main               # working tree against main

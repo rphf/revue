@@ -122,9 +122,30 @@ func runGitEnv(repoRoot string, env []string, stdin []byte, exit1OK bool, args .
 // patchFlags make the diff whose output is the patch revue serves.
 var patchFlags = append([]string{"--no-color", "--full-index"}, forcedDiffFlags...)
 
-// runDiff runs git diff with flags on args.
+// runDiff runs git diff with flags on args. A working-tree diff
+// compares with HEAD, not the index, so staged changes stay in it;
+// before the first commit, when HEAD names nothing, with the empty tree.
+// HEAD goes first, so the common case costs no extra git call.
 func runDiff(repoRoot string, env []string, flags, args []string) ([]byte, error) {
-	return runGitEnv(repoRoot, env, nil, false, append(append([]string{"diff"}, flags...), args...)...)
+	run := func(base ...string) ([]byte, error) {
+		cmd := append(append(append([]string{"diff"}, flags...), base...), args...)
+		return runGitEnv(repoRoot, env, nil, false, cmd...)
+	}
+	if !isWorkingTreeCapture(args) {
+		return run()
+	}
+	out, err := run("HEAD")
+	if err == nil {
+		return out, nil
+	}
+	if _, ok := ResolveRef(repoRoot, "HEAD"); ok {
+		return nil, err
+	}
+	empty, herr := git(repoRoot, "hash-object", "-t", "tree", os.DevNull)
+	if herr != nil {
+		return nil, errors.Join(err, herr)
+	}
+	return run(strings.TrimSpace(string(empty)))
 }
 
 func isZeroOID(s string) bool { return strings.Trim(s, "0") == "" }
@@ -137,8 +158,9 @@ type rawEntry struct {
 
 // Capture turns a git-diff expression into patch text, file metadata,
 // and old/new contents. Working-tree captures (no revisions, not
-// staged) also include untracked non-ignored files, as added files or
-// the new side of a rename.
+// staged) compare HEAD with the working tree, staged changes included,
+// and also include untracked non-ignored files, as added files or the
+// new side of a rename.
 // patch is the tracked-file patch Fingerprint returned for the same
 // args; nil runs the diff here.
 func Capture(repoRoot string, args []string, patch []byte) (*Result, error) {

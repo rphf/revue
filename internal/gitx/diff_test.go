@@ -309,6 +309,57 @@ func TestUntrackedCopyOfADeletedFileIsARename(t *testing.T) {
 	}
 }
 
+// The working-tree diff compares with HEAD: staging a change keeps it in.
+func TestWorkingTreeCaptureKeepsStagedChanges(t *testing.T) {
+	repo := gittest.Init(t)
+	write(t, repo, "staged.txt", "v1\n")
+	write(t, repo, "unstaged.txt", "v1\n")
+	commitAll(t, repo, "c1")
+	write(t, repo, "staged.txt", "v2\n")
+	gittest.Git(t, repo, "add", "staged.txt")
+	write(t, repo, "unstaged.txt", "v2\n")
+
+	res, err := Capture(repo, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"staged.txt", "unstaged.txt"} {
+		if f := fileByPath(res, path); f == nil || string(f.OldContent) != "v1\n" || string(f.NewContent) != "v2\n" {
+			t.Errorf("%s = %+v, want v1 -> v2", path, f)
+		}
+	}
+	fp, _, err := Fingerprint(repo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gittest.Git(t, repo, "add", "unstaged.txt")
+	if again, _, _ := Fingerprint(repo, nil); again != fp {
+		t.Error("staging a change moved the working-tree fingerprint")
+	}
+}
+
+// Before the first commit there is no HEAD: the diff starts from the
+// empty tree.
+func TestWorkingTreeCaptureBeforeTheFirstCommit(t *testing.T) {
+	repo := gittest.Init(t)
+	write(t, repo, "staged.txt", "new\n")
+	gittest.Git(t, repo, "add", "staged.txt")
+	write(t, repo, "untracked.txt", "new\n")
+
+	res, err := Capture(repo, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"staged.txt", "untracked.txt"} {
+		if f := fileByPath(res, path); f == nil || f.Status != StatusAdded {
+			t.Errorf("%s = %+v, want added", path, f)
+		}
+	}
+	if _, _, err := Fingerprint(repo, nil); err != nil {
+		t.Errorf("Fingerprint: %v", err)
+	}
+}
+
 func TestUntrackedExcludedFromStagedAndRangeCaptures(t *testing.T) {
 	repo := gittest.Init(t)
 	write(t, repo, "a.txt", "v1\n")
