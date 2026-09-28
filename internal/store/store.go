@@ -659,26 +659,28 @@ type Note struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	// Tree is the working tree the note describes, "" when unknown.
 	Tree string `json:"-"`
+	// Head is the commit it was written on, "" when unknown.
+	Head string `json:"-"`
 }
 
 // SetNote replaces the branch's note.
-func (s *Store) SetNote(branch, body, tree string) (*Note, error) {
+func (s *Store) SetNote(branch, body, tree, head string) (*Note, error) {
 	at := now()
 	if _, err := s.q.Exec(
-		"INSERT INTO notes (branch, body, tree, updated_at) VALUES (?, ?, ?, ?) "+
-			"ON CONFLICT (branch) DO UPDATE SET body = excluded.body, tree = excluded.tree, updated_at = excluded.updated_at",
-		branch, body, tree, at,
+		"INSERT INTO notes (branch, body, tree, head, updated_at) VALUES (?, ?, ?, ?, ?) "+
+			"ON CONFLICT (branch) DO UPDATE SET body = excluded.body, tree = excluded.tree, head = excluded.head, updated_at = excluded.updated_at",
+		branch, body, tree, head, at,
 	); err != nil {
 		return nil, err
 	}
-	return &Note{Branch: branch, Body: body, Tree: tree, UpdatedAt: parseTime(at)}, nil
+	return &Note{Branch: branch, Body: body, Tree: tree, Head: head, UpdatedAt: parseTime(at)}, nil
 }
 
 // GetNote returns the branch's note, or nil when it has none.
 func (s *Store) GetNote(branch string) (*Note, error) {
 	n := Note{Branch: branch}
 	var at string
-	err := s.q.QueryRow("SELECT body, tree, updated_at FROM notes WHERE branch = ?", branch).Scan(&n.Body, &n.Tree, &at)
+	err := s.q.QueryRow("SELECT body, tree, head, updated_at FROM notes WHERE branch = ?", branch).Scan(&n.Body, &n.Tree, &n.Head, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

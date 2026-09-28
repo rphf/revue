@@ -20,8 +20,7 @@ func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
 		internalError(w, err)
 		return
 	}
-	_, branch := s.head()
-	note, err := s.store.GetNote(branch)
+	note, err := s.currentNote()
 	if err != nil {
 		internalError(w, err)
 		return

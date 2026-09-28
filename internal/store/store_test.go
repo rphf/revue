@@ -426,17 +426,17 @@ func TestANoteIsReplacedAndKeptPerBranch(t *testing.T) {
 	if n, err := s.GetNote("feat"); err != nil || n != nil {
 		t.Fatalf("before any note: %+v %v", n, err)
 	}
-	if _, err := s.SetNote("feat", "first", "t1"); err != nil {
+	if _, err := s.SetNote("feat", "first", "t1", "h1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetNote("feat", "second", "t2"); err != nil {
+	if _, err := s.SetNote("feat", "second", "t2", "h2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetNote("main", "other branch", ""); err != nil {
+	if _, err := s.SetNote("main", "other branch", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	n, err := s.GetNote("feat")
-	if err != nil || n == nil || n.Body != "second" || n.Tree != "t2" || n.UpdatedAt.IsZero() {
+	if err != nil || n == nil || n.Body != "second" || n.Tree != "t2" || n.Head != "h2" || n.UpdatedAt.IsZero() {
 		t.Fatalf("feat note = %+v %v", n, err)
 	}
 	if had, err := s.DeleteNote("feat"); err != nil || !had {

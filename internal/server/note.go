@@ -23,10 +23,25 @@ type noteView struct {
 	Outdated  bool      `json:"outdated"`
 }
 
+// currentNote is the checked-out branch's agent note while its round
+// lasts: once HEAD moves past the commit it was written on, the work it
+// describes is committed, and the note is done; so is a note from
+// before revue recorded the commit. nil without one.
+func (s *Server) currentNote() (*store.Note, error) {
+	commit, branch := s.head()
+	n, err := s.store.GetNote(branch)
+	if err != nil || n == nil {
+		return nil, err
+	}
+	if n.Head != commit {
+		return nil, nil
+	}
+	return n, nil
+}
+
 // handleGetNote returns the checked-out branch's agent note, or null.
 func (s *Server) handleGetNote(w http.ResponseWriter, _ *http.Request) {
-	_, branch := s.head()
-	n, err := s.store.GetNote(branch)
+	n, err := s.currentNote()
 	if err != nil {
 		internalError(w, err)
 		return
@@ -67,11 +82,11 @@ func (s *Server) handlePutNote(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("revue: working tree at a note: %v", err)
 	}
-	_, branch := s.head()
+	commit, branch := s.head()
 	var n *store.Note
 	err = s.store.WithTx(func(tx *store.Store) error {
 		var err error
-		if n, err = tx.SetNote(branch, req.Body, tree); err != nil {
+		if n, err = tx.SetNote(branch, req.Body, tree, commit); err != nil {
 			return err
 		}
 		_, err = tx.AppendEvent(eventNoteChanged, map[string]any{"branch": branch})

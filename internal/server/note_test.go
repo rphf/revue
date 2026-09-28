@@ -94,3 +94,20 @@ func TestExportStartsWithTheAgentNote(t *testing.T) {
 		t.Errorf("export:\n%s", data)
 	}
 }
+
+// A note is one round's handoff: once HEAD moves past the commit it was
+// written on, it is done, like threads that land.
+func TestTheAgentNoteEndsWhenHEADMoves(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.modify(t)
+	ts.mustStatus(t, ts.do(t, "PUT", "/api/note", map[string]any{"body": "before the commit"}, nil), http.StatusOK)
+	gittest.Git(t, ts.repo, "add", "-A")
+	gittest.Git(t, ts.repo, "commit", "-q", "-m", "the round's work")
+	if n := ts.note(t); n != nil {
+		t.Fatalf("note after a commit = %+v", n)
+	}
+	ts.mustStatus(t, ts.do(t, "PUT", "/api/note", map[string]any{"body": "after the commit"}, nil), http.StatusOK)
+	if n := ts.note(t); n == nil || n.Body != "after the commit" {
+		t.Fatalf("note written after the commit = %+v", n)
+	}
+}
