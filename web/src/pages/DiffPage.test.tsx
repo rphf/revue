@@ -44,6 +44,7 @@ vi.mock("@pierre/diffs/react", async () => {
     renderAnnotation,
     renderHeaderPrefix,
     renderHeaderMetadata,
+    renderCodeViewHeader,
   }: {
     ref?: React.Ref<unknown>;
     items: StubItem[];
@@ -54,6 +55,7 @@ vi.mock("@pierre/diffs/react", async () => {
     ) => React.ReactNode;
     renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
     renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
+    renderCodeViewHeader?: () => React.ReactNode;
   }) => {
     const seen = useRef(new Map<string, StubItem>());
     const items = next.map((item) => {
@@ -81,6 +83,7 @@ vi.mock("@pierre/diffs/react", async () => {
         >
           select-line
         </button>
+        {renderCodeViewHeader?.()}
         {items.map((item) => (
           <div
             key={`${item.id}:${item.version ?? 0}`}
@@ -127,6 +130,7 @@ vi.mock("../api", async (importOriginal) => ({
     send: vi.fn(),
     getLanded: vi.fn(() => Promise.resolve({ head: "", threadIds: [] })),
     getSettings: vi.fn(() => Promise.resolve({ autoArchiveLanded: false })),
+    getNote: vi.fn(() => Promise.resolve({ note: null })),
     putSettings: vi.fn((s: unknown) => Promise.resolve(s)),
     archiveThreads: vi.fn(() =>
       Promise.resolve({ archived: [], skipped: [], head: "" }),
@@ -346,6 +350,61 @@ describe("DiffPage live updates", () => {
     expect(screen.getByTestId("thread-1")).toHaveTextContent("agent");
     // And it did not resolve the thread: resolve is still offered.
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+  });
+
+  it("shows the agent note and follows its changes live", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("agent-note")).not.toBeInTheDocument();
+
+    vi.mocked(api.getNote).mockResolvedValue({
+      note: {
+        body: "- tests pass",
+        updatedAt: new Date().toISOString(),
+        outdated: false,
+      },
+    });
+    pushEvent({ id: 10, type: "note.changed", payload: {}, createdAt: "" });
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-note-body")).toHaveTextContent(
+        "tests pass",
+      ),
+    );
+
+    // The code moved on: the page asks again and marks the note.
+    vi.mocked(api.getNote).mockResolvedValue({
+      note: {
+        body: "- tests pass",
+        updatedAt: new Date().toISOString(),
+        outdated: true,
+      },
+    });
+    pushEvent({ type: "diff.changed", payload: { version: 2 } });
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-note")).toHaveTextContent(
+        "Code changed since this note",
+      ),
+    );
+  });
+
+  it("holds the diff until the agent note answers", async () => {
+    let answer: (v: { note: null }) => void = () => {};
+    vi.mocked(api.getNote).mockReturnValueOnce(
+      new Promise((r) => {
+        answer = r;
+      }),
+    );
+    renderPage();
+    await waitFor(() => expect(api.getDiff).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId("diff-loading")).toBeInTheDocument();
+
+    answer({ note: null });
+    await waitFor(() =>
+      expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
+    );
   });
 
   it("refetches the diff only for a new version and keeps the pending comment text", async () => {

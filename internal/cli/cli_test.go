@@ -460,3 +460,51 @@ func TestHelpAndVersionWorkOutsideARepo(t *testing.T) {
 		}
 	}
 }
+
+func TestNoteWritesReplacesAndClearsTheBranchNote(t *testing.T) {
+	h := newHarness(t)
+	get := func() *struct {
+		Body string `json:"body"`
+	} {
+		var out struct {
+			Note *struct {
+				Body string `json:"body"`
+			} `json:"note"`
+		}
+		if err := h.client.do("GET", "/api/note", nil, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Note
+	}
+
+	if code, out := h.run(h.cmdNote, "tests", "pass"); code != ExitOK || out != "" {
+		t.Fatalf("note TEXT: exit %d, out %q, stderr %s", code, out, h.errOut.String())
+	}
+	if n := get(); n == nil || n.Body != "tests pass" {
+		t.Fatalf("note = %+v", n)
+	}
+	// Markdown lists start with a dash: the text, not a flag.
+	if code, _ := h.run(h.cmdNote, "- tests pass\n- lint passes"); code != ExitOK {
+		t.Fatalf("note starting with a dash: exit %d, %s", code, h.errOut.String())
+	}
+	if n := get(); n == nil || n.Body != "- tests pass\n- lint passes" {
+		t.Fatalf("dash note = %+v", n)
+	}
+	file := filepath.Join(t.TempDir(), "note.md")
+	writeFile(t, filepath.Dir(file), "note.md", "## What changed\n- a thing\n")
+	if code, _ := h.run(h.cmdNote, "--file", file); code != ExitOK {
+		t.Fatalf("note --file: exit %d, %s", code, h.errOut.String())
+	}
+	if n := get(); n == nil || n.Body != "## What changed\n- a thing\n" {
+		t.Fatalf("note from file = %+v", n)
+	}
+	if code, _ := h.run(h.cmdNote, "--file", file, "extra"); code != ExitValidation {
+		t.Errorf("TEXT and --file: exit %d, want %d", code, ExitValidation)
+	}
+	if code, _ := h.run(h.cmdNote, "--clear"); code != ExitOK {
+		t.Fatalf("note --clear: exit %d, %s", code, h.errOut.String())
+	}
+	if n := get(); n != nil {
+		t.Errorf("note after --clear = %+v", n)
+	}
+}

@@ -420,3 +420,32 @@ func TestCommentsForThreadsAndThreadsInSend(t *testing.T) {
 		t.Errorf("CommentsForThreads(nil) = %+v, %v", empty, err)
 	}
 }
+
+func TestANoteIsReplacedAndKeptPerBranch(t *testing.T) {
+	s, _ := openTemp(t)
+	if n, err := s.GetNote("feat"); err != nil || n != nil {
+		t.Fatalf("before any note: %+v %v", n, err)
+	}
+	if _, err := s.SetNote("feat", "first", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetNote("feat", "second", "t2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetNote("main", "other branch", ""); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.GetNote("feat")
+	if err != nil || n == nil || n.Body != "second" || n.Tree != "t2" || n.UpdatedAt.IsZero() {
+		t.Fatalf("feat note = %+v %v", n, err)
+	}
+	if had, err := s.DeleteNote("feat"); err != nil || !had {
+		t.Fatalf("delete: %v %v", had, err)
+	}
+	if n, _ := s.GetNote("feat"); n != nil {
+		t.Errorf("note after delete: %+v", n)
+	}
+	if n, _ := s.GetNote("main"); n == nil || n.Body != "other branch" {
+		t.Errorf("main note = %+v", n)
+	}
+}

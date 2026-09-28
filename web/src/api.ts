@@ -1,4 +1,5 @@
 import type {
+  AgentNote,
   ArchiveSelector,
   Branch,
   Comment,
@@ -122,4 +123,5 @@ export const api = {
   },
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
+  getNote: () => request<{ note: AgentNote | null }>("GET", "/api/note"),
 };

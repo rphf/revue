@@ -650,6 +650,55 @@ func (s *Store) ListSends() ([]*Send, error) {
 	return sends, err
 }
 
+// --- Agent notes ---
+
+// Note is the agent's note to the reviewer on a branch.
+type Note struct {
+	Branch    string    `json:"branch"`
+	Body      string    `json:"body"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	// Tree is the working tree the note describes, "" when unknown.
+	Tree string `json:"-"`
+}
+
+// SetNote replaces the branch's note.
+func (s *Store) SetNote(branch, body, tree string) (*Note, error) {
+	at := now()
+	if _, err := s.q.Exec(
+		"INSERT INTO notes (branch, body, tree, updated_at) VALUES (?, ?, ?, ?) "+
+			"ON CONFLICT (branch) DO UPDATE SET body = excluded.body, tree = excluded.tree, updated_at = excluded.updated_at",
+		branch, body, tree, at,
+	); err != nil {
+		return nil, err
+	}
+	return &Note{Branch: branch, Body: body, Tree: tree, UpdatedAt: parseTime(at)}, nil
+}
+
+// GetNote returns the branch's note, or nil when it has none.
+func (s *Store) GetNote(branch string) (*Note, error) {
+	n := Note{Branch: branch}
+	var at string
+	err := s.q.QueryRow("SELECT body, tree, updated_at FROM notes WHERE branch = ?", branch).Scan(&n.Body, &n.Tree, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	n.UpdatedAt = parseTime(at)
+	return &n, nil
+}
+
+// DeleteNote removes the branch's note, and reports whether it had one.
+func (s *Store) DeleteNote(branch string) (bool, error) {
+	res, err := s.q.Exec("DELETE FROM notes WHERE branch = ?", branch)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // --- Settings ---
 
 // Setting returns the JSON value stored under key, and whether there is

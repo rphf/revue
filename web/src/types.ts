@@ -112,6 +112,14 @@ export interface Send {
   createdAt: string;
 }
 
+// The agent's note for the checked-out branch. outdated: the working
+// tree changed after it was written.
+export interface AgentNote {
+  body: string;
+  updatedAt: string;
+  outdated: boolean;
+}
+
 // The file as it was when the thread started.
 export interface Snapshot {
   path: string;

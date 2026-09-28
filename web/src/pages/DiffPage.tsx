@@ -16,6 +16,7 @@ import { api, errorMessage } from "../api";
 import { useEvents } from "../useEvents";
 import type { Theme } from "../theme";
 import type {
+  AgentNote as AgentNoteData,
   ArchiveSelector,
   DiffResponse,
   Landed,
@@ -391,10 +392,25 @@ export default function DiffPage({
       () => {},
     );
   }, []);
+  // The agent's note, asked again when it changes or the code moves on,
+  // which can make it outdated. The diff waits for the first answer, so
+  // the note is in place before a reload restores the scroll.
+  const [agentNote, setAgentNote] = useState<AgentNoteData | null>(null);
+  const [noteReady, setNoteReady] = useState(false);
+  const loadNote = useCallback(() => {
+    api
+      .getNote()
+      .then(
+        (r) => setAgentNote(r.note),
+        () => {},
+      )
+      .finally(() => setNoteReady(true));
+  }, []);
   useEffect(() => {
     loadLanded();
     loadSettings();
-  }, [loadLanded, loadSettings]);
+    loadNote();
+  }, [loadLanded, loadSettings, loadNote]);
 
   // The diff on screen, refetched whenever the server says it moved.
   const shown = load?.argsKey === argsKey ? load : null;
@@ -472,7 +488,12 @@ export default function DiffPage({
         setFetchNonce((n) => n + 1);
         setPulse((p) => p + 1);
         loadLanded();
+        loadNote();
       }
+      return;
+    }
+    if (e.type === "note.changed") {
+      loadNote();
       return;
     }
     if (e.type === "settings.changed") {
@@ -1138,7 +1159,7 @@ export default function DiffPage({
                         Retry
                       </Button>
                     </div>
-                  ) : parsedFiles === null ? (
+                  ) : parsedFiles === null || !noteReady ? (
                     <LoadingBlocks
                       className="flex-1 p-4"
                       data-testid="diff-loading"
@@ -1173,6 +1194,7 @@ export default function DiffPage({
                       collapsed={collapsed}
                       onToggleCollapsed={toggleCollapsed}
                       scrollKey={argsKey}
+                      note={agentNote}
                     />
                   )}
                 </ResizablePanel>

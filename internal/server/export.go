@@ -7,17 +7,26 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/rphf/revue/internal/store"
 )
 
-// handleExport renders the threads as markdown: grouped by file, each
-// with its quoted snapshot and every sent comment. Drafts stay out.
+// handleExport renders the branch's agent note and its threads as
+// markdown: threads grouped by file, each with its quoted snapshot and
+// every sent comment. Drafts stay out.
 func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
 	views, err := s.threadViews(false, true, false)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	md := renderExport(views, filepath.Base(s.repoRoot))
+	_, branch := s.head()
+	note, err := s.store.GetNote(branch)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	md := renderExport(views, note, filepath.Base(s.repoRoot))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -27,9 +36,12 @@ func (s *Server) handleExport(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(md))
 }
 
-func renderExport(views []*threadView, repo string) string {
+func renderExport(views []*threadView, note *store.Note, repo string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Threads in %s\n\n", repo)
+	if note != nil {
+		fmt.Fprintf(&b, "## Agent note\n\n%s\n\n", strings.TrimSpace(note.Body))
+	}
 	if len(views) == 0 {
 		b.WriteString("No sent threads.\n")
 		return b.String()

@@ -41,6 +41,10 @@ Agent:
                            delivered, then print it; exit 3 on timeout.
                            --since C waits from cursor C instead
   reply ID [TEXT]          answer thread ID (TEXT from stdin when absent)
+  note [TEXT] [--file PATH] [--clear]
+                           the note shown above the diff for this branch:
+                           what changed, how it was checked, screenshots,
+                           questions. Replaces the one before; markdown
   comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]
                            open a thread, e.g. to explain a change before
                            review; prints its ID. No LINE: the whole file.
@@ -144,6 +148,8 @@ func Main(args []string) int {
 		return e.cmdComment(rest)
 	case "reply":
 		return e.cmdReply(rest)
+	case "note":
+		return e.cmdNote(rest)
 	case "wait":
 		return e.cmdWait(rest)
 	case "export":

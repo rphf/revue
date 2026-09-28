@@ -10,43 +10,9 @@ GitHub-style review driving from the keyboard: `j`/`k` next/previous change, `n`
 
 Add future ideas below with a date and a one-line why.
 
-## Agent note (2026-09-18, reworded 2026-09-20, 2026-09-23)
-
-The page shows the diff but nothing about what the agent did or how it checked
-its work. Today that summary lands in the agent's chat, where the reviewer has
-to read it apart from the diff and it scrolls away with the next turn. An agent that works in a sandbox typically runs tests and browser
-checks, saves screenshots and reports somewhere it can serve over HTTP, and
-then says the change is ready. That evidence has no home in revue today. A
-short agent-written note, shown above the diff, turns the diff into a handoff:
-the counterpart of the note the reviewer attaches to a send.
-
-Design sketch, revue side:
-
-- Schema: a `notes` table (markdown body, created_at), or one current note.
-- CLI: `revue note -m TEXT`, or `--file PATH`, or stdin when `-m` is absent
-  and stdin is not a terminal.
-- UI: a "Note" section under the top bar, rendered through the existing
-  `Markdown` component (DOMPurify keeps `img` and `a`, so a screenshot served
-  from any host the reviewer's browser can reach renders inline). Collapsed
-  when empty. A new note is an event, so the page picks it up live.
-- Export includes the note.
-
-Outside revue, in the instructions the agent reads (whatever harness runs it):
-
-- The protocol: save evidence where the reviewer's browser can reach it, then
-  write the note that links to it.
-- A template for the note. Default sections: what changed, how it was checked
-  (commands run, tests, browser checks), screenshots, known gaps or questions
-  for the reviewer. If the repository has a PR template
-  (`.github/PULL_REQUEST_TEMPLATE.md`), use its sections instead, so the note
-  doubles as the PR description later.
-
-Not decided: whether the reviewer can comment on the note itself as a thread
-without a line anchor.
-
 ## PR description draft (2026-09-23)
 
-The agent note covers one round; a pull request needs a description of the
+The agent note (`revue note`) covers one round; a pull request needs a description of the
 whole branch, written once the review settles. Today the agent writes it in
 the chat and the human copies it out. A draft section in revue keeps it next
 to the diff it describes, where the reviewer can read and comment on it.
@@ -60,12 +26,12 @@ Design sketch:
   existing `Markdown` component, with a copy button for the raw markdown.
   A new draft is an event, so the page updates live.
 - The agent follows the repository's `.github/PULL_REQUEST_TEMPLATE.md` when
-  there is one, like the note template.
+  there is one.
 - The harness can hand the draft to `gh pr create --body-file` without the
   human copying anything.
 
 Not decided: whether the reviewer comments on the draft as threads without a
-line anchor (the same open question as the agent note), or edits it in place.
+line anchor (the agent note settled on no: the reviewer answers in a send's note), or edits it in place.
 
 ## Images in comments (2026-09-23)
 
