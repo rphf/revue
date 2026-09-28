@@ -115,3 +115,25 @@ func TestSweepScratchRemovesWhatNoLiveProcessOwns(t *testing.T) {
 		t.Errorf("left = %v, want %v", left, want)
 	}
 }
+
+// An edit of the same size in the same second as the last commit looks
+// clean by its stat alone; git checks such "racily clean" files by
+// content only while the index is not newer than them. The scratch copy
+// keeps the index's time, so the edit is still seen a second later.
+func TestWorkingTreeSeesASameSizeEditFromTheCommitsSecond(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	repo := gittest.Init(t)
+	write(t, repo, "main.go", "v1\n")
+	commitAll(t, repo, "c1")
+	write(t, repo, "main.go", "v2\n")
+	time.Sleep(1100 * time.Millisecond)
+
+	tree, err := WorkingTree(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := gittest.Git(t, repo, "cat-file", "-p", tree+":main.go")
+	if got != "v2\n" {
+		t.Errorf("tree has main.go = %q, want the edit", got)
+	}
+}

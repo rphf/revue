@@ -38,7 +38,11 @@ func scratchIndex(repoRoot string) ([]string, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err := os.ReadFile(strings.TrimSpace(string(out)))
+	index := strings.TrimSpace(string(out))
+	// The time before the content: should the index change in between,
+	// the copy looks older, which only makes git check more by content.
+	info, statErr := os.Stat(index)
+	data, err := os.ReadFile(index)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, err
 	}
@@ -58,7 +62,14 @@ func scratchIndex(repoRoot string) ([]string, func(), error) {
 	}
 	_, werr := f.Write(data)
 	cerr := f.Close()
-	if err := errors.Join(werr, cerr); err != nil {
+	// The copy keeps the index's time: git trusts a file's stat only when
+	// the index is newer than the file, so a fresh copy would hide an edit
+	// of the same size made in the second of the last index write.
+	var terr error
+	if statErr == nil {
+		terr = os.Chtimes(name, info.ModTime(), info.ModTime())
+	}
+	if err := errors.Join(werr, cerr, terr); err != nil {
 		done()
 		return nil, nil, err
 	}
