@@ -56,6 +56,20 @@ describe("AgentNoteView", () => {
     expect(view).toHaveTextContent("Code changed since this note");
   });
 
+  it("copies the note as markdown", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<AgentNoteView note={note()} onClose={() => {}} />, withTooltips);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy markdown" }),
+    );
+    expect(writeText).toHaveBeenCalledWith("## Checked\n\n- unit tests pass");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
+  });
+
   it("closes from its corner or with Escape", async () => {
     const onClose = vi.fn();
     render(<AgentNoteView note={note()} onClose={onClose} />, withTooltips);

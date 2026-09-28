@@ -1,5 +1,10 @@
-import { useEffect, useEffectEvent, useSyncExternalStore } from "react";
-import { BotIcon, HistoryIcon, XIcon } from "lucide-react";
+import {
+  useEffect,
+  useEffectEvent,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { BotIcon, CheckIcon, CopyIcon, HistoryIcon, XIcon } from "lucide-react";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { isTyping } from "@/lib/keys";
 import { Button } from "@/components/ui/button";
@@ -88,6 +93,16 @@ export function AgentNoteView({
   onClose: () => void;
 }) {
   useEffect(() => markSeen(note.updatedAt), [note.updatedAt]);
+  // The raw markdown, to paste into a PR or a chat; "Copied" for a moment.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copy = () => {
+    void navigator.clipboard?.writeText(note.body).then(() => setCopied(true));
+  };
   // The top layer takes Escape first, so a layer under it stays open.
   const onKey = useEffectEvent((e: KeyboardEvent) => {
     if (e.key !== "Escape" || e.defaultPrevented || isTyping(e)) return;
@@ -121,12 +136,15 @@ export function AgentNoteView({
             Code changed since this note
           </span>
         )}
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={copy}>
+          {copied ? <CheckIcon /> : <CopyIcon />}
+          {copied ? "Copied" : "Copy markdown"}
+        </Button>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon-sm"
-              className="ml-auto"
               aria-label="Close the agent note"
               onClick={onClose}
             >
@@ -139,7 +157,7 @@ export function AgentNoteView({
         </Tooltip>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-5">
+        <div className="mx-auto max-w-3xl px-6 py-5 text-base leading-7">
           <Markdown source={note.body} />
         </div>
       </div>
