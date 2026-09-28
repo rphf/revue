@@ -271,20 +271,23 @@ describe("DiffPage send", () => {
     expect(screen.getByLabelText("Note to the agent")).not.toHaveFocus();
   });
 
-  it("focuses the note when the threads panel opens", async () => {
+  // Showing the panel is not writing in it: the page's single keys
+  // keep working.
+  it("opens the threads panel without taking the focus", async () => {
     vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
     renderPage();
     fireEvent.click(
       await screen.findByRole("button", { name: "Show threads" }),
     );
     const note = await screen.findByLabelText("Note to the agent");
-    await waitFor(() => expect(note).toHaveFocus());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(note).not.toHaveFocus();
     fireEvent.keyDown(window, { key: "i", ctrlKey: true });
     await waitFor(() => expect(note).not.toBeInTheDocument());
     fireEvent.keyDown(window, { key: "i", ctrlKey: true });
-    await waitFor(() =>
-      expect(screen.getByLabelText("Note to the agent")).toHaveFocus(),
-    );
+    const again = await screen.findByLabelText("Note to the agent");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(again).not.toHaveFocus();
   });
 
   it("opens the threads panel on the composer to send with a note", async () => {

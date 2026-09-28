@@ -53,7 +53,7 @@ const SECTIONS: Section[] = [
         keys: [[MOD, "↵"]],
         label: "Submit the comment, or send with the note",
       },
-      { keys: [["Esc"]], label: "Cancel the comment" },
+      { keys: [["Esc"]], label: "Leave the box, or close an empty comment" },
       { keys: [[MOD, "E"]], label: "Code" },
       { keys: [[MOD, "K"]], label: "Link" },
       { keys: [[MOD, SHIFT, "."]], label: "Quote" },
@@ -67,7 +67,7 @@ const SECTIONS: Section[] = [
     shortcuts: [
       { keys: [["J"]], label: "Next outdated thread" },
       { keys: [["K"]], label: "Previous outdated thread" },
-      { keys: [["Esc"]], label: "Back to the diff" },
+      { keys: [["Esc"]], label: "Close the snapshot" },
     ],
   },
   {

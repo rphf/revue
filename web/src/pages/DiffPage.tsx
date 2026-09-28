@@ -255,12 +255,12 @@ export default function DiffPage({
     loadWidth(THREADS_WIDTH_KEY, 360),
   );
   useEffect(() => savePanelOpen(showPanel), [showPanel]);
+  // Only writing takes the caret: showing the panel leaves it where it
+  // was, so the page's single keys keep working.
   const [composerFocus, setComposerFocus] = useState(0);
-  // Opening the panel puts the caret in the note, however it opens.
   const togglePanel = useCallback(() => {
     setThreadsWidth(loadWidth(THREADS_WIDTH_KEY, 360));
     setShowPanel((v) => !v);
-    setComposerFocus((n) => n + 1);
   }, []);
   const closePanel = useCallback(() => setShowPanel(false), []);
   // The note for the next send outlives the panel, so closing it to

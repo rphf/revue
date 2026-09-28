@@ -35,18 +35,20 @@ describe("CommentForm", () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it("Escape asks first, and a second Escape discards", () => {
+  it("Escape leaves the box and keeps the text, or closes an empty form", () => {
     const onCancel = vi.fn();
     render(<CommentForm onSubmit={async () => {}} onCancel={onCancel} />);
-    fireEvent.change(screen.getByRole("textbox"), {
-      target: { value: "text" },
-    });
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Discard this comment?",
-    );
+    const box = screen.getByRole("textbox");
+    expect(box).toHaveFocus();
+    fireEvent.change(box, { target: { value: "text" } });
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(box).not.toHaveFocus();
+    expect(box).toHaveValue("text");
     expect(onCancel).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.change(box, { target: { value: "" } });
+    fireEvent.keyDown(box, { key: "Escape" });
     expect(onCancel).toHaveBeenCalled();
   });
 

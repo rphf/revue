@@ -81,4 +81,23 @@ describe("SendComposer", () => {
     setup({ focusSignal: 1 });
     expect(screen.getByLabelText("Note to the agent")).toHaveFocus();
   });
+
+  // Out of the box, the page's single keys work again.
+  it("leaves the box on Escape, keeping the note", () => {
+    setup({ focusSignal: 1 });
+    const box = screen.getByLabelText("Note to the agent");
+    fireEvent.change(box, { target: { value: "half written" } });
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(box).not.toHaveFocus();
+    expect(box).toHaveValue("half written");
+  });
+
+  it("leaves the box once the note is sent", async () => {
+    setup({ focusSignal: 1 });
+    const box = screen.getByLabelText("Note to the agent");
+    fireEvent.change(box, { target: { value: "LGTM" } });
+    fireEvent.keyDown(box, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(box).toHaveValue(""));
+    expect(box).not.toHaveFocus();
+  });
 });

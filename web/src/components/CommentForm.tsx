@@ -16,9 +16,10 @@ export interface CommentFormProps {
   onCancel: () => void;
 }
 
-// GitHub-parity comment form: Escape and Cancel dismiss; non-empty
-// content prompts confirm-discard first; submit-in-flight disables the
-// button and server errors show inline (never losing the text).
+// GitHub-parity comment form: Cancel dismisses, asking first for
+// unsaved text; Escape leaves the box with its text, or closes an empty
+// form; submit-in-flight disables the button and server errors show
+// inline (never losing the text).
 export default function CommentForm({
   initial = "",
   placeholder = "Leave a comment",
@@ -60,7 +61,9 @@ export default function CommentForm({
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape") {
       e.stopPropagation();
-      cancel();
+      // With text, only leave the box and keep it; an empty form closes.
+      if (body.trim() !== "") e.currentTarget.blur();
+      else cancel();
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();

@@ -46,7 +46,10 @@ export default function SendComposer({
   const send = () => {
     if (sending || nothing) return;
     void onSend(note).then((sent) => {
-      if (sent) setNote("");
+      if (!sent) return;
+      setNote("");
+      // Sent: out of the box, the page's single keys work again.
+      ref.current?.blur();
     });
   };
 
@@ -66,6 +69,9 @@ export default function SendComposer({
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             send();
+          } else if (e.key === "Escape") {
+            // Leaves the box, keeping the note.
+            e.currentTarget.blur();
           }
         }}
       />
