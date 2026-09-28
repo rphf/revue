@@ -32,7 +32,13 @@ test("pane widths are kept across reloads and the threads toggle", async ({
   await page.getByRole("button", { name: "Show threads" }).click();
   const threads = page.locator("[data-panel]#threads");
   await expect(threads).toBeVisible();
-  expect(Math.abs((await width(tree)) - treeWidth)).toBeLessThanOrEqual(1);
+  // The panel library keeps the tree's width from a ResizeObserver,
+  // which runs after layout: a measure in between sees the tree scaled
+  // with its group, though the painted frame never does. Measure until
+  // it holds.
+  await expect
+    .poll(async () => Math.abs((await width(tree)) - treeWidth))
+    .toBeLessThanOrEqual(1);
 
   const threadsStart = await width(threads);
   await drag(page, page.locator('[data-slot="resizable-handle"]').last(), -60);
@@ -46,7 +52,9 @@ test("pane widths are kept across reloads and the threads toggle", async ({
 
   await page.getByRole("button", { name: "Hide threads" }).click();
   await expect(threads).toHaveCount(0);
-  expect(Math.abs((await width(tree)) - treeWidth)).toBeLessThanOrEqual(1);
+  await expect
+    .poll(async () => Math.abs((await width(tree)) - treeWidth))
+    .toBeLessThanOrEqual(1);
 
   // Opened again, the threads come back at the dragged width.
   await page.getByRole("button", { name: "Show threads" }).click();
