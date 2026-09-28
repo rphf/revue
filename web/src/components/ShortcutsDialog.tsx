@@ -31,6 +31,7 @@ const SECTIONS: Section[] = [
     shortcuts: [
       { keys: [[MOD, "B"]], label: "Show or hide the files" },
       { keys: [[MOD, "I"]], label: "Show or hide the threads" },
+      { keys: [["N"]], label: "Open or close the agent's note" },
       {
         keys: [[MOD, SHIFT, "↵"]],
         label: "Send the drafts, or write a note if there are none",

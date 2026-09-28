@@ -4,9 +4,7 @@ import {
   useCallback,
   useImperativeHandle,
   useMemo,
-  useEffect,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import type {
@@ -31,16 +29,14 @@ import {
   FileDiffIcon,
   MessageSquarePlusIcon,
 } from "lucide-react";
-import type { AgentNote, DiffFile, Side, Thread } from "../types";
+import type { DiffFile, Side, Thread } from "../types";
 import type { Theme } from "../theme";
 import { binarySummary, isImagePath } from "@/lib/binary";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { BASE_OPTIONS, LAYOUT, LINE_SCROLL_OFFSET } from "./codeViewStyle";
-import { AgentNoteBar, AgentNoteBody } from "./AgentNote";
-import { useNoteCollapsed } from "./useNoteCollapsed";
+import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
@@ -135,8 +131,6 @@ export interface DiffViewProps {
   onToggleCollapsed?: (path: string) => void;
   // Names the diff whose scroll position survives a reload.
   scrollKey?: string;
-  // The agent's note: a bar above the diff, its body atop the scroll.
-  note?: AgentNote | null;
 }
 
 interface ItemMemo {
@@ -206,7 +200,6 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     collapsed,
     onToggleCollapsed,
     scrollKey,
-    note = null,
   }: DiffViewProps,
   ref,
 ) {
@@ -630,76 +623,17 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     ],
   );
 
-  const [noteCollapsed, toggleNote] = useNoteCollapsed(note);
-  const showBody = note !== null && !noteCollapsed;
-  const renderNote = useCallback(
-    () => (note ? <AgentNoteBody note={note} /> : null),
-    [note],
-  );
-  // Opening the note brings it into view.
-  const onToggleNote = () => {
-    if (noteCollapsed) {
-      codeView.current
-        ?.getInstance()
-        ?.getContainerElement()
-        ?.scrollTo({ top: 0 });
-    }
-    toggleNote();
-  };
-  // A reload restores the scroll once the list has placed the files below
-  // the note's body; before, the saved position lands that far too low.
-  const [bodyPlaced, setBodyPlaced] = useState(false);
-  const firstItem = items[0]?.id;
-  useEffect(() => {
-    if (!showBody || bodyPlaced) return;
-    const deadline = performance.now() + 2000;
-    let frame = 0;
-    const check = () => {
-      const view = codeView.current?.getInstance();
-      const height =
-        view?.getHeaderElement()?.getBoundingClientRect().height ?? 0;
-      const top =
-        firstItem === undefined ? undefined : view?.getTopForItem(firstItem);
-      const placed =
-        height > 0 &&
-        top !== undefined &&
-        top >= height + LAYOUT.paddingTop - 1;
-      if (placed || performance.now() > deadline) setBodyPlaced(true);
-      else frame = requestAnimationFrame(check);
-    };
-    frame = requestAnimationFrame(check);
-    return () => cancelAnimationFrame(frame);
-  }, [showBody, bodyPlaced, firstItem]);
-  const onScroll = useScrollMemory(
-    codeView,
-    scrollKey,
-    items.length > 0 && (!showBody || bodyPlaced),
-  );
-  const noteBar = note && (
-    <AgentNoteBar
-      note={note}
-      collapsed={noteCollapsed}
-      onToggle={onToggleNote}
-    />
-  );
+  const onScroll = useScrollMemory(codeView, scrollKey, items.length > 0);
 
   if (items.length === 0) {
     return (
-      <>
-        {noteBar}
-        {showBody && (
-          <div className="shrink-0 px-4">
-            <AgentNoteBody note={note} />
-          </div>
-        )}
-        <div
-          className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground"
-          data-testid="diff-empty"
-        >
-          <FileDiffIcon className="size-6 opacity-60" />
-          <p>No changes in this diff</p>
-        </div>
-      </>
+      <div
+        className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground"
+        data-testid="diff-empty"
+      >
+        <FileDiffIcon className="size-6 opacity-60" />
+        <p>No changes in this diff</p>
+      </div>
     );
   }
 
@@ -708,7 +642,6 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   const onlyGone = items.length === gonePaths.size;
   return (
     <>
-      {noteBar}
       {onlyGone && (
         <p
           className="flex shrink-0 items-center gap-2 border-b px-4 py-2 text-sm text-muted-foreground"
@@ -728,7 +661,6 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         renderAnnotation={renderItemAnnotation}
         renderHeaderPrefix={renderHeaderPrefix}
         renderHeaderMetadata={renderHeaderMetadata}
-        renderCodeViewHeader={showBody ? renderNote : undefined}
       />
     </>
   );

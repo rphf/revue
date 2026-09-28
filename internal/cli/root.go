@@ -42,7 +42,7 @@ Agent:
                            --since C waits from cursor C instead
   reply ID [TEXT]          answer thread ID (TEXT from stdin when absent)
   note [TEXT] [--file PATH] [--clear]
-                           the note shown above the diff for this branch:
+                           the note the page shows for this branch:
                            what changed, how it was checked, screenshots,
                            questions. Replaces the one before; markdown
   comment PATH[:LINE[-END]] [TEXT] [--old] [-- GIT-DIFF-ARGS]

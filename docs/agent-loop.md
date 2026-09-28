@@ -7,7 +7,7 @@ These steps are written for an agent. Put them in the agent's instructions.
    explain, run `revue comment <file>:<line> "..."`.
 3. Write a note for the reviewer with `revue note` (or `--file PATH`): what
    changed, how you checked it, links to screenshots the reviewer's browser
-   can reach, and your questions. It shows above the diff.
+   can reach, and your questions. The reviewer opens it from the page's top bar.
 4. Say that the change is ready for review. The reviewer's browser follows
    the working tree, so there is nothing to open; when the reviewer needs a
    link, `revue url` prints one. Then end your turn.

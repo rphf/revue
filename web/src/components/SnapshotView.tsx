@@ -14,12 +14,12 @@ import {
   type CodeViewReactOptions,
 } from "@pierre/diffs/react";
 import {
-  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CircleAlertIcon,
   FileDiffIcon,
   HistoryIcon,
+  XIcon,
 } from "lucide-react";
 import { api, errorMessage } from "../api";
 import type { Theme } from "../theme";
@@ -297,17 +297,6 @@ export default function SnapshotView({
       data-testid="snapshot-view"
     >
       <div className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 py-1.5">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              <ArrowLeftIcon />
-              Back to diff
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            Back to diff <Kbd>Esc</Kbd>
-          </TooltipContent>
-        </Tooltip>
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-1.5 text-sm font-medium">
             {mode === "since" ? (
@@ -379,6 +368,22 @@ export default function SnapshotView({
             </NavButton>
           </div>
         )}
+        {/* A layer over the diff: it closes from its corner. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close the snapshot"
+              onClick={onClose}
+            >
+              <XIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Close <Kbd>Esc</Kbd>
+          </TooltipContent>
+        </Tooltip>
       </div>
       {snap.status === "loading" ? (
         <LoadingBlocks

@@ -44,7 +44,6 @@ vi.mock("@pierre/diffs/react", async () => {
     renderAnnotation,
     renderHeaderPrefix,
     renderHeaderMetadata,
-    renderCodeViewHeader,
   }: {
     ref?: React.Ref<unknown>;
     items: StubItem[];
@@ -55,7 +54,6 @@ vi.mock("@pierre/diffs/react", async () => {
     ) => React.ReactNode;
     renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
     renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
-    renderCodeViewHeader?: () => React.ReactNode;
   }) => {
     const seen = useRef(new Map<string, StubItem>());
     const items = next.map((item) => {
@@ -83,7 +81,6 @@ vi.mock("@pierre/diffs/react", async () => {
         >
           select-line
         </button>
-        {renderCodeViewHeader?.()}
         {items.map((item) => (
           <div
             key={`${item.id}:${item.version ?? 0}`}
@@ -352,12 +349,14 @@ describe("DiffPage live updates", () => {
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
   });
 
-  it("shows the agent note and follows its changes live", async () => {
+  it("opens the agent note over the diff from the top bar or N, live", async () => {
     renderPage();
     await waitFor(() =>
       expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("agent-note")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Agent note" }),
+    ).not.toBeInTheDocument();
 
     vi.mocked(api.getNote).mockResolvedValue({
       note: {
@@ -367,8 +366,10 @@ describe("DiffPage live updates", () => {
       },
     });
     pushEvent({ id: 10, type: "note.changed", payload: {}, createdAt: "" });
+    await screen.findByRole("button", { name: "Agent note" });
+    fireEvent.keyDown(window, { key: "n" });
     await waitFor(() =>
-      expect(screen.getByTestId("agent-note-body")).toHaveTextContent(
+      expect(screen.getByTestId("agent-note-view")).toHaveTextContent(
         "tests pass",
       ),
     );
@@ -383,25 +384,21 @@ describe("DiffPage live updates", () => {
     });
     pushEvent({ type: "diff.changed", payload: { version: 2 } });
     await waitFor(() =>
-      expect(screen.getByTestId("agent-note")).toHaveTextContent(
+      expect(screen.getByTestId("agent-note-view")).toHaveTextContent(
         "Code changed since this note",
       ),
     );
+
+    // A layer over the diff, closed from its corner.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close the agent note" }),
+    );
+    expect(screen.queryByTestId("agent-note-view")).not.toBeInTheDocument();
   });
 
-  it("holds the diff until the agent note answers", async () => {
-    let answer: (v: { note: null }) => void = () => {};
-    vi.mocked(api.getNote).mockReturnValueOnce(
-      new Promise((r) => {
-        answer = r;
-      }),
-    );
+  it("shows the diff without waiting for the agent note", async () => {
+    vi.mocked(api.getNote).mockReturnValueOnce(new Promise(() => {}));
     renderPage();
-    await waitFor(() => expect(api.getDiff).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.getByTestId("diff-loading")).toBeInTheDocument();
-
-    answer({ note: null });
     await waitFor(() =>
       expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument(),
     );
@@ -639,6 +636,13 @@ describe("DiffPage live updates", () => {
     expect(await screen.findByTestId("snapshot-view")).toHaveTextContent(
       "What changed since the thread started",
     );
+    // The view is a layer over the diff, closed from its corner.
+    fireEvent.click(
+      within(screen.getByTestId("snapshot-view")).getByRole("button", {
+        name: "Close the snapshot",
+      }),
+    );
+    expect(screen.queryByTestId("snapshot-view")).not.toBeInTheDocument();
   });
 
   it("shows a reply sent from the snapshot without reopening it", async () => {

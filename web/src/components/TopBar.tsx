@@ -24,6 +24,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { AgentNote } from "../types";
+import { AgentNoteButton } from "./AgentNote";
 import DiffPicker from "./DiffPicker";
 import AppearancePicker from "./AppearancePicker";
 import ThemeToggle from "./ThemeToggle";
@@ -115,6 +117,10 @@ export interface TopBarProps {
   onNavigate: (to: string) => void;
   pulse: number;
   threadCount: number;
+  // The agent's note, a layer over the diff.
+  note: AgentNote | null;
+  noteOpen: boolean;
+  onToggleNote: () => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
   treeOpen: boolean;
@@ -143,6 +149,9 @@ export default function TopBar({
   onNavigate,
   pulse,
   threadCount,
+  note,
+  noteOpen,
+  onToggleNote,
   panelOpen,
   onTogglePanel,
   treeOpen,
@@ -265,6 +274,7 @@ export default function TopBar({
         </Tooltip>
         <Separator orientation="vertical" className="mx-1 h-5!" />
 
+        <AgentNoteButton note={note} open={noteOpen} onToggle={onToggleNote} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

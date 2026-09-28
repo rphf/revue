@@ -27,6 +27,7 @@ import type {
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { type PanelSize, usePanelRef } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
+import { AgentNoteView } from "../components/AgentNote";
 import ConnectionBanner from "../components/ConnectionBanner";
 import NotifyBanner from "../components/NotifyBanner";
 import OutdatedThread, {
@@ -393,19 +394,21 @@ export default function DiffPage({
     );
   }, []);
   // The agent's note, asked again when it changes or the code moves on,
-  // which can make it outdated. The diff waits for the first answer, so
-  // the note is in place before a reload restores the scroll.
+  // which can make it outdated. It opens as a layer over the diff, from
+  // the top bar, and closes with the note once it is gone.
   const [agentNote, setAgentNote] = useState<AgentNoteData | null>(null);
-  const [noteReady, setNoteReady] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   const loadNote = useCallback(() => {
-    api
-      .getNote()
-      .then(
-        (r) => setAgentNote(r.note),
-        () => {},
-      )
-      .finally(() => setNoteReady(true));
+    api.getNote().then(
+      (r) => {
+        setAgentNote(r.note);
+        if (!r.note) setNoteOpen(false);
+      },
+      () => {},
+    );
   }, []);
+  const toggleNote = useCallback(() => setNoteOpen((open) => !open), []);
+  const closeNote = useCallback(() => setNoteOpen(false), []);
   useEffect(() => {
     loadLanded();
     loadSettings();
@@ -925,7 +928,8 @@ export default function DiffPage({
   // and ⌘⇧↵ does what the Send button does. They work from inside a
   // text box too, as in an editor, unless the box used the key itself.
   // W hides whitespace, as in lazygit, | switches split and unified
-  // views, and ? lists every shortcut, as on GitHub; being bare keys,
+  // views, N opens the agent's note, and ? lists every shortcut, as on
+  // GitHub; being bare keys,
   // they are text inside a box. None acts behind the open list.
   const onShortcut = useEffectEvent((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || showShortcuts) return;
@@ -933,6 +937,7 @@ export default function DiffPage({
       if (e.repeat || isTyping(e)) return;
       if (e.key === "?") setShowShortcuts(true);
       else if (e.key === "w") toggleHideSpace();
+      else if (e.key === "n" && agentNote) toggleNote();
       else if (e.key === "|")
         changeDiffStyle(diffStyle === "split" ? "unified" : "split");
       else return;
@@ -1048,6 +1053,9 @@ export default function DiffPage({
             onNavigate={onNavigate}
             pulse={pulse}
             threadCount={threads.length}
+            note={agentNote}
+            noteOpen={noteOpen}
+            onToggleNote={toggleNote}
             panelOpen={showPanel}
             onTogglePanel={togglePanel}
             treeOpen={showTree}
@@ -1159,7 +1167,7 @@ export default function DiffPage({
                         Retry
                       </Button>
                     </div>
-                  ) : parsedFiles === null || !noteReady ? (
+                  ) : parsedFiles === null ? (
                     <LoadingBlocks
                       className="flex-1 p-4"
                       data-testid="diff-loading"
@@ -1194,7 +1202,6 @@ export default function DiffPage({
                       collapsed={collapsed}
                       onToggleCollapsed={toggleCollapsed}
                       scrollKey={argsKey}
-                      note={agentNote}
                     />
                   )}
                 </ResizablePanel>
@@ -1231,6 +1238,12 @@ export default function DiffPage({
                     onChanged={historyThreadChanged}
                     onClose={closeHistoryThread}
                   />
+                </div>
+              )}
+              {/* Last, so it lies over a snapshot opened before it. */}
+              {noteOpen && agentNote && (
+                <div className="absolute inset-0 z-10">
+                  <AgentNoteView note={agentNote} onClose={closeNote} />
                 </div>
               )}
             </ResizablePanel>

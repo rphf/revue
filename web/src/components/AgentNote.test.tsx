@@ -1,8 +1,8 @@
-import { act, render, renderHook, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentNoteBar, AgentNoteBody } from "./AgentNote";
-import { useNoteCollapsed } from "./useNoteCollapsed";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AgentNoteButton, AgentNoteView } from "./AgentNote";
 
 const note = (
   over: Partial<{ body: string; updatedAt: string; outdated: boolean }> = {},
@@ -13,60 +13,75 @@ const note = (
   ...over,
 });
 
+const withTooltips = { wrapper: TooltipProvider };
+
 afterEach(() => localStorage.clear());
 
-describe("AgentNoteBar", () => {
-  it("names the note with its age and toggles it", async () => {
-    const onToggle = vi.fn();
-    render(
-      <AgentNoteBar note={note()} collapsed={false} onToggle={onToggle} />,
+describe("AgentNoteButton", () => {
+  it("renders nothing without a note", () => {
+    const { container } = render(
+      <AgentNoteButton note={null} open={false} onToggle={() => {}} />,
+      withTooltips,
     );
-    expect(screen.getByText("Agent note")).toBeVisible();
-    expect(screen.getByText(/5m ago/)).toBeVisible();
-    expect(screen.queryByText(/code changed since/i)).toBeNull();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Collapse the agent note" }),
-    );
-    expect(onToggle).toHaveBeenCalledOnce();
+    expect(container).toBeEmptyDOMElement();
   });
 
-  it("says when the code changed after the note", () => {
+  it("marks a note not opened yet, is pressed while open, and toggles", async () => {
+    const onToggle = vi.fn();
+    const { rerender } = render(
+      <AgentNoteButton note={note()} open={false} onToggle={onToggle} />,
+      withTooltips,
+    );
+    const button = screen.getByRole("button", { name: "Agent note" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("agent-note-unread")).toBeInTheDocument();
+    await userEvent.click(button);
+    expect(onToggle).toHaveBeenCalledOnce();
+
+    rerender(<AgentNoteButton note={note()} open onToggle={onToggle} />);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("AgentNoteView", () => {
+  it("shows the note with its age and when it went outdated", () => {
     render(
-      <AgentNoteBar
-        note={note({ outdated: true })}
-        collapsed
+      <AgentNoteView note={note({ outdated: true })} onClose={() => {}} />,
+      withTooltips,
+    );
+    const view = screen.getByTestId("agent-note-view");
+    expect(screen.getByRole("heading", { name: "Checked" })).toBeVisible();
+    expect(view).toHaveTextContent("unit tests pass");
+    expect(view).toHaveTextContent("5m ago");
+    expect(view).toHaveTextContent("Code changed since this note");
+  });
+
+  it("closes from its corner or with Escape", async () => {
+    const onClose = vi.fn();
+    render(<AgentNoteView note={note()} onClose={onClose} />, withTooltips);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Close the agent note" }),
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts as read once shown, until a newer note", () => {
+    const first = note();
+    render(<AgentNoteView note={first} onClose={() => {}} />, withTooltips);
+    render(
+      <AgentNoteButton note={first} open={false} onToggle={() => {}} />,
+      withTooltips,
+    );
+    expect(screen.queryByTestId("agent-note-unread")).toBeNull();
+    render(
+      <AgentNoteButton
+        note={note({ updatedAt: new Date().toISOString() })}
+        open={false}
         onToggle={() => {}}
       />,
+      withTooltips,
     );
-    expect(screen.getByText(/code changed since this note/i)).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Expand the agent note" }),
-    ).toBeVisible();
-  });
-});
-
-describe("AgentNoteBody", () => {
-  it("renders the note as markdown", () => {
-    render(<AgentNoteBody note={note()} />);
-    expect(screen.getByRole("heading", { name: "Checked" })).toBeVisible();
-    expect(screen.getByText("unit tests pass")).toBeVisible();
-  });
-});
-
-describe("useNoteCollapsed", () => {
-  it("remembers the collapsed note, and opens a newer one", () => {
-    const first = note();
-    const { result, rerender } = renderHook(({ n }) => useNoteCollapsed(n), {
-      initialProps: { n: first },
-    });
-    expect(result.current[0]).toBe(false);
-    act(() => result.current[1]());
-    expect(result.current[0]).toBe(true);
-
-    const again = renderHook(() => useNoteCollapsed(first));
-    expect(again.result.current[0]).toBe(true);
-
-    rerender({ n: note({ updatedAt: new Date().toISOString() }) });
-    expect(result.current[0]).toBe(false);
+    expect(screen.getByTestId("agent-note-unread")).toBeInTheDocument();
   });
 });
