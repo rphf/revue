@@ -811,8 +811,9 @@ export default function DiffPage({
     !parsedFiles.some((f) => f.name === pending.path);
 
   // A live thread scrolls to its line, an open outdated one to its
-  // file's header, where it waits; a resolved outdated one opens on the
-  // file as it was when the thread started. Either way the thread is
+  // file's header, where it waits; an outdated one with no card in this
+  // diff (resolved, landed, or on a file a narrower diff leaves out)
+  // opens on the file as it was when the thread started. Either way the thread is
   // outlined until the next click elsewhere.
   // A live thread on a line whose only change was whitespace is not in
   // the diff while whitespace is hidden: jumping to it shows whitespace
@@ -835,7 +836,11 @@ export default function DiffPage({
           saveHideSpace(false);
           spaceJump.current = target;
         } else reveal(target);
-      } else if (!thread.resolved) {
+      } else if (
+        [...annotationsByFile.values()].some((list) =>
+          list.some((a) => a.metadata?.threadId === thread.id),
+        )
+      ) {
         setSnapshotId(null);
         const path = position?.path ?? thread.path;
         setSelectedPath(path);
@@ -844,7 +849,7 @@ export default function DiffPage({
         setSnapshotId(thread.id);
       }
     },
-    [reveal, hideSpace, parsedFiles],
+    [reveal, hideSpace, parsedFiles, annotationsByFile],
   );
   useEffect(() => {
     const target = spaceJump.current;

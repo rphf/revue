@@ -592,6 +592,19 @@ describe("DiffPage live updates", () => {
     );
     expect(screen.queryByTestId("filediff-gone.go")).not.toBeInTheDocument();
     expect(screen.queryByTestId("outdated-1")).not.toBeInTheDocument();
+
+    // With no card to scroll to, the panel opens it as it was.
+    vi.mocked(api.getSnapshot).mockResolvedValue({
+      path: "gone.go",
+      status: "modified",
+      oldContent: "old\n",
+      newContent: "new\n",
+      createdAt: "2026-09-20T10:00:00Z",
+      currentContent: "new\n",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    expect(await screen.findByTestId("snapshot-view")).toBeInTheDocument();
   });
 
   it("opens an outdated thread as it was and on what changed since", async () => {
