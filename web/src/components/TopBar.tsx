@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import {
   BookMarkedIcon,
   Columns2Icon,
+  FileIcon,
+  FilesIcon,
   KeyboardIcon,
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
@@ -11,7 +13,7 @@ import {
   SpaceIcon,
 } from "lucide-react";
 import type { Theme } from "../theme";
-import type { DiffStyle } from "./DiffView";
+import type { DiffStyle, FileMode } from "./DiffView";
 import { IS_MAC } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -133,6 +135,8 @@ export interface TopBarProps {
   sending: boolean;
   diffStyle: DiffStyle;
   onDiffStyleChange: (style: DiffStyle) => void;
+  fileMode: FileMode;
+  onFileModeChange: (mode: FileMode) => void;
   hideSpace: boolean;
   onToggleHideSpace: () => void;
   onShowShortcuts: () => void;
@@ -162,6 +166,8 @@ export default function TopBar({
   sending,
   diffStyle,
   onDiffStyleChange,
+  fileMode,
+  onFileModeChange,
   hideSpace,
   onToggleHideSpace,
   onShowShortcuts,
@@ -203,6 +209,39 @@ export default function TopBar({
       {/* How the diff looks, then the page's theme, then the review:
           the threads and sending them, which opens the threads too. */}
       <div className="ml-auto flex items-center gap-1.5">
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          spacing={0}
+          value={fileMode}
+          onValueChange={(v) => {
+            if (v) onFileModeChange(v as FileMode);
+          }}
+          aria-label="Files shown"
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroupItem value="all" aria-label="All files">
+                <FilesIcon />
+              </ToggleGroupItem>
+            </TooltipTrigger>
+            <TooltipContent>
+              All files <Kbd>F</Kbd>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroupItem value="focused" aria-label="Focused mode">
+                <FileIcon />
+              </ToggleGroupItem>
+            </TooltipTrigger>
+            <TooltipContent>
+              Focused mode <Kbd>F</Kbd>
+            </TooltipContent>
+          </Tooltip>
+        </ToggleGroup>
+
         <ToggleGroup
           type="single"
           variant="outline"

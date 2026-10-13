@@ -204,6 +204,26 @@ describe("FileTree", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("keeps one row selected as the outside selection moves", async () => {
+    const files = [file("a.go"), file("b.go"), file("c.go")];
+    const props = {
+      files,
+      viewed: new Set<string>(),
+      onToggleViewed: noop,
+      onSelect: noop,
+    };
+    const { container, rerender } = render(
+      <FileTree {...props} selectedPath="a.go" />,
+    );
+    rerender(<FileTree {...props} selectedPath="b.go" />);
+    rerender(<FileTree {...props} selectedPath="c.go" />);
+    await waitFor(() =>
+      expect(row(container, "c.go")).toHaveAttribute("aria-selected", "true"),
+    );
+    for (const path of ["a.go", "b.go"])
+      expect(row(container, path)).not.toHaveAttribute("aria-selected", "true");
+  });
+
   it("toggles viewed through the dot without activating the row", async () => {
     const onToggle = vi.fn();
     const onSelect = vi.fn();

@@ -150,12 +150,17 @@ function FileTree({
     model.setComposition(model.getComposition());
   }, [model, viewed]);
 
-  // Jumps that originate outside the tree (thread panel, anchors) mirror
-  // into the selection without bouncing back through onSelect.
+  // Jumps that originate outside the tree (thread panel, anchors, the
+  // focused file) mirror into the selection without bouncing back
+  // through onSelect. Selecting adds to the selection, so the row
+  // selected before is let go: one row shows the file on screen.
   useEffect(() => {
     if (!selectedPath) return;
     const item = model.getItem(selectedPath);
-    if (!item || item.isSelected()) return;
+    if (!item) return;
+    for (const path of model.getSelectedPaths())
+      if (path !== selectedPath) model.getItem(path)?.deselect();
+    if (item.isSelected()) return;
     for (const dir of ancestorDirs(selectedPath)) {
       const d = model.getItem(dir);
       if (d && "expand" in d) d.expand();

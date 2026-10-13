@@ -6,6 +6,8 @@ Ideas deliberately kept out of v1. The plan's Scope Boundaries section (docs/pla
 
 GitHub-style review driving from the keyboard: `j`/`k` next/previous change, `n`/`p` next/previous file, `c` open comment form on the focused line, `x` toggle viewed, `Cmd+Enter` submit review. Decided out of v1 (2026-07-03) to keep the first release mouse-driven and small; design the DOM/focus structure with this in mind rather than retrofitting.
 
+Shipped (2026-10-13): focused mode (`f`), one file at a time, with `j`/`k` stepping through the files and `v` marking one viewed and moving on. Still open: moving between changes inside a file and commenting on a focused line.
+
 ## Parking space
 
 Add future ideas below with a date and a one-line why.

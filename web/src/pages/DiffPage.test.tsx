@@ -29,6 +29,12 @@ interface StubItem {
 }
 const scrolls: { id: string; type: string; collapsed?: boolean }[] = [];
 const selectionClears: number[] = [];
+// What the diff pane's own scroll container was asked to scroll by.
+const paneScrolls: number[] = [];
+const pane = {
+  scrollTo: () => {},
+  scrollBy: ({ top }: { top: number }) => paneScrolls.push(top),
+};
 interface StubOptions {
   onGutterUtilityClick?: (
     range: { start: number; end: number; side: string },
@@ -66,7 +72,7 @@ vi.mock("@pierre/diffs/react", async () => {
       scrollTo: (t: { id: string; type: string }) =>
         scrolls.push({ ...t, collapsed: seen.current.get(t.id)?.collapsed }),
       clearSelectedLines: () => selectionClears.push(1),
-      getInstance: () => null,
+      getInstance: () => ({ getContainerElement: () => pane }),
     }));
     return (
       <div>
@@ -105,8 +111,21 @@ vi.mock("@pierre/diffs/react", async () => {
   return { CodeView };
 });
 
+// One file per section header in the patch, a.go when there is none.
 vi.mock("@pierre/diffs", () => ({
-  parsePatchFiles: () => [{ files: [{ name: "a.go", hunks: [] }] }],
+  parsePatchFiles: (patch: string) => {
+    const names = [...patch.matchAll(/^diff --git a\/\S+ b\/(\S+)$/gm)].map(
+      (m) => m[1],
+    );
+    return [
+      {
+        files: (names.length > 0 ? names : ["a.go"]).map((name) => ({
+          name,
+          hunks: [],
+        })),
+      },
+    ];
+  },
   processFile: () => undefined,
   parseDiffFromFile: () => ({ name: "a.go" }),
 }));
@@ -1177,6 +1196,235 @@ describe("DiffPage landed threads", () => {
     );
     await waitFor(() =>
       expect(screen.queryByTestId("landed-offer")).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// Three files, each section with its blob ids; tree order puts the
+// directory first: dir/c.go, a.go, b.go.
+function threeFiles(version: number, aBlob = "aaa"): DiffResponse {
+  const section = (path: string, blob: string) =>
+    `diff --git a/${path} b/${path}\nindex 000..${blob} 100644\n--- a/${path}\n+++ b/${path}\n+x\n`;
+  return {
+    args: [],
+    branch: "main",
+    repo: "repo",
+    version,
+    patch:
+      section("b.go", "bbb") +
+      section("a.go", aBlob) +
+      section("dir/c.go", "ccc"),
+    files: ["b.go", "a.go", "dir/c.go"].map((path) => ({
+      path,
+      status: "modified" as const,
+      isBinary: false,
+    })),
+    anchors: [],
+  };
+}
+
+describe("DiffPage focused mode", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.mocked(api.getDiff).mockResolvedValue(threeFiles(1));
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    vi.mocked(api.getLanded).mockResolvedValue({ head: "", threadIds: [] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  const shown = () =>
+    screen
+      .queryAllByTestId(/^filediff-/)
+      .map((el) => el.dataset.testid?.slice("filediff-".length));
+
+  it("focuses on one file with F and steps through them in tree order with J and K", async () => {
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    expect(shown()).toEqual(["dir/c.go", "a.go", "b.go"]);
+
+    fireEvent.keyDown(window, { key: "f" });
+    expect(shown()).toEqual(["dir/c.go"]);
+    expect(screen.getByTestId("file-position")).toHaveTextContent(
+      "File 1 of 3",
+    );
+
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["a.go"]);
+    fireEvent.click(screen.getByRole("button", { name: "Next file" }));
+    expect(shown()).toEqual(["b.go"]);
+    expect(screen.getByRole("button", { name: "Next file" })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["b.go"]);
+    fireEvent.keyDown(window, { key: "k" });
+    expect(shown()).toEqual(["a.go"]);
+
+    fireEvent.click(screen.getByRole("radio", { name: "All files" }));
+    expect(shown()).toEqual(["dir/c.go", "a.go", "b.go"]);
+    expect(screen.queryByTestId("file-stepper")).not.toBeInTheDocument();
+  });
+
+  it("marks the file viewed with V and moves on to the next one not viewed", async () => {
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed b.go" }));
+    // b.go is viewed, so V on a.go skips it and wraps round to dir/c.go.
+    fireEvent.keyDown(window, { key: "k" });
+    expect(shown()).toEqual(["a.go"]);
+    fireEvent.keyDown(window, { key: "v" });
+    expect(shown()).toEqual(["dir/c.go"]);
+
+    // Back on a viewed file: it shows open, and V takes the mark back.
+    fireEvent.keyDown(window, { key: "j" });
+    expect(screen.getByTestId("filediff-a.go")).not.toHaveAttribute(
+      "data-collapsed",
+    );
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+    fireEvent.keyDown(window, { key: "v" });
+    expect(shown()).toEqual(["a.go"]);
+    expect(
+      screen.getByRole("checkbox", { name: "Viewed a.go" }),
+    ).not.toBeChecked();
+  });
+
+  it("keeps the mode, the file and the viewed marks across reloads until the file changes", async () => {
+    const page = renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed a.go" }));
+    page.unmount();
+
+    renderPage();
+    expect(
+      await screen.findByRole("checkbox", { name: "Viewed a.go" }),
+    ).toBeChecked();
+    expect(shown()).toEqual(["a.go"]);
+
+    // Hidden whitespace keeps the blob ids, so the mark holds.
+    fireEvent.keyDown(window, { key: "w" });
+    await waitFor(() => expect(api.getDiff).toHaveBeenLastCalledWith([], true));
+    expect(screen.getByRole("checkbox", { name: "Viewed a.go" })).toBeChecked();
+
+    vi.mocked(api.getDiff).mockResolvedValue(threeFiles(2, "a2"));
+    pushEvent({
+      id: 1,
+      type: "diff.changed",
+      payload: { version: 2 },
+      createdAt: "",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Viewed a.go" }),
+      ).not.toBeChecked(),
+    );
+  });
+
+  it("keeps stepping while J is held, and scrolls with Shift+J and Shift+K", async () => {
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j", repeat: true });
+    expect(shown()).toEqual(["b.go"]);
+
+    paneScrolls.length = 0;
+    fireEvent.keyDown(window, { key: "J", shiftKey: true });
+    fireEvent.keyDown(window, { key: "J", shiftKey: true, repeat: true });
+    fireEvent.keyDown(window, { key: "K", shiftKey: true });
+    expect(paneScrolls).toEqual([72, 72, -72]);
+    expect(shown()).toEqual(["b.go"]);
+  });
+
+  it("steps through the files of the diff only, past one kept for its outdated threads", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
+    // ab.go left the diff; its outdated thread keeps it between a.go
+    // and b.go.
+    vi.mocked(api.getDiff).mockResolvedValue({
+      ...threeFiles(1),
+      anchors: [
+        {
+          threadId: 1,
+          path: "ab.go",
+          side: "additions",
+          line: 5,
+          state: "outdated",
+        },
+      ],
+    });
+    renderPage();
+    await screen.findByTestId("filediff-ab.go");
+    fireEvent.keyDown(window, { key: "f" });
+    expect(screen.getByTestId("file-position")).toHaveTextContent(
+      "File 1 of 3",
+    );
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["b.go"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    await waitFor(() => expect(shown()).toEqual(["ab.go"]));
+    expect(screen.getByTestId("file-position")).toHaveTextContent(
+      "not in the diff",
+    );
+    fireEvent.keyDown(window, { key: "k" });
+    expect(shown()).toEqual(["a.go"]);
+  });
+
+  it("leaves J and K to what covers the diff", async () => {
+    vi.mocked(api.getNote).mockResolvedValue({
+      note: {
+        body: "done",
+        updatedAt: new Date().toISOString(),
+        outdated: false,
+      },
+    });
+    renderPage();
+    await screen.findByRole("button", { name: "Agent note" });
+    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.keyDown(window, { key: "n" });
+    await screen.findByTestId("agent-note-view");
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["dir/c.go"]);
+  });
+
+  it("shows the file a tree click or a thread jump goes to", async () => {
+    vi.mocked(api.listThreads).mockResolvedValue({
+      threads: [makeThread([reviewerComment])],
+    });
+    vi.mocked(api.getDiff).mockResolvedValue({
+      ...threeFiles(1),
+      anchors: [
+        {
+          threadId: 1,
+          path: "b.go",
+          side: "additions",
+          line: 5,
+          state: "live",
+        },
+      ],
+    });
+    scrolls.length = 0;
+    renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "f" });
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(await screen.findByTestId("panel-thread-1"));
+    await waitFor(() => expect(shown()).toEqual(["b.go"]));
+    await waitFor(() =>
+      expect(scrolls.filter((s) => s.type === "line")).toEqual([
+        expect.objectContaining({ id: "b.go" }),
+      ]),
     );
   });
 });

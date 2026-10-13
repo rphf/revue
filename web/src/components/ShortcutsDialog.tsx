@@ -44,6 +44,20 @@ const SECTIONS: Section[] = [
     shortcuts: [
       { keys: [["W"]], label: "Hide or show whitespace changes" },
       { keys: [["|"]], label: "Switch between split and unified views" },
+      { keys: [["F"]], label: "Switch between all files and focused mode" },
+      { keys: [[SHIFT, "J"]], label: "Scroll down" },
+      { keys: [[SHIFT, "K"]], label: "Scroll up" },
+    ],
+  },
+  {
+    title: "Focused mode",
+    shortcuts: [
+      { keys: [["J"]], label: "Next file" },
+      { keys: [["K"]], label: "Previous file" },
+      {
+        keys: [["V"]],
+        label: "Mark the file viewed and go to the next unviewed one",
+      },
     ],
   },
   {

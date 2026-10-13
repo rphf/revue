@@ -2,6 +2,7 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -40,9 +41,12 @@ import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
-import { treePathCompare } from "./treePath";
+import { fileOrder } from "./fileOrder";
 
 export type DiffStyle = "unified" | "split";
+
+// The diff as one list of every file, or focused: one file at a time.
+export type FileMode = "all" | "focused";
 
 // Metadata attached to each annotation; U6 renders threads and
 // pending comment forms through it. rev fingerprints the thread's
@@ -101,6 +105,8 @@ export interface DiffViewHandle {
   // Drops the line selection the library keeps after a gutter click or
   // drag, so the next one starts fresh instead of extending it.
   clearSelection(): void;
+  // Scrolls the diff by this many pixels, down when positive.
+  scrollBy(top: number): void;
 }
 
 export interface DiffViewProps {
@@ -131,6 +137,8 @@ export interface DiffViewProps {
   onToggleCollapsed?: (path: string) => void;
   // Names the diff whose scroll position survives a reload.
   scrollKey?: string;
+  // Shows this one file alone, the rest of the diff kept off screen.
+  onlyPath?: string;
 }
 
 interface ItemMemo {
@@ -200,6 +208,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     collapsed,
     onToggleCollapsed,
     scrollKey,
+    onlyPath,
   }: DiffViewProps,
   ref,
 ) {
@@ -237,6 +246,11 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         });
       },
       clearSelection: () => codeView.current?.clearSelectedLines(),
+      scrollBy: (top: number) =>
+        codeView.current
+          ?.getInstance()
+          ?.getContainerElement()
+          ?.scrollBy({ top, behavior: "instant" }),
     }),
     [],
   );
@@ -252,34 +266,18 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   const binaryMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
   const goneMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
 
-  const gonePaths = useMemo(() => {
-    const inDiff = new Set([
-      ...files.map((f) => f.name),
-      ...binaryByPath.keys(),
-    ]);
-    return new Set(
-      [...(annotationsByFile?.entries() ?? [])]
-        .filter(
-          ([path, list]) =>
-            !inDiff.has(path) &&
-            list.some((a) => a.metadata?.kind === "outdated"),
-        )
-        .map(([path]) => path),
+  const order = useMemo(
+    () => fileOrder(files, diffFiles, annotationsByFile),
+    [files, diffFiles, annotationsByFile],
+  );
+  const gonePaths = order.gone;
+
+  const allItems = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
+    const metaByPath = new Map(
+      files.filter((f) => !binaryByPath.has(f.name)).map((f) => [f.name, f]),
     );
-  }, [files, binaryByPath, annotationsByFile]);
-
-  const items = useMemo<CodeViewItem<AnnotationMeta>[]>(() => {
-    const ordered = [
-      ...files
-        .filter((f) => !binaryByPath.has(f.name))
-        .map((f) => ({ path: f.name, meta: f as FileDiffMetadata | null })),
-      ...[...binaryByPath.keys(), ...gonePaths].map((path) => ({
-        path,
-        meta: null as FileDiffMetadata | null,
-      })),
-    ].sort((a, b) => treePathCompare(a.path, b.path));
-
-    return ordered.map(({ path, meta }) => {
+    return order.paths.map((path) => {
+      const meta = metaByPath.get(path) ?? null;
       const isCollapsed = collapsed?.has(path) ?? false;
       // Threads on the whole file sit at line 0, under the header, in
       // every variant of the item.
@@ -443,12 +441,31 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   }, [
     files,
     binaryByPath,
+    order,
     gonePaths,
     annotationsByFile,
     richByFile,
     imageUrl,
     collapsed,
   ]);
+  // One file alone is the same item as in the whole diff, so switching
+  // between the two re-processes nothing.
+  const items = useMemo(
+    () =>
+      onlyPath === undefined
+        ? allItems
+        : allItems.filter((item) => pathFromItemId(item.id) === onlyPath),
+    [allItems, onlyPath],
+  );
+  // Each file shown alone opens at its top. This runs before the page's
+  // own effects, so a jump to a line in the file lands after it.
+  useEffect(() => {
+    if (onlyPath === undefined) return;
+    codeView.current
+      ?.getInstance()
+      ?.getContainerElement()
+      ?.scrollTo({ top: 0 });
+  }, [onlyPath]);
 
   // The options object is stable across renders that do not change it,
   // as the library asks; a new object would re-configure the viewer.
@@ -625,7 +642,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
 
   const onScroll = useScrollMemory(codeView, scrollKey, items.length > 0);
 
-  if (items.length === 0) {
+  if (allItems.length === 0) {
     return (
       <div
         className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground"
@@ -639,7 +656,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
 
   // Only files kept for their outdated threads: the diff itself is
   // empty, and says so above them.
-  const onlyGone = items.length === gonePaths.size;
+  const onlyGone = allItems.length === gonePaths.size;
   return (
     <>
       {onlyGone && (
