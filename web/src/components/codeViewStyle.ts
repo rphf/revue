@@ -26,13 +26,15 @@ export const LINE_SCROLL_OFFSET = 72;
 // the header's line counts as -N +N; the order puts +N first, as in the
 // file tree header. File items are a rendered markdown document or a
 // binary preview over a one-line caption, so their line-number gutter
-// only takes room.
+// only takes room. The + that opens a comment takes the app's accent
+// instead of the theme's color for a modified file.
 export const UNSAFE_CSS = `
 :host { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: clip; }
 [data-additions-count] { order: -1; }
 [data-file] [data-code] { grid-template-columns: 0 minmax(0, 1fr); }
 [data-file] [data-gutter] { display: none; }
 [data-file] [data-line] { padding-inline: 1.5rem; }
+[data-utility-button] { background-color: var(--primary); color: var(--primary-foreground); }
 `;
 
 // The options the diff pane and the snapshot view share. Long lines

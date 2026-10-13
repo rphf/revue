@@ -18,14 +18,15 @@ export function saveTheme(theme: Theme): void {
 // shadcn's base colors and accent themes, as ui.shadcn.com/init serves
 // them; appearance.css holds their tokens, under data-palette and
 // data-accent on <html>. Each maps to its swatch: the palette's light
-// muted-foreground, the accent's light primary.
+// muted-foreground, the accent's light primary. Mist, the default
+// palette, comes first.
 export const PALETTES = {
+  mist: "oklch(0.56 0.021 213.5)",
   neutral: "oklch(0.556 0 0)",
   zinc: "oklch(0.552 0.016 285.938)",
   stone: "oklch(0.553 0.013 58.071)",
   mauve: "oklch(0.542 0.034 322.5)",
   olive: "oklch(0.58 0.031 107.3)",
-  mist: "oklch(0.56 0.021 213.5)",
   taupe: "oklch(0.547 0.021 43.1)",
 } as const;
 export const ACCENTS = {
@@ -72,7 +73,7 @@ export function loadAppearance(): Appearance {
     // An unreadable value keeps the defaults.
   }
   return {
-    palette: choice(PALETTES, stored.palette) ?? "neutral",
+    palette: choice(PALETTES, stored.palette) ?? "mist",
     accent: choice(ACCENTS, stored.accent) ?? "none",
   };
 }

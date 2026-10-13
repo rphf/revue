@@ -21,6 +21,6 @@ describe("appearance", () => {
     expect(document.documentElement.dataset.accent).toBe("amber");
 
     localStorage.setItem("revue-appearance", '{"palette":"gray"}');
-    expect(loadAppearance()).toEqual({ palette: "neutral", accent: "none" });
+    expect(loadAppearance()).toEqual({ palette: "mist", accent: "none" });
   });
 });
