@@ -6,7 +6,7 @@ Review what your coding agent wrote the way you review a pull request, without p
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
-  <img src="docs/screenshot.png" alt="revue: an agent's self-review note, an outdated thread with its answer under the file header, and the threads panel sorted by whose turn it is" width="1580">
+  <img src="docs/screenshot.png" alt="revue reviewing one of its own Go changes: a reviewer's question with the agent's answer and an agent self-review note inline on the diff, viewed files in the tree, and the threads panel sorted by whose turn it is" width="1920">
 </picture>
 
 ## Install
