@@ -1,15 +1,20 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   BotIcon,
   CheckIcon,
+  ChevronRightIcon,
+  ChevronsDownUpIcon,
   CircleCheckIcon,
+  MessageSquareIcon,
   ReplyIcon,
   UserIcon,
 } from "lucide-react";
 import { api, errorMessage } from "../api";
-import type { Thread as ThreadType } from "../types";
+import type { AuthorRole, Thread as ThreadType } from "../types";
+import { useThreadFold } from "@/lib/folds";
+import { excerpt } from "@/lib/text";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +31,8 @@ export interface ThreadProps {
 // A comment thread: comments in order with author roles, draft
 // affordances (edit/delete before send), reply, and reviewer-only
 // resolve and archive. An archived thread is read-only but for
-// bringing it back.
+// bringing it back. A thread folds to one line; a resolved one starts
+// folded, and a jump to a folded one opens it.
 export default function Thread({ thread, onChanged }: ThreadProps) {
   const [replying, setReplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -35,6 +41,13 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
   const focused = useContext(FocusedThreadContext) === thread.id;
   const archived = Boolean(thread.archivedAt);
   const hasDraft = thread.comments.some((c) => c.draft);
+  const [folded, setFolded] = useThreadFold(
+    thread.id,
+    thread.resolved && !hasDraft,
+  );
+  useEffect(() => {
+    if (focused) setFolded(false);
+  }, [focused, setFolded]);
 
   const run = (op: Promise<unknown>) =>
     op.then(
@@ -49,6 +62,57 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
     setDeletingId(null);
     void run(api.deleteComment(id));
   };
+
+  if (folded) {
+    const first = thread.comments[0];
+    const replies = thread.comments.length - 1;
+    return (
+      <div
+        className={cn(
+          "annotation-card",
+          thread.resolved && "opacity-75",
+          focused && "outline-2 outline-offset-2 outline-primary",
+        )}
+        data-testid={`thread-${thread.id}`}
+        data-thread-id={thread.id}
+        data-folded
+      >
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+          aria-expanded={false}
+          aria-label="Open the thread"
+          onClick={() => setFolded(false)}
+        >
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          {first && <Avatar role={first.authorRole} />}
+          {/* Contained, so the line never widens the card: in the split
+              view, a wide card would push the two sides off 50/50. */}
+          <span className="min-w-0 flex-1 truncate [contain:inline-size]">
+            {first ? excerpt(first.body) : ""}
+          </span>
+          {thread.resolved && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-added">
+              <CheckIcon className="size-3" />
+              Resolved
+            </span>
+          )}
+          {archived && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
+              <ArchiveIcon className="size-3" />
+              Archived
+            </span>
+          )}
+          {replies > 0 && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground tabular-nums">
+              <MessageSquareIcon className="size-3" />
+              {replies}
+            </span>
+          )}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -78,8 +142,9 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
         </div>
       )}
       <ul className="divide-y">
-        {thread.comments.map((c) => {
+        {thread.comments.map((c, index) => {
           const agent = c.authorRole === "agent";
+          const draftActions = c.draft && c.authorRole === "reviewer";
           return (
             <li
               key={c.id}
@@ -87,21 +152,7 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
               data-testid={`comment-${c.id}`}
             >
               <div className="mb-1 flex min-h-6 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <span
-                  className={cn(
-                    "grid size-5 shrink-0 place-items-center rounded-full",
-                    agent
-                      ? "bg-agent/15 text-agent"
-                      : "bg-muted text-foreground",
-                  )}
-                  aria-hidden="true"
-                >
-                  {agent ? (
-                    <BotIcon className="size-3" />
-                  ) : (
-                    <UserIcon className="size-3" />
-                  )}
-                </span>
+                <Avatar role={c.authorRole} />
                 <span
                   className={cn(
                     "font-medium capitalize",
@@ -126,8 +177,7 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
                     Draft
                   </Badge>
                 )}
-                {c.draft &&
-                  c.authorRole === "reviewer" &&
+                {draftActions &&
                   (deletingId === c.id ? (
                     <span
                       className="ml-auto inline-flex items-center gap-1 text-muted-foreground"
@@ -173,6 +223,22 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
                       </Button>
                     </span>
                   ))}
+                {index === 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className={cn(
+                      "text-muted-foreground",
+                      !draftActions && "ml-auto",
+                    )}
+                    aria-label="Fold the thread"
+                    title="Fold the thread"
+                    onClick={() => setFolded(true)}
+                  >
+                    <ChevronsDownUpIcon />
+                  </Button>
+                )}
               </div>
               {editingId === c.id ? (
                 <CommentForm
@@ -236,9 +302,16 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
               type="button"
               variant="ghost"
               size="xs"
-              onClick={() =>
-                void run(api.resolveThread(thread.id, !thread.resolved))
-              }
+              onClick={() => {
+                // Resolving folds the thread and unresolving opens it,
+                // whatever was chosen for it before.
+                const resolving = !thread.resolved;
+                void run(
+                  api
+                    .resolveThread(thread.id, resolving)
+                    .then(() => setFolded(resolving)),
+                );
+              }}
             >
               <CircleCheckIcon />
               {thread.resolved ? "Unresolve" : "Resolve"}
@@ -262,5 +335,20 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function Avatar({ role }: { role: AuthorRole }) {
+  const agent = role === "agent";
+  return (
+    <span
+      className={cn(
+        "grid size-5 shrink-0 place-items-center rounded-full",
+        agent ? "bg-agent/15 text-agent" : "bg-muted text-foreground",
+      )}
+      aria-hidden="true"
+    >
+      {agent ? <BotIcon className="size-3" /> : <UserIcon className="size-3" />}
+    </span>
   );
 }

@@ -15,6 +15,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 import { api } from "../api";
 import Thread from "./Thread";
+import { FocusedThreadContext } from "./threadFocus";
 import { comment, thread } from "../test/fixtures";
 
 describe("Thread", () => {
@@ -121,7 +122,9 @@ describe("Thread", () => {
         onChanged={() => {}}
       />,
     );
+    // Resolving folds the thread, as GitHub does.
     expect(screen.getByText("Resolved")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open the thread" }));
     fireEvent.click(screen.getByRole("button", { name: "Unresolve" }));
     await waitFor(() =>
       expect(api.resolveThread).toHaveBeenCalledWith(1, false),
@@ -170,5 +173,73 @@ describe("Thread", () => {
     fireEvent.click(screen.getByRole("button", { name: /Unarchive/ }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(api.unarchiveThread).toHaveBeenCalledWith(1);
+  });
+
+  describe("folding", () => {
+    const t = thread([
+      comment({ body: "why this loop?" }),
+      comment({ authorRole: "agent", body: "because of batching" }),
+    ]);
+
+    it("folds to one line with the first comment, and remembers it", () => {
+      const { unmount } = render(<Thread thread={t} onChanged={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "Fold the thread" }));
+      const card = screen.getByTestId("thread-1");
+      expect(card).toHaveTextContent("why this loop?");
+      expect(card).not.toHaveTextContent("because of batching");
+      expect(screen.queryAllByTestId(/comment-/)).toHaveLength(0);
+
+      unmount();
+      render(<Thread thread={t} onChanged={() => {}} />);
+      expect(screen.queryAllByTestId(/comment-/)).toHaveLength(0);
+      fireEvent.click(screen.getByRole("button", { name: "Open the thread" }));
+      expect(screen.getAllByTestId(/comment-/)).toHaveLength(2);
+    });
+
+    it("starts a resolved thread folded, unless it holds a draft", () => {
+      const { unmount } = render(
+        <Thread thread={{ ...t, resolved: true }} onChanged={() => {}} />,
+      );
+      expect(screen.getByTestId("thread-1")).toHaveAttribute("data-folded");
+      unmount();
+      render(
+        <Thread
+          thread={{
+            ...t,
+            resolved: true,
+            comments: [...t.comments, comment({ id: 9, draft: true })],
+          }}
+          onChanged={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("thread-1")).not.toHaveAttribute("data-folded");
+    });
+
+    it("folds on resolve even after a jump opened it", async () => {
+      const { rerender } = render(
+        <FocusedThreadContext.Provider value={1}>
+          <Thread thread={t} onChanged={() => {}} />
+        </FocusedThreadContext.Provider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+      await waitFor(() =>
+        expect(screen.getByTestId("thread-1")).toHaveAttribute("data-folded"),
+      );
+      rerender(
+        <FocusedThreadContext.Provider value={1}>
+          <Thread thread={{ ...t, resolved: true }} onChanged={() => {}} />
+        </FocusedThreadContext.Provider>,
+      );
+      expect(screen.getByTestId("thread-1")).toHaveAttribute("data-folded");
+    });
+
+    it("opens a folded thread a jump lands on", () => {
+      render(
+        <FocusedThreadContext.Provider value={1}>
+          <Thread thread={{ ...t, resolved: true }} onChanged={() => {}} />
+        </FocusedThreadContext.Provider>,
+      );
+      expect(screen.getAllByTestId(/comment-/)).toHaveLength(2);
+    });
   });
 });
