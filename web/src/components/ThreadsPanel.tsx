@@ -3,13 +3,28 @@ import {
   ArchiveIcon,
   ChevronRightIcon,
   EllipsisIcon,
+  ListFilterIcon,
   MessageSquareIcon,
   MessageSquareTextIcon,
   XIcon,
 } from "lucide-react";
 import { api } from "../api";
-import type { Branch, Thread, ThreadPosition } from "../types";
+import type { Branch, Comment, Thread, ThreadPosition } from "../types";
 import { excerpt } from "@/lib/text";
+import {
+  FILTERS as REFINES,
+  SORTS,
+  filterLabel,
+  loadOrder,
+  matches,
+  newReply,
+  saveOrder,
+  shownAt,
+  sortLabel,
+  sortRows,
+  type ThreadFilter,
+  type ThreadOrder,
+} from "@/lib/threadOrder";
 import { branchLabel, locationLabel } from "@/lib/threads";
 import { timeAgo } from "@/lib/time";
 import { groupByTurn, sendCount, turnLabel, type Turn } from "@/lib/turns";
@@ -74,11 +89,14 @@ interface Row {
   thread: Thread;
   position: ThreadPosition | undefined;
   state: ThreadState;
+  // The agent's latest comment when it came after the last send.
+  fresh: Comment | undefined;
 }
 
 // Threads of a branch in two modes. Current: every open thread with
 // live/outdated/resolved filters relative to the shown diff, in one
-// collapsible section per turn (yours, drafts, the agent's, resolved).
+// collapsible section per turn (yours, drafts, the agent's, resolved),
+// sorted and narrowed by the reviewer's choice.
 // History: the threads archived on the branch, under the
 // commit their code landed in. The branch picker serves both; another
 // branch's threads are not in this diff and open on their snapshot.
@@ -112,6 +130,27 @@ export default function ThreadsPanel({
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(
     new Map(),
   );
+  const [order, setOrder] = useState<ThreadOrder>(loadOrder);
+  const changeOrder = (next: ThreadOrder) => {
+    setOrder(next);
+    saveOrder(next);
+  };
+  // When the reviewer last sent: agent comments after it are new.
+  const [lastSendAt, setLastSendAt] = useState<string | null>(null);
+
+  // The checkout's threads reload after every send.
+  useEffect(() => {
+    let cancelled = false;
+    api.listSends().then(
+      (r) => {
+        if (!cancelled) setLastSendAt(r.sends.at(-1)?.createdAt ?? null);
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [checkoutThreads]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,22 +198,27 @@ export default function ThreadsPanel({
       outdated: 0,
       resolved: 0,
     };
-    const sections = groupByTurn(threads).map(({ turn, threads }) => ({
+    const filters = new Set(order.filters);
+    const shown = threads.filter((t) => matches(t, filters, lastSendAt));
+    const sections = groupByTurn(shown).map(({ turn, threads }) => ({
       turn,
-      rows: threads.map((t): Row => {
-        const position = positions.get(t.id);
-        const state: ThreadState = t.resolved
-          ? "resolved"
-          : position?.state === "live"
-            ? "live"
-            : "outdated";
-        counts.all++;
-        counts[state]++;
-        return { thread: t, position, state };
-      }),
+      rows: sortRows(
+        threads.map((t): Row => {
+          const position = positions.get(t.id);
+          const state: ThreadState = t.resolved
+            ? "resolved"
+            : position?.state === "live"
+              ? "live"
+              : "outdated";
+          counts.all++;
+          counts[state]++;
+          return { thread: t, position, state, fresh: newReply(t, lastSendAt) };
+        }),
+        order.sort,
+      ),
     }));
     return { sections, counts };
-  }, [threads, positions]);
+  }, [threads, positions, order, lastSendAt]);
 
   const visibleSections = sections
     .map((s) => ({
@@ -300,6 +344,32 @@ export default function ThreadsPanel({
               ))}
             </TabsList>
           </Tabs>
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs">
+            <label htmlFor="threads-sort" className="text-muted-foreground">
+              Sort
+            </label>
+            <select
+              id="threads-sort"
+              className="h-7 min-w-0 flex-1 truncate rounded-md border bg-background px-2 text-xs"
+              value={order.sort}
+              onChange={(e) =>
+                changeOrder({
+                  ...order,
+                  sort: e.target.value as ThreadOrder["sort"],
+                })
+              }
+            >
+              {SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {sortLabel[s]}
+                </option>
+              ))}
+            </select>
+            <FilterMenu
+              filters={order.filters}
+              onChange={(filters) => changeOrder({ ...order, filters })}
+            />
+          </div>
           {!viewingOther && landed && landed.count > 0 && (
             <LandedOffer
               landed={landed}
@@ -326,6 +396,7 @@ export default function ThreadsPanel({
           {visibleSections.length === 0 ? (
             <p className="min-h-0 flex-1 p-4 text-sm text-muted-foreground">
               No {filter === "all" ? "" : filter + " "}threads
+              {order.filters.length > 0 && " match the filters"}
             </p>
           ) : (
             <ScrollArea className="min-h-0 flex-1">
@@ -484,6 +555,61 @@ function PanelMenu({
   );
 }
 
+// Narrows the list to threads that pass every checked filter.
+function FilterMenu({
+  filters,
+  onChange,
+}: {
+  filters: ThreadFilter[];
+  onChange: (filters: ThreadFilter[]) => void;
+}) {
+  const set = (f: ThreadFilter, on: boolean) =>
+    onChange(REFINES.filter((g) => (g === f ? on : filters.includes(g))));
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant={filters.length > 0 ? "secondary" : "ghost"}
+          size="xs"
+          aria-label="Filter threads"
+        >
+          <ListFilterIcon />
+          Filter
+          {filters.length > 0 && (
+            <span className="tabular-nums">{filters.length}</span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="flex w-56 flex-col gap-2 p-3">
+        {REFINES.map((f) => (
+          <label
+            key={f}
+            className="flex cursor-pointer items-center gap-2 text-xs select-none"
+          >
+            <Checkbox
+              className="size-3.5 bg-background [&_svg]:size-3!"
+              checked={filters.includes(f)}
+              onCheckedChange={(v) => set(f, v === true)}
+            />
+            {filterLabel[f]}
+          </label>
+        ))}
+        {filters.length > 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="self-start"
+            onClick={() => onChange([])}
+          >
+            Clear filters
+          </Button>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function TurnHeader({
   turn,
   count,
@@ -517,7 +643,7 @@ function TurnHeader({
 }
 
 function ThreadRow({
-  row: { thread, position, state },
+  row,
   active,
   onJump,
 }: {
@@ -525,16 +651,19 @@ function ThreadRow({
   active: boolean;
   onJump: ThreadsPanelProps["onJump"];
 }) {
-  const shown =
-    position?.state === "live"
-      ? { path: position.path, line: position.line }
-      : { path: thread.path, line: thread.line };
+  const { thread, position, state, fresh } = row;
+  const shown = shownAt(row);
   const first = thread.comments[0];
   const last = thread.comments[thread.comments.length - 1];
   const replies = Math.max(0, thread.comments.length - 1);
   const drafts = thread.comments.filter((c) => c.draft).length;
   const sends = sendCount(thread);
-  const answer = last !== first && last?.authorRole === "agent" ? last : null;
+  const answer =
+    fresh && fresh !== first
+      ? fresh
+      : last !== first && last?.authorRole === "agent"
+        ? last
+        : null;
   return (
     <li>
       <button
@@ -555,6 +684,12 @@ function ThreadRow({
           {first?.authorRole === "agent" && (
             <span className="text-agent">· agent note</span>
           )}
+          {fresh && (
+            <span className="inline-flex items-center gap-1 font-medium text-agent">
+              · <span className="size-1.5 rounded-full bg-agent" />
+              new {fresh === first ? "note" : "reply"}
+            </span>
+          )}
           {drafts > 0 && (
             <span className="text-renamed">
               · {drafts === 1 ? "draft" : `${drafts} drafts`}
@@ -568,7 +703,14 @@ function ThreadRow({
           {first ? excerpt(first.body) : ""}
         </span>
         {answer && (
-          <span className="line-clamp-2 border-l-2 border-agent/40 pl-2 text-xs leading-snug text-muted-foreground">
+          <span
+            className={cn(
+              "line-clamp-2 border-l-2 pl-2 text-xs leading-snug",
+              fresh === answer
+                ? "border-agent text-foreground"
+                : "border-agent/40 text-muted-foreground",
+            )}
+          >
             <span className="text-agent">agent:</span> {excerpt(answer.body)}
           </span>
         )}

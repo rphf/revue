@@ -1,10 +1,17 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   api: {
+    listSends: vi.fn(async () => ({ sends: [] })),
     getBranches: vi.fn(async () => ({
       current: "main",
       branches: [
@@ -327,5 +334,96 @@ describe("ThreadsPanel", () => {
     );
     expect(onJump).not.toHaveBeenCalled();
     expect(screen.getByText(/Threads of feat/)).toBeInTheDocument();
+  });
+
+  describe("sort and filters", () => {
+    // Three threads on your turn: the agent answered 2 before the last
+    // send, 1 after it, and started 3 itself before it.
+    const at = (h: number) => `2026-10-14T${String(h).padStart(2, "0")}:00:00Z`;
+    const turnThreads = [
+      withComments(thread(1, { path: "z.go" }), {
+        authorRole: "agent",
+        body: "fresh answer",
+        createdAt: at(12),
+      }),
+      withComments(thread(2, { path: "b.go" }), {
+        authorRole: "agent",
+        body: "old answer",
+        createdAt: at(9),
+      }),
+      {
+        ...thread(3, { path: "a.go" }),
+        comments: [
+          {
+            ...thread(3).comments[0],
+            authorRole: "agent" as const,
+            body: "agent note",
+            sendId: undefined,
+            createdAt: at(10),
+          },
+        ],
+      },
+    ];
+    const renderPanel = () =>
+      render(
+        <ThreadsPanel
+          threads={turnThreads}
+          positions={new Map()}
+          onJump={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    const order = () =>
+      screen
+        .getAllByTestId(/panel-thread-/)
+        .map((el) => el.dataset.testid?.replace("panel-thread-", ""));
+
+    it("sorts each section by the order picked, and remembers it", async () => {
+      vi.mocked(api.listSends).mockResolvedValue({
+        sends: [{ id: 1, note: "", createdAt: at(11) }],
+      });
+      const user = userEvent.setup();
+      renderPanel();
+      // Latest activity by default.
+      expect(order()).toEqual(["1", "3", "2"]);
+      await user.selectOptions(screen.getByLabelText("Sort"), "file");
+      expect(order()).toEqual(["3", "2", "1"]);
+      await user.selectOptions(screen.getByLabelText("Sort"), "created");
+      expect(order()).toEqual(["1", "2", "3"]);
+
+      cleanup();
+      renderPanel();
+      expect(screen.getByLabelText("Sort")).toHaveValue("created");
+    });
+
+    it("marks agent replies after the last send and filters on them", async () => {
+      vi.mocked(api.listSends).mockResolvedValue({
+        sends: [{ id: 1, note: "", createdAt: at(11) }],
+      });
+      const user = userEvent.setup();
+      renderPanel();
+      await waitFor(() =>
+        expect(screen.getByTestId("panel-thread-1")).toHaveTextContent(
+          "new reply",
+        ),
+      );
+      expect(screen.getByTestId("panel-thread-2")).not.toHaveTextContent("new");
+
+      await user.click(screen.getByRole("button", { name: "Filter threads" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "New agent replies" }),
+      );
+      expect(order()).toEqual(["1"]);
+
+      await user.click(
+        screen.getByRole("checkbox", { name: "New agent replies" }),
+      );
+      await user.click(screen.getByRole("checkbox", { name: "Agent started" }));
+      expect(order()).toEqual(["3"]);
+
+      await user.click(screen.getByRole("checkbox", { name: "Agent started" }));
+      await user.click(screen.getByRole("checkbox", { name: "I took part" }));
+      expect(order()).toEqual(["1", "2"]);
+    });
   });
 });

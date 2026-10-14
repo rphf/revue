@@ -153,6 +153,7 @@ vi.mock("../api", async (importOriginal) => ({
     ),
     unarchiveThread: vi.fn(),
     getHistory: vi.fn(),
+    listSends: vi.fn(async () => ({ sends: [] })),
     getBranches: vi.fn(() =>
       Promise.resolve({
         current: "main",

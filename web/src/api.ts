@@ -123,5 +123,6 @@ export const api = {
   },
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
+  listSends: () => request<{ sends: Send[] }>("GET", "/api/sends"),
   getNote: () => request<{ note: AgentNote | null }>("GET", "/api/note"),
 };
