@@ -1018,14 +1018,27 @@ func TestKillAndReviveRebindsRecordedPortAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	url1, token1 := s1.URL(), s1.Token()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	_ = s1.Shutdown(ctx)
-	cancel()
+	token1 := s1.Token()
 
-	s2, err := Start(Config{RepoRoot: repo, DataDir: dataDir})
-	if err != nil {
-		t.Fatal(err)
+	// Packages test in parallel, and on Linux a connection of another
+	// test can take the freed port before the revive binds it; the
+	// revive then falls back to a new port, as it should. A few tries
+	// tell that apart from a revive that never rebinds.
+	var s2 *Server
+	var url1 string
+	for range 5 {
+		url1 = s1.URL()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s1.Shutdown(ctx)
+		cancel()
+		s2, err = Start(Config{RepoRoot: repo, DataDir: dataDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s2.URL() == url1 {
+			break
+		}
+		s1 = s2
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
