@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArchiveIcon,
+  BotIcon,
   ChevronRightIcon,
   EllipsisIcon,
   ListFilterIcon,
-  MessageSquareIcon,
   MessageSquareTextIcon,
+  UserIcon,
   XIcon,
 } from "lucide-react";
 import { api } from "../api";
@@ -659,87 +660,114 @@ function ThreadRow({
   const { thread, position, state, fresh } = row;
   const shown = shownAt(row);
   const first = thread.comments[0];
-  const last = thread.comments[thread.comments.length - 1];
+  const last = thread.comments.at(-1);
   const replies = Math.max(0, thread.comments.length - 1);
   const drafts = thread.comments.filter((c) => c.draft).length;
   const sends = sendCount(thread);
-  const answer =
-    fresh && fresh !== first
-      ? fresh
-      : last !== first && last?.authorRole === "agent"
-        ? last
-        : null;
+  const stateText =
+    state === "outdated" ? "Outdated, not in this diff" : capitalize(state);
+  const details = [
+    stateText,
+    shown.path,
+    replies > 0 && (replies === 1 ? "1 reply" : `${replies} replies`),
+    sends > 0 && (sends === 1 ? "sent once" : `went through ${sends} sends`),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <li>
       <button
         type="button"
         className={cn(
-          "flex w-full flex-col gap-1.5 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60",
+          "flex w-full min-w-0 flex-col gap-1.5 px-3 py-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60",
           state === "resolved" && "opacity-70",
           active && "bg-muted",
         )}
+        title={details}
         aria-current={active || undefined}
         data-testid={`panel-thread-${thread.id}`}
         // A new reply is what the row is about: land on it.
         onClick={() => onJump(thread, position, fresh?.id)}
       >
-        <span className="flex w-full items-center gap-1.5 text-xs text-muted-foreground">
-          <span className={cn("size-1.5 rounded-full", stateDot[state])} />
-          <span className="capitalize">{state}</span>
-          {state === "outdated" && <span>· not in this diff</span>}
-          {first?.authorRole === "agent" && (
-            <span className="text-agent">· agent note</span>
-          )}
-          {fresh && (
-            <span className="inline-flex items-center gap-1 font-medium text-agent">
-              · <span className="size-1.5 rounded-full bg-agent" />
-              new {fresh === first ? "note" : "reply"}
-            </span>
-          )}
+        <span className="flex w-full min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <span
+            className={cn("size-1.5 shrink-0 rounded-full", stateDot[state])}
+          />
+          <span className="sr-only">{stateText}</span>
+          {/* Cut at the start, so the file name and line stay. */}
+          <span className="min-w-0 truncate font-mono" dir="rtl">
+            <span dir="ltr">{locationLabel(shown.path, shown.line)}</span>
+          </span>
           {drafts > 0 && (
-            <span className="text-renamed">
-              · {drafts === 1 ? "draft" : `${drafts} drafts`}
+            <span className="shrink-0 text-renamed">
+              {drafts === 1 ? "draft" : `${drafts} drafts`}
             </span>
           )}
           {last && (
-            <span className="ml-auto shrink-0">{timeAgo(last.createdAt)}</span>
+            <span className="ml-auto shrink-0 pl-2">
+              {timeAgo(last.createdAt)}
+            </span>
           )}
         </span>
-        <span className="line-clamp-2 text-sm leading-snug text-foreground">
-          {first ? excerpt(first.body) : ""}
-        </span>
-        {answer && (
-          <span
-            className={cn(
-              "line-clamp-2 border-l-2 pl-2 text-xs leading-snug",
-              fresh === answer
-                ? "border-agent text-foreground"
-                : "border-agent/40 text-muted-foreground",
-            )}
-          >
-            <span className="text-agent">agent:</span> {excerpt(answer.body)}
-          </span>
+        {first && (
+          <CommentLine
+            comment={first}
+            opens
+            isNew={fresh === first}
+            className="text-sm text-foreground"
+          />
         )}
-        <span className="flex w-full items-center gap-2 text-xs text-muted-foreground">
-          <span className="mr-auto truncate font-mono">
-            {locationLabel(shown.path, shown.line)}
-          </span>
-          {sends > 0 && (
-            <span
-              className="shrink-0 tabular-nums"
-              title={sends === 1 ? "Sent once" : `Went through ${sends} sends`}
-            >
-              R{sends}
-            </span>
-          )}
-          {replies > 0 && (
-            <span className="inline-flex shrink-0 items-center gap-1 tabular-nums">
-              <MessageSquareIcon className="size-3" />
-              {replies}
-            </span>
-          )}
-        </span>
+        {last && last !== first && (
+          <CommentLine
+            comment={last}
+            isNew={fresh === last}
+            className={cn(
+              "text-xs",
+              fresh === last ? "text-foreground" : "text-muted-foreground",
+            )}
+          />
+        )}
       </button>
     </li>
   );
 }
+
+// One comment of a row on one line: its author's icon, then its start.
+function CommentLine({
+  comment,
+  opens = false,
+  isNew,
+  className,
+}: {
+  comment: Comment;
+  // The comment that opened the thread: an agent's is a note.
+  opens?: boolean;
+  isNew: boolean;
+  className?: string;
+}) {
+  const agent = comment.authorRole === "agent";
+  const Icon = agent ? BotIcon : UserIcon;
+  return (
+    <span className={cn("flex w-full min-w-0 items-center gap-2", className)}>
+      <Icon
+        className={cn(
+          "size-3.5 shrink-0",
+          agent ? "text-agent" : "text-muted-foreground",
+        )}
+        aria-hidden="true"
+      />
+      <span className="sr-only">
+        {agent ? (opens ? "agent note: " : "agent: ") : "you: "}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{excerpt(comment.body)}</span>
+      {isNew && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-agent">
+          <span className="size-1.5 rounded-full bg-agent" />
+          new
+        </span>
+      )}
+    </span>
+  );
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

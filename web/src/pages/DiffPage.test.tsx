@@ -571,7 +571,7 @@ describe("DiffPage live updates", () => {
     // The panel scrolls the diff to the file and outlines the thread.
     fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
     const row = await screen.findByTestId("panel-thread-1");
-    expect(row).toHaveTextContent(/outdated/);
+    expect(row).toHaveTextContent(/outdated, not in this diff/i);
     scrolls.length = 0;
     fireEvent.click(row);
     await waitFor(() =>

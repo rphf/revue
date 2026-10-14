@@ -252,7 +252,7 @@ describe("ThreadsPanel", () => {
     );
   });
 
-  it("shows the agent's answer, its notes, and the sends a thread went through", () => {
+  it("shows the first and latest comments, and the sends on hover", () => {
     const answered = withComments(
       thread(1),
       { authorRole: "agent", body: "why not keep it?" },
@@ -277,14 +277,23 @@ describe("ThreadsPanel", () => {
       />,
     );
     const row = screen.getByTestId("panel-thread-1");
+    expect(row).toHaveTextContent("you: thread 1 body");
     expect(row).toHaveTextContent("agent: kept, as asked");
-    expect(row).toHaveTextContent("R2");
+    expect(row).not.toHaveTextContent("why not keep it?");
     expect(row).not.toHaveTextContent("agent note");
+    expect(row).toHaveAttribute("title", expect.stringContaining("3 replies"));
+    expect(row).toHaveAttribute(
+      "title",
+      expect.stringContaining("went through 2 sends"),
+    );
 
     const noteRow = screen.getByTestId("panel-thread-2");
-    expect(noteRow).toHaveTextContent("agent note");
+    expect(noteRow).toHaveTextContent("agent note: self review");
     expect(noteRow).not.toHaveTextContent("agent:");
-    expect(noteRow).not.toHaveTextContent(/R\d/);
+    expect(noteRow).toHaveAttribute(
+      "title",
+      expect.not.stringContaining("send"),
+    );
   });
 
   it("switches to History and keeps each archived thread's resolution", async () => {
@@ -408,9 +417,7 @@ describe("ThreadsPanel", () => {
       const user = userEvent.setup();
       renderPanel();
       await waitFor(() =>
-        expect(screen.getByTestId("panel-thread-1")).toHaveTextContent(
-          "new reply",
-        ),
+        expect(screen.getByTestId("panel-thread-1")).toHaveTextContent("new"),
       );
       expect(screen.getByTestId("panel-thread-2")).not.toHaveTextContent("new");
 
