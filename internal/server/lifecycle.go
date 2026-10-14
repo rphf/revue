@@ -35,33 +35,43 @@ func Healthy(st *State) bool {
 	return ok
 }
 
+// health is what a server's /healthz answers.
+type health struct {
+	OK    bool   `json:"ok"`
+	Build string `json:"build"`
+	// Pages counts the pages connected to the server.
+	Pages int `json:"pages"`
+}
+
 // probe asks the recorded server for its health and build stamp.
 func probe(st *State) (build string, ok bool) {
+	h, ok := probeHealth(st)
+	return h.Build, ok
+}
+
+func probeHealth(st *State) (health, bool) {
 	if st == nil || st.Port == 0 || st.Token == "" {
-		return "", false
+		return health{}, false
 	}
 	req, err := http.NewRequest("GET", st.BaseURL()+"/healthz", nil)
 	if err != nil {
-		return "", false
+		return health{}, false
 	}
 	req.Header.Set("Authorization", "Bearer "+st.Token)
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", false
+		return health{}, false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", false
+		return health{}, false
 	}
-	var body struct {
-		OK    bool   `json:"ok"`
-		Build string `json:"build"`
+	var h health
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		return health{}, false
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", false
-	}
-	return body.Build, body.OK
+	return h, h.OK
 }
 
 // stopStale asks a server from another build to exit and waits for its
@@ -145,13 +155,17 @@ func Ensure(repoRoot string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Pages of a replaced server reconnect to its successor, which
+	// waits for them before it reports that no page is open.
+	reconnecting := false
 	if st, err := ReadState(stateDir); err == nil {
-		if build, alive := probe(st); alive {
-			if build == BuildStamp() {
+		if h, alive := probeHealth(st); alive {
+			if h.Build == BuildStamp() {
 				return st, nil
 			}
 			// A server from another build keeps serving its own embedded
 			// UI and API; after a rebuild or an upgrade it must go.
+			reconnecting = h.Pages > 0
 			stopStale(st)
 		}
 	}
@@ -169,7 +183,11 @@ func Ensure(repoRoot string) (*State, error) {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	cmd := exec.Command(exe, "__serve", "--repo", repoRoot)
+	args := []string{"__serve", "--repo", repoRoot}
+	if reconnecting {
+		args = append(args, "--pages-reconnecting")
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = detachSysProcAttr()

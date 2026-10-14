@@ -171,7 +171,7 @@ func (s *Server) threadFromPath(w http.ResponseWriter, r *http.Request) (*store.
 // --- health ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "build": s.build})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "build": s.build, "pages": s.pages.Load()})
 }
 
 // --- diff ---

@@ -931,6 +931,37 @@ func TestFocusReachesThePagesOnThatDiff(t *testing.T) {
 	}
 }
 
+func TestFocusWaitsForThePagesOfAReplacedServer(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	ts.reconnectUntil = time.Now().Add(3 * time.Second)
+
+	// The page's stream comes back a moment after the focus asks.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		req, _ := http.NewRequest("GET", ts.URL()+"/api/events", nil)
+		req.Header.Set("Authorization", "Bearer "+ts.Token())
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			t.Cleanup(func() { _ = resp.Body.Close() })
+		}
+	}()
+	var out struct {
+		Pages int `json:"pages"`
+	}
+	ts.do(t, "POST", "/api/focus", nil, &out)
+	if out.Pages != 1 {
+		t.Fatalf("focus while the page reconnects = %d, want 1", out.Pages)
+	}
+
+	var health struct {
+		Pages int `json:"pages"`
+	}
+	ts.do(t, "GET", "/healthz", nil, &health)
+	if health.Pages != 1 {
+		t.Errorf("healthz pages = %d, want 1", health.Pages)
+	}
+}
+
 func TestSSEResumesFromLastEventID(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)

@@ -48,6 +48,13 @@ func (b *bus) notify() int {
 	return len(b.subs)
 }
 
+// reconnectDelay is how long a page waits to open its event stream
+// again after losing it.
+const reconnectDelay = 500 * time.Millisecond
+
+// reconnectGrace bounds the wait for the pages of a replaced server.
+const reconnectGrace = 5 * time.Second
+
 // diffPollInterval is how often an open event stream checks whether
 // its diff moved.
 const diffPollInterval = time.Second
@@ -73,6 +80,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	s.activity.connOpen()
 	defer s.activity.connClose()
+	s.pages.Add(1)
+	defer s.pages.Add(-1)
 
 	wake, cancel := s.bus.subscribe()
 	defer cancel()
@@ -83,6 +92,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// A lost stream comes back after this many milliseconds rather
+	// than the browser's default of a few seconds: a newer build
+	// replacing the server should not leave the page behind for long.
+	if _, err := fmt.Fprintf(w, "retry: %d\n\n", reconnectDelay.Milliseconds()); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	// The first notice carries the current version, so a page that
@@ -188,7 +203,18 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "validation", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"pages": v.pages.notify()})
+	n := v.pages.notify()
+	// Right after replacing a server whose pages are reconnecting, wait
+	// for them, so the CLI does not open a second page beside them.
+	for n == 0 && time.Now().Before(s.reconnectUntil) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+		n = v.pages.notify()
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"pages": n})
 }
 
 // waitOutcome is the long-poll result for the CLI's `revue wait`.

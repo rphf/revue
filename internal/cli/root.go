@@ -315,6 +315,7 @@ func cmdServe(args []string) int {
 	bind := fs.String("bind", os.Getenv("REVUE_BIND"), "listen address (default 127.0.0.1; $REVUE_BIND)")
 	port := fs.Int("port", envInt("REVUE_PORT"), "fixed listen port (default: recorded or ephemeral; $REVUE_PORT)")
 	publicURL := fs.String("public-url", os.Getenv("REVUE_PUBLIC_URL"), "browser-facing base URL ($REVUE_PUBLIC_URL)")
+	reconnecting := fs.Bool("pages-reconnecting", false, "pages of a replaced server will connect again (set by the CLI)")
 	retentionFlag := fs.String("archive-retention", os.Getenv("REVUE_ARCHIVE_RETENTION"), "keep archived threads this long, 0 forever (default 90d; $REVUE_ARCHIVE_RETENTION)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -338,13 +339,14 @@ func cmdServe(args []string) int {
 		}
 	}
 	s, err := server.Start(server.Config{
-		RepoRoot:         repoRoot,
-		IdleTimeout:      *idle,
-		Bind:             *bind,
-		Port:             *port,
-		PublicURL:        *publicURL,
-		ArchiveRetention: retention,
-		Version:          Version,
+		RepoRoot:          repoRoot,
+		IdleTimeout:       *idle,
+		Bind:              *bind,
+		Port:              *port,
+		PublicURL:         *publicURL,
+		ArchiveRetention:  retention,
+		Version:           Version,
+		PagesReconnecting: *reconnecting,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
