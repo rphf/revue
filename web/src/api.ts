@@ -124,5 +124,8 @@ export const api = {
   send: (note: string) =>
     request<{ send: Send; threads: Thread[] }>("POST", "/api/send", { note }),
   listSends: () => request<{ sends: Send[] }>("GET", "/api/sends"),
+  // The running release, and the latest one when it is newer.
+  getVersion: () =>
+    request<{ version: string; latest?: string }>("GET", "/api/version"),
   getNote: () => request<{ note: AgentNote | null }>("GET", "/api/note"),
 };

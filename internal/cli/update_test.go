@@ -276,21 +276,3 @@ func TestUpdateRefusesLocalBuildWithoutForce(t *testing.T) {
 		t.Fatalf("--force did not replace the binary: %q", got)
 	}
 }
-
-func TestLocalBuild(t *testing.T) {
-	for v, want := range map[string]bool{
-		"v0.8.0":             false,
-		"v1.0.0-rc.1":        false,
-		"v0.8.0-2-g1a2b3c4":  true,
-		"v0.8.0-dirty":       true,
-		"v1.0.0-rc.1-dirty":  true,
-		"dev":                true,
-		"61b5986":            true,
-		"61b5986-dirty":      true,
-		"v0.8.0-12-gdeadbee": true,
-	} {
-		if got := localBuild(v); got != want {
-			t.Errorf("localBuild(%q) = %v, want %v", v, got, want)
-		}
-	}
-}

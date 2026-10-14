@@ -35,6 +35,8 @@ type Config struct {
 	Port        int
 	PublicURL   string
 	BuildStamp  string // identifies the binary; "" derives it from the executable
+	// Version is the running release, checked against the latest one.
+	Version string
 	// ArchiveRetention is how long archived threads are kept; 0 keeps
 	// them forever.
 	ArchiveRetention time.Duration
@@ -98,6 +100,7 @@ type Server struct {
 	repoName  string
 	token     string
 	build     string
+	updates   *updates
 	publicURL string
 	views     *views
 	bus       *bus
@@ -286,6 +289,7 @@ func Start(cfg Config) (*Server, error) {
 		repoName:  gitx.RepoName(cfg.RepoRoot),
 		token:     token,
 		build:     cfg.BuildStamp,
+		updates:   newUpdates(cfg.Version),
 		raise:     raiseDefaultBrowser,
 		publicURL: publicURL,
 		views:     newViews(),

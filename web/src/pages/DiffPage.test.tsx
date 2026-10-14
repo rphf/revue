@@ -153,6 +153,7 @@ vi.mock("../api", async (importOriginal) => ({
     ),
     unarchiveThread: vi.fn(),
     getHistory: vi.fn(),
+    getVersion: vi.fn(async () => ({ version: "dev" })),
     listSends: vi.fn(async () => ({ sends: [] })),
     getBranches: vi.fn(() =>
       Promise.resolve({
@@ -346,6 +347,13 @@ describe("DiffPage live updates", () => {
       expect(screen.getByTestId("repo-name")).toHaveTextContent("repo"),
     );
     expect(document.title).toBe("repo · revue");
+  });
+
+  it("shows the running version beside the name", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId("revue-version")).toHaveTextContent("dev"),
+    );
   });
 
   it("shows an agent reply arriving over SSE without any reload", async () => {

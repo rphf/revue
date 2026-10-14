@@ -31,6 +31,8 @@ import { AgentNoteButton } from "./AgentNote";
 import DiffPicker from "./DiffPicker";
 import AppearancePicker from "./AppearancePicker";
 import ThemeToggle from "./ThemeToggle";
+import UpdateNotice from "./UpdateNotice";
+import { useVersion } from "@/lib/useVersion";
 
 // The mark, same drawing as public/favicon.svg: a hunk with its last
 // line checked off. Drawn inline so it takes the tile's colors.
@@ -55,11 +57,22 @@ function BrandMark() {
   );
 }
 
-function Brand() {
+// The name, then the running version: a local build's is long, so it
+// is cut short with the whole of it on hover.
+function Brand({ version }: { version?: string }) {
   return (
-    <div className="flex items-center gap-2 pl-1 font-medium tracking-tight">
+    <div className="flex min-w-0 items-center gap-2 pl-1 font-medium tracking-tight">
       <BrandMark />
       <span>revue</span>
+      {version && (
+        <span
+          className="max-w-24 truncate font-mono text-xs font-normal tracking-normal text-muted-foreground"
+          title={version}
+          data-testid="revue-version"
+        >
+          {version}
+        </span>
+      )}
     </div>
   );
 }
@@ -174,6 +187,7 @@ export default function TopBar({
   theme,
   onToggleTheme,
 }: TopBarProps) {
+  const version = useVersion();
   return (
     <TopBarShell>
       <Tooltip>
@@ -192,7 +206,7 @@ export default function TopBar({
           Files <Shortcut keys={["B"]} />
         </TooltipContent>
       </Tooltip>
-      <Brand />
+      <Brand version={version?.version} />
       <Separator orientation="vertical" className="mx-1 h-5!" />
       {repo && (
         <span
@@ -209,6 +223,7 @@ export default function TopBar({
       {/* How the diff looks, then the page's theme, then the review:
           the threads and sending them, which opens the threads too. */}
       <div className="ml-auto flex items-center gap-1.5">
+        <UpdateNotice version={version} />
         <ToggleGroup
           type="single"
           variant="outline"

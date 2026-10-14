@@ -344,6 +344,7 @@ func cmdServe(args []string) int {
 		Port:             *port,
 		PublicURL:        *publicURL,
 		ArchiveRetention: retention,
+		Version:          Version,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

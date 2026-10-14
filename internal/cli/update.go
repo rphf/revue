@@ -15,25 +15,16 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/rphf/revue/internal/release"
 	"github.com/rphf/revue/internal/server"
 )
 
-const releasesURL = "https://github.com/rphf/revue/releases"
-
 // maxArchive caps a download, so a wrong URL cannot fill the disk.
 const maxArchive = 200 << 20
-
-var (
-	releaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$`)
-	// git describe appends -<commits>-g<sha> past a tag and -dirty on
-	// local changes; a release build carries the bare tag.
-	describeSuffix = regexp.MustCompile(`-[0-9]+-g[0-9a-f]+(-dirty)?$|-dirty$`)
-)
 
 // updater replaces the running binary with the latest release. Its
 // fields are the seams tests replace.
@@ -56,7 +47,7 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 		return ExitError
 	}
 	u := &updater{
-		releases: releasesURL,
+		releases: release.URL,
 		http:     &http.Client{Timeout: 2 * time.Minute},
 		exe:      exe,
 		current:  Version,
@@ -82,7 +73,7 @@ func (u *updater) run(args []string) int {
 		return ExitValidation
 	}
 
-	latest, err := u.latestTag()
+	latest, err := release.Latest(u.http, u.releases)
 	if err != nil {
 		_, _ = fmt.Fprintln(u.stderr, "cannot find the latest release:", err)
 		return ExitError
@@ -91,7 +82,7 @@ func (u *updater) run(args []string) int {
 		_, _ = fmt.Fprintf(u.stdout, "current %s, latest %s\n", u.current, latest)
 		return ExitOK
 	}
-	if localBuild(u.current) && !*force {
+	if release.LocalBuild(u.current) && !*force {
 		_, _ = fmt.Fprintf(u.stderr, "revue %s is a local build; pass --force to replace it with %s\n", u.current, latest)
 		return ExitValidation
 	}
@@ -120,31 +111,6 @@ func (u *updater) run(args []string) int {
 		_, _ = fmt.Fprintf(u.stdout, "restarted %d running server(s) on the new build\n", n)
 	}
 	return ExitOK
-}
-
-func localBuild(v string) bool {
-	return !releaseTag.MatchString(v) || describeSuffix.MatchString(v)
-}
-
-// latestTag reads the tag from the redirect of releases/latest, which
-// needs no API token and has no API rate limit.
-func (u *updater) latestTag() (string, error) {
-	client := *u.http
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := client.Get(u.releases + "/latest")
-	if err != nil {
-		return "", err
-	}
-	_ = resp.Body.Close()
-	loc := resp.Header.Get("Location")
-	if resp.StatusCode/100 != 3 || !strings.Contains(loc, "/tag/") {
-		return "", fmt.Errorf("%s/latest answered %s without a release tag", u.releases, resp.Status)
-	}
-	tag := path.Base(loc)
-	if !releaseTag.MatchString(tag) {
-		return "", fmt.Errorf("unexpected release tag %q", tag)
-	}
-	return tag, nil
 }
 
 // install downloads the release archive, checks it, and renames the

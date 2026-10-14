@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/wait", s.handleWait)
 	mux.HandleFunc("POST /api/focus", s.handleFocus)
 	mux.HandleFunc("POST /api/raise", s.handleRaise)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("GET /api/note", s.handleGetNote)
 	mux.HandleFunc("PUT /api/note", s.handlePutNote)
