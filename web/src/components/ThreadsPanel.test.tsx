@@ -175,10 +175,14 @@ describe("ThreadsPanel", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("panel-thread-1"));
-    expect(onJump).toHaveBeenCalledWith(threads[0], positions.get(1));
+    expect(onJump).toHaveBeenCalledWith(
+      threads[0],
+      positions.get(1),
+      undefined,
+    );
 
     fireEvent.click(screen.getByTestId("panel-thread-4"));
-    expect(onJump).toHaveBeenCalledWith(threads[3], undefined);
+    expect(onJump).toHaveBeenCalledWith(threads[3], undefined, undefined);
   });
 
   it("groups threads by turn, yours and drafts open, the rest folded", () => {
@@ -364,12 +368,13 @@ describe("ThreadsPanel", () => {
         ],
       },
     ];
+    const jumpSpy = vi.fn();
     const renderPanel = () =>
       render(
         <ThreadsPanel
           threads={turnThreads}
           positions={new Map()}
-          onJump={() => {}}
+          onJump={jumpSpy}
           onClose={() => {}}
         />,
       );
@@ -408,6 +413,11 @@ describe("ThreadsPanel", () => {
         ),
       );
       expect(screen.getByTestId("panel-thread-2")).not.toHaveTextContent("new");
+
+      // A row with a new reply lands on that reply.
+      const onJump = vi.mocked(jumpSpy);
+      fireEvent.click(screen.getByTestId("panel-thread-1"));
+      expect(onJump).toHaveBeenCalledWith(turnThreads[0], undefined, 101);
 
       await user.click(screen.getByRole("button", { name: "Filter threads" }));
       await user.click(

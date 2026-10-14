@@ -50,7 +50,10 @@ import SendComposer from "../components/SendComposer";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import SnapshotView from "../components/SnapshotView";
 import Thread from "../components/Thread";
-import { FocusedThreadContext } from "../components/threadFocus";
+import {
+  FocusedCommentContext,
+  FocusedThreadContext,
+} from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { notifyPermission, requestAttention } from "@/lib/attention";
@@ -319,6 +322,7 @@ export default function DiffPage({
   const [snapshotId, setSnapshotId] = useState<number | null>(null);
   const [snapshotMode, setSnapshotMode] = useState<SnapshotMode>("then");
   const [focusedId, setFocusedId] = useState<number | null>(null);
+  const [focusedCommentId, setFocusedCommentId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(0);
   const [askNotify, setAskNotify] = useState(false);
@@ -833,6 +837,7 @@ export default function DiffPage({
     setHistoryThread(null);
     setSnapshotId(id);
     setFocusedId(id);
+    setFocusedCommentId(null);
     if (mode) setSnapshotMode(mode);
   }, []);
 
@@ -945,8 +950,13 @@ export default function DiffPage({
   // again and waits for that diff before scrolling.
   const spaceJump = useRef<NonNullable<typeof jump> | null>(null);
   const jumpToThread = useCallback(
-    (thread: ThreadType, position: ThreadPosition | undefined) => {
+    (
+      thread: ThreadType,
+      position: ThreadPosition | undefined,
+      commentId?: number,
+    ) => {
       setFocusedId(thread.id);
+      setFocusedCommentId(commentId ?? null);
       setHistoryThread(null);
       if (position?.state === "live") {
         setSnapshotId(null);
@@ -987,20 +997,24 @@ export default function DiffPage({
 
   useEffect(() => {
     if (focusedId === null) return;
+    // A click outside the thread ends its focus; a click outside the
+    // comment a link led to ends that one, even within the thread.
     const onPointerDown = (e: PointerEvent) => {
-      const inside = e
+      const path = e
         .composedPath()
-        .some(
-          (n) =>
-            n instanceof HTMLElement &&
-            n.dataset.threadId === String(focusedId),
-        );
-      if (!inside) setFocusedId(null);
+        .filter((n): n is HTMLElement => n instanceof HTMLElement);
+      if (!path.some((n) => n.dataset.threadId === String(focusedId))) {
+        setFocusedId(null);
+        setFocusedCommentId(null);
+      } else if (
+        !path.some((n) => n.dataset.commentId === String(focusedCommentId))
+      )
+        setFocusedCommentId(null);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () =>
       document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [focusedId]);
+  }, [focusedId, focusedCommentId]);
 
   // The snapshot steps through the threads that open there, in panel
   // order; the one on screen stays in the list even if its code came
@@ -1175,6 +1189,7 @@ export default function DiffPage({
     setSnapshotId(null);
     setHistoryThread(t);
     setFocusedId(t.id);
+    setFocusedCommentId(null);
   }, []);
   const closeHistoryThread = useCallback(() => setHistoryThread(null), []);
   // The only action on an archived thread brings it back, so the
@@ -1187,82 +1202,52 @@ export default function DiffPage({
   return (
     <TooltipProvider>
       <FocusedThreadContext.Provider value={focusedId}>
-        <div className="flex h-full flex-col">
-          <ConnectionBanner state={connection} />
-          <ShortcutsDialog
-            open={showShortcuts}
-            onOpenChange={setShowShortcuts}
-          />
-          {askNotify && <NotifyBanner onClose={closeAskNotify} />}
-          <TopBar
-            repo={repo}
-            branch={diff?.branch}
-            args={args}
-            onNavigate={onNavigate}
-            pulse={pulse}
-            threadCount={threads.length}
-            note={agentNote}
-            noteOpen={noteOpen}
-            onToggleNote={toggleNote}
-            panelOpen={showPanel}
-            onTogglePanel={togglePanel}
-            treeOpen={showTree}
-            onToggleTree={toggleTree}
-            draftCount={draftCount}
-            onSendNow={sendNow}
-            onCompose={openComposer}
-            sending={sending}
-            diffStyle={diffStyle}
-            onDiffStyleChange={changeDiffStyle}
-            fileMode={fileMode}
-            onFileModeChange={changeFileMode}
-            hideSpace={hideSpace}
-            onToggleHideSpace={toggleHideSpace}
-            onShowShortcuts={openShortcuts}
-            theme={theme}
-            onToggleTheme={onToggleTheme}
-          />
-          {threadsError && (
-            <p
-              className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
-              role="alert"
-            >
-              <CircleAlertIcon className="size-3.5" />
-              {threadsError}
-            </p>
-          )}
-          {pendingHidden && pending && (
-            <p
-              className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
-              role="status"
-            >
-              <CircleAlertIcon className="size-3.5" />
-              <span>
-                Your unsent comment on{" "}
-                <span className="font-mono">
-                  {locationLabel(pending.path, pending.line)}
-                </span>{" "}
-                is kept until that file is back in the diff.
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                className="ml-auto"
-                onClick={() => {
-                  pendingBody.current = "";
-                  setPending(null);
-                }}
+        <FocusedCommentContext.Provider value={focusedCommentId}>
+          <div className="flex h-full flex-col">
+            <ConnectionBanner state={connection} />
+            <ShortcutsDialog
+              open={showShortcuts}
+              onOpenChange={setShowShortcuts}
+            />
+            {askNotify && <NotifyBanner onClose={closeAskNotify} />}
+            <TopBar
+              repo={repo}
+              branch={diff?.branch}
+              args={args}
+              onNavigate={onNavigate}
+              pulse={pulse}
+              threadCount={threads.length}
+              note={agentNote}
+              noteOpen={noteOpen}
+              onToggleNote={toggleNote}
+              panelOpen={showPanel}
+              onTogglePanel={togglePanel}
+              treeOpen={showTree}
+              onToggleTree={toggleTree}
+              draftCount={draftCount}
+              onSendNow={sendNow}
+              onCompose={openComposer}
+              sending={sending}
+              diffStyle={diffStyle}
+              onDiffStyleChange={changeDiffStyle}
+              fileMode={fileMode}
+              onFileModeChange={changeFileMode}
+              hideSpace={hideSpace}
+              onToggleHideSpace={toggleHideSpace}
+              onShowShortcuts={openShortcuts}
+              theme={theme}
+              onToggleTheme={onToggleTheme}
+            />
+            {threadsError && (
+              <p
+                className="flex items-center gap-2 border-b bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
+                role="alert"
               >
-                <XIcon />
-                Discard
-              </Button>
-            </p>
-          )}
-          {!pendingHidden &&
-            pending &&
-            currentPath !== undefined &&
-            pending.path !== currentPath && (
+                <CircleAlertIcon className="size-3.5" />
+                {threadsError}
+              </p>
+            )}
+            {pendingHidden && pending && (
               <p
                 className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
                 role="status"
@@ -1273,217 +1258,251 @@ export default function DiffPage({
                   <span className="font-mono">
                     {locationLabel(pending.path, pending.line)}
                   </span>{" "}
-                  waits in its file.
+                  is kept until that file is back in the diff.
                 </span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="xs"
                   className="ml-auto"
-                  onClick={() => setSelectedPath(pending.path)}
+                  onClick={() => {
+                    pendingBody.current = "";
+                    setPending(null);
+                  }}
                 >
-                  Go to it
+                  <XIcon />
+                  Discard
                 </Button>
               </p>
             )}
-          <ResizablePanelGroup
-            orientation="horizontal"
-            id="outer-panes"
-            className="min-h-0 flex-1"
-          >
-            <ResizablePanel
-              id="main"
-              minSize={560}
-              className="relative min-w-0"
+            {!pendingHidden &&
+              pending &&
+              currentPath !== undefined &&
+              pending.path !== currentPath && (
+                <p
+                  className="flex items-center gap-2 border-b bg-renamed/10 px-3 py-1.5 text-xs text-renamed"
+                  role="status"
+                >
+                  <CircleAlertIcon className="size-3.5" />
+                  <span>
+                    Your unsent comment on{" "}
+                    <span className="font-mono">
+                      {locationLabel(pending.path, pending.line)}
+                    </span>{" "}
+                    waits in its file.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="ml-auto"
+                    onClick={() => setSelectedPath(pending.path)}
+                  >
+                    Go to it
+                  </Button>
+                </p>
+              )}
+            <ResizablePanelGroup
+              orientation="horizontal"
+              id="outer-panes"
+              className="min-h-0 flex-1"
             >
-              <ResizablePanelGroup orientation="horizontal" id="main-panes">
-                <ResizablePanel
-                  id="tree"
-                  panelRef={treeRef}
-                  onResize={onTreeResize}
-                  collapsible
-                  groupResizeBehavior="preserve-pixel-size"
-                  defaultSize={showTree ? treeWidth : 0}
-                  minSize={200}
-                  maxSize="40"
-                  className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
-                >
-                  <FileTree
-                    files={diffFiles}
-                    additions={lineTotals.additions}
-                    deletions={lineTotals.deletions}
-                    viewed={viewed}
-                    onToggleViewed={toggleViewed}
-                    onSelect={scrollToFile}
-                    selectedPath={currentPath ?? selectedPath}
-                  />
-                </ResizablePanel>
-                {/* A collapsed tree leaves no line; its edge can still
-                    be dragged to open it. */}
-                <ResizableHandle
-                  className={showTree ? undefined : "bg-transparent"}
-                />
-                <ResizablePanel
-                  id="diff"
-                  minSize={360}
-                  className="flex min-w-0 flex-col"
-                >
-                  {diffError !== null ? (
-                    <div
-                      className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
-                      data-testid="diff-error"
-                    >
-                      <CircleAlertIcon className="size-6 text-destructive" />
-                      <p className="max-w-lg text-destructive">{diffError}</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setFetchNonce((n) => n + 1)}
-                      >
-                        Retry
-                      </Button>
-                    </div>
-                  ) : parsedFiles === null ? (
-                    <LoadingBlocks
-                      className="flex-1 p-4"
-                      data-testid="diff-loading"
-                      label="Loading diff…"
-                      bars={[
-                        "h-9 w-full",
-                        "h-4 w-3/4",
-                        "h-4 w-2/3",
-                        "h-4 w-4/5",
-                        "mt-6 h-9 w-full",
-                        "h-4 w-1/2",
-                        "h-4 w-3/5",
-                      ]}
+              <ResizablePanel
+                id="main"
+                minSize={560}
+                className="relative min-w-0"
+              >
+                <ResizablePanelGroup orientation="horizontal" id="main-panes">
+                  <ResizablePanel
+                    id="tree"
+                    panelRef={treeRef}
+                    onResize={onTreeResize}
+                    collapsible
+                    groupResizeBehavior="preserve-pixel-size"
+                    defaultSize={showTree ? treeWidth : 0}
+                    minSize={200}
+                    maxSize="40"
+                    className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+                  >
+                    <FileTree
+                      files={diffFiles}
+                      additions={lineTotals.additions}
+                      deletions={lineTotals.deletions}
+                      viewed={viewed}
+                      onToggleViewed={toggleViewed}
+                      onSelect={scrollToFile}
+                      selectedPath={currentPath ?? selectedPath}
                     />
-                  ) : (
-                    <>
-                      {currentPath !== undefined && (
-                        <FileStepper
-                          index={currentIndex}
-                          total={filePaths.length}
-                          hasPrev={prevPath !== undefined}
-                          hasNext={nextPath !== undefined}
-                          viewedCount={viewedCount}
-                          onPrev={prevFile}
-                          onNext={nextFile}
+                  </ResizablePanel>
+                  {/* A collapsed tree leaves no line; its edge can still
+                    be dragged to open it. */}
+                  <ResizableHandle
+                    className={showTree ? undefined : "bg-transparent"}
+                  />
+                  <ResizablePanel
+                    id="diff"
+                    minSize={360}
+                    className="flex min-w-0 flex-col"
+                  >
+                    {diffError !== null ? (
+                      <div
+                        className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+                        data-testid="diff-error"
+                      >
+                        <CircleAlertIcon className="size-6 text-destructive" />
+                        <p className="max-w-lg text-destructive">{diffError}</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setFetchNonce((n) => n + 1)}
+                        >
+                          Retry
+                        </Button>
+                      </div>
+                    ) : parsedFiles === null ? (
+                      <LoadingBlocks
+                        className="flex-1 p-4"
+                        data-testid="diff-loading"
+                        label="Loading diff…"
+                        bars={[
+                          "h-9 w-full",
+                          "h-4 w-3/4",
+                          "h-4 w-2/3",
+                          "h-4 w-4/5",
+                          "mt-6 h-9 w-full",
+                          "h-4 w-1/2",
+                          "h-4 w-3/5",
+                        ]}
+                      />
+                    ) : (
+                      <>
+                        {currentPath !== undefined && (
+                          <FileStepper
+                            index={currentIndex}
+                            total={filePaths.length}
+                            hasPrev={prevPath !== undefined}
+                            hasNext={nextPath !== undefined}
+                            viewedCount={viewedCount}
+                            onPrev={prevFile}
+                            onNext={nextFile}
+                          />
+                        )}
+                        <DiffView
+                          ref={diffViewRef}
+                          files={parsedFiles}
+                          diffFiles={diffFiles}
+                          diffStyle={diffStyle}
+                          theme={theme}
+                          annotationsByFile={annotationsByFile}
+                          renderAnnotation={renderAnnotation}
+                          onLineSelect={onLineSelect}
+                          loadFile={loadFile}
+                          richByFile={richByFile}
+                          onToggleRich={toggleRich}
+                          imageUrl={imageUrl}
+                          viewed={viewed}
+                          onToggleViewed={toggleViewed}
+                          onFileComment={onFileComment}
+                          collapsed={collapsed}
+                          onToggleCollapsed={toggleCollapsed}
+                          scrollKey={
+                            fileMode === "focused" ? undefined : argsKey
+                          }
+                          onlyPath={currentPath}
                         />
-                      )}
-                      <DiffView
-                        ref={diffViewRef}
-                        files={parsedFiles}
-                        diffFiles={diffFiles}
-                        diffStyle={diffStyle}
-                        theme={theme}
-                        annotationsByFile={annotationsByFile}
-                        renderAnnotation={renderAnnotation}
-                        onLineSelect={onLineSelect}
-                        loadFile={loadFile}
-                        richByFile={richByFile}
-                        onToggleRich={toggleRich}
-                        imageUrl={imageUrl}
-                        viewed={viewed}
-                        onToggleViewed={toggleViewed}
-                        onFileComment={onFileComment}
-                        collapsed={collapsed}
-                        onToggleCollapsed={toggleCollapsed}
-                        scrollKey={fileMode === "focused" ? undefined : argsKey}
-                        onlyPath={currentPath}
-                      />
-                    </>
-                  )}
-                </ResizablePanel>
-              </ResizablePanelGroup>
-              {snapshotThread && (
-                <div className="absolute inset-0 z-10">
-                  <SnapshotView
-                    key={snapshotThread.id}
-                    thread={snapshotThread}
-                    index={snapshotIndex}
-                    total={outdated.length}
-                    onPrev={prevSnapshot}
-                    onNext={nextSnapshot}
-                    diffStyle={diffStyle}
-                    theme={theme}
-                    onChanged={loadThreads}
-                    onClose={closeSnapshot}
-                    mode={snapshotMode}
-                    onModeChange={setSnapshotMode}
-                  />
-                </div>
+                      </>
+                    )}
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+                {snapshotThread && (
+                  <div className="absolute inset-0 z-10">
+                    <SnapshotView
+                      key={snapshotThread.id}
+                      thread={snapshotThread}
+                      index={snapshotIndex}
+                      total={outdated.length}
+                      onPrev={prevSnapshot}
+                      onNext={nextSnapshot}
+                      diffStyle={diffStyle}
+                      theme={theme}
+                      onChanged={loadThreads}
+                      onClose={closeSnapshot}
+                      mode={snapshotMode}
+                      onModeChange={setSnapshotMode}
+                    />
+                  </div>
+                )}
+                {!snapshotThread && historyThread && (
+                  <div className="absolute inset-0 z-10">
+                    <SnapshotView
+                      key={`history-${historyThread.id}`}
+                      thread={historyThread}
+                      index={0}
+                      total={1}
+                      onPrev={noop}
+                      onNext={noop}
+                      diffStyle={diffStyle}
+                      theme={theme}
+                      onChanged={historyThreadChanged}
+                      onClose={closeHistoryThread}
+                    />
+                  </div>
+                )}
+                {/* Last, so it lies over a snapshot opened before it. */}
+                {noteOpen && agentNote && (
+                  <div className="absolute inset-0 z-10">
+                    <AgentNoteView note={agentNote} onClose={closeNote} />
+                  </div>
+                )}
+              </ResizablePanel>
+              {showPanel && (
+                <>
+                  <ResizableHandle />
+                  <ResizablePanel
+                    id="threads"
+                    groupResizeBehavior="preserve-pixel-size"
+                    onResize={onThreadsResize}
+                    defaultSize={threadsWidth}
+                    minSize={280}
+                    maxSize="45"
+                    className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
+                  >
+                    <ThreadsPanel
+                      threads={threads}
+                      positions={positions}
+                      onJump={jumpToThread}
+                      activeId={
+                        snapshotThread?.id ?? historyThread?.id ?? focusedId
+                      }
+                      onClose={closePanel}
+                      landed={landedOffer}
+                      onArchiveLanded={archiveLanded}
+                      onDismissLanded={dismissLanded}
+                      autoArchive={autoArchive}
+                      onAutoArchiveChange={changeAutoArchive}
+                      onArchive={archiveBulk}
+                      archiveError={archiveError}
+                      onOpenThread={openArchived}
+                      signal={historySignal}
+                      footer={
+                        <SendComposer
+                          draftCount={draftCount}
+                          initialNote={note}
+                          onKeepNote={setNote}
+                          onSend={sendRound}
+                          sending={sending}
+                          error={sendError}
+                          focusSignal={composerFocus}
+                        />
+                      }
+                    />
+                  </ResizablePanel>
+                </>
               )}
-              {!snapshotThread && historyThread && (
-                <div className="absolute inset-0 z-10">
-                  <SnapshotView
-                    key={`history-${historyThread.id}`}
-                    thread={historyThread}
-                    index={0}
-                    total={1}
-                    onPrev={noop}
-                    onNext={noop}
-                    diffStyle={diffStyle}
-                    theme={theme}
-                    onChanged={historyThreadChanged}
-                    onClose={closeHistoryThread}
-                  />
-                </div>
-              )}
-              {/* Last, so it lies over a snapshot opened before it. */}
-              {noteOpen && agentNote && (
-                <div className="absolute inset-0 z-10">
-                  <AgentNoteView note={agentNote} onClose={closeNote} />
-                </div>
-              )}
-            </ResizablePanel>
-            {showPanel && (
-              <>
-                <ResizableHandle />
-                <ResizablePanel
-                  id="threads"
-                  groupResizeBehavior="preserve-pixel-size"
-                  onResize={onThreadsResize}
-                  defaultSize={threadsWidth}
-                  minSize={280}
-                  maxSize="45"
-                  className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
-                >
-                  <ThreadsPanel
-                    threads={threads}
-                    positions={positions}
-                    onJump={jumpToThread}
-                    activeId={
-                      snapshotThread?.id ?? historyThread?.id ?? focusedId
-                    }
-                    onClose={closePanel}
-                    landed={landedOffer}
-                    onArchiveLanded={archiveLanded}
-                    onDismissLanded={dismissLanded}
-                    autoArchive={autoArchive}
-                    onAutoArchiveChange={changeAutoArchive}
-                    onArchive={archiveBulk}
-                    archiveError={archiveError}
-                    onOpenThread={openArchived}
-                    signal={historySignal}
-                    footer={
-                      <SendComposer
-                        draftCount={draftCount}
-                        initialNote={note}
-                        onKeepNote={setNote}
-                        onSend={sendRound}
-                        sending={sending}
-                        error={sendError}
-                        focusSignal={composerFocus}
-                      />
-                    }
-                  />
-                </ResizablePanel>
-              </>
-            )}
-          </ResizablePanelGroup>
-        </div>
+            </ResizablePanelGroup>
+          </div>
+        </FocusedCommentContext.Provider>
       </FocusedThreadContext.Provider>
     </TooltipProvider>
   );

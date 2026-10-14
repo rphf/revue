@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -27,7 +27,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CommentForm from "./CommentForm";
 import Markdown from "./Markdown";
-import { FocusedThreadContext } from "./threadFocus";
+import { LINE_SCROLL_OFFSET } from "./codeViewStyle";
+import { FocusedCommentContext, FocusedThreadContext } from "./threadFocus";
 
 export interface ThreadProps {
   thread: ThreadType;
@@ -45,6 +46,10 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const focused = useContext(FocusedThreadContext) === thread.id;
+  // A link to one comment outlines that comment instead of the card.
+  const focusedComment = useContext(FocusedCommentContext);
+  const outlined =
+    focused && !thread.comments.some((c) => c.id === focusedComment);
   const archived = Boolean(thread.archivedAt);
   const hasDraft = thread.comments.some((c) => c.draft);
   const [folded, setFolded] = useThreadFold(
@@ -125,7 +130,7 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
       className={cn(
         "annotation-card",
         thread.resolved && "opacity-75",
-        focused && "outline-2 outline-offset-2 outline-primary",
+        outlined && "outline-2 outline-offset-2 outline-primary",
       )}
       data-testid={`thread-${thread.id}`}
       data-thread-id={thread.id}
@@ -345,6 +350,20 @@ function CommentItem({
   children: ReactNode;
 }) {
   const [minimized, setMinimized] = useCommentMinimized(c.id);
+  const focused = useContext(FocusedCommentContext) === c.id;
+  const ref = useRef<HTMLLIElement>(null);
+  // The page scrolls the diff to the thread's line first; two frames
+  // later, the comment's top comes into view. Its top, not its nearest
+  // edge: a reply taller than the pane would show its end.
+  useEffect(() => {
+    if (!focused) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() =>
+        ref.current?.scrollIntoView({ block: "start" }),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focused]);
   const agent = c.authorRole === "agent";
   const author = (
     <>
@@ -355,11 +374,13 @@ function CommentItem({
     </>
   );
 
-  if (minimized && !c.draft) {
+  // A link to a minimized comment shows it while it stays focused.
+  if (minimized && !c.draft && !focused) {
     return (
       <li
         className="flex min-h-6 items-center gap-2 px-3 py-1.5 text-xs"
         data-testid={`comment-${c.id}`}
+        data-comment-id={c.id}
         data-minimized
       >
         {author}
@@ -382,7 +403,19 @@ function CommentItem({
   }
 
   return (
-    <li className="px-3 py-2.5" data-testid={`comment-${c.id}`}>
+    <li
+      ref={ref}
+      className={cn(
+        "px-3 py-2.5",
+        focused && "rounded-md outline-2 -outline-offset-2 outline-primary",
+      )}
+      data-testid={`comment-${c.id}`}
+      data-comment-id={c.id}
+      data-focused={focused || undefined}
+      // A jump puts the comment's top below the sticky file header, the
+      // same room a jump to a line keeps.
+      style={{ scrollMarginTop: LINE_SCROLL_OFFSET }}
+    >
       <div className="mb-1 flex min-h-6 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         {author}
         {c.createdAt && (

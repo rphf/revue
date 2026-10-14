@@ -62,7 +62,12 @@ export interface ThreadsPanelProps {
   // Where each thread sits in the diff on screen; a thread without a
   // live position is outdated for this diff.
   positions: ReadonlyMap<number, ThreadPosition>;
-  onJump: (thread: Thread, position: ThreadPosition | undefined) => void;
+  // commentId: the comment to land on, the thread as a whole without.
+  onJump: (
+    thread: Thread,
+    position: ThreadPosition | undefined,
+    commentId?: number,
+  ) => void;
   // Opens a thread that is not in this checkout (another branch's, or an
   // archived one) on its snapshot.
   onOpenThread?: (thread: Thread) => void;
@@ -188,8 +193,8 @@ export default function ThreadsPanel({
       : NO_THREADS
     : checkoutThreads;
   const positions = viewingOther ? NO_POSITIONS : checkoutPositions;
-  const jump = (thread: Thread, position: ThreadPosition | undefined) =>
-    viewingOther ? onOpenThread?.(thread) : onJump(thread, position);
+  const jump: ThreadsPanelProps["onJump"] = (thread, position, commentId) =>
+    viewingOther ? onOpenThread?.(thread) : onJump(thread, position, commentId);
 
   const { sections, counts } = useMemo(() => {
     const counts: Record<PanelFilter, number> = {
@@ -675,7 +680,8 @@ function ThreadRow({
         )}
         aria-current={active || undefined}
         data-testid={`panel-thread-${thread.id}`}
-        onClick={() => onJump(thread, position)}
+        // A new reply is what the row is about: land on it.
+        onClick={() => onJump(thread, position, fresh?.id)}
       >
         <span className="flex w-full items-center gap-1.5 text-xs text-muted-foreground">
           <span className={cn("size-1.5 rounded-full", stateDot[state])} />

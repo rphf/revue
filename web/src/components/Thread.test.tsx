@@ -21,7 +21,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 import { api } from "../api";
 import Thread from "./Thread";
-import { FocusedThreadContext } from "./threadFocus";
+import { FocusedCommentContext, FocusedThreadContext } from "./threadFocus";
 import { comment, thread } from "../test/fixtures";
 
 describe("Thread", () => {
@@ -287,6 +287,37 @@ describe("Thread", () => {
       expect(
         screen.queryByRole("button", { name: "Minimize the comment" }),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("a link to one comment", () => {
+    it("outlines that comment, not the card, and shows it if minimized", () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      const t = thread([
+        comment({ id: 1, body: "why this loop?" }),
+        comment({ id: 2, authorRole: "agent", body: "because of batching" }),
+      ]);
+      const { unmount } = render(<Thread thread={t} onChanged={() => {}} />);
+      fireEvent.click(
+        within(screen.getByTestId("comment-2")).getByRole("button", {
+          name: "Minimize the comment",
+        }),
+      );
+      unmount();
+
+      render(
+        <FocusedThreadContext.Provider value={1}>
+          <FocusedCommentContext.Provider value={2}>
+            <Thread thread={t} onChanged={() => {}} />
+          </FocusedCommentContext.Provider>
+        </FocusedThreadContext.Provider>,
+      );
+      const reply = screen.getByTestId("comment-2");
+      expect(reply).toHaveAttribute("data-focused");
+      expect(reply).toHaveTextContent("because of batching");
+      expect(screen.getByTestId("thread-1").className).not.toMatch(
+        /outline-primary/,
+      );
     });
   });
 });

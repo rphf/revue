@@ -51,6 +51,16 @@ export default defineConfig({
         launchOptions: { args: [] },
       },
     },
+    {
+      // Safari's engine lays the diff out after a jump later still.
+      name: "webkit",
+      testMatch: /14-comment-jump/,
+      use: {
+        ...devices["Desktop Safari"],
+        viewport: { width: 1440, height: 1000 },
+        launchOptions: { args: [] },
+      },
+    },
   ],
   webServer: {
     command: "bash tests/scripts/start-test-server.sh",
