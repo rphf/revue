@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -7,13 +7,19 @@ import {
   ChevronRightIcon,
   ChevronsDownUpIcon,
   CircleCheckIcon,
+  EyeIcon,
+  EyeOffIcon,
   MessageSquareIcon,
   ReplyIcon,
   UserIcon,
 } from "lucide-react";
 import { api, errorMessage } from "../api";
-import type { AuthorRole, Thread as ThreadType } from "../types";
-import { useThreadFold } from "@/lib/folds";
+import type {
+  AuthorRole,
+  Comment as CommentType,
+  Thread as ThreadType,
+} from "../types";
+import { useCommentMinimized, useThreadFold } from "@/lib/folds";
 import { excerpt } from "@/lib/text";
 import { formatDateTime, timeAgo } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -142,121 +148,91 @@ export default function Thread({ thread, onChanged }: ThreadProps) {
         </div>
       )}
       <ul className="divide-y">
-        {thread.comments.map((c, index) => {
-          const agent = c.authorRole === "agent";
-          const draftActions = c.draft && c.authorRole === "reviewer";
-          return (
-            <li
-              key={c.id}
-              className="px-3 py-2.5"
-              data-testid={`comment-${c.id}`}
-            >
-              <div className="mb-1 flex min-h-6 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <Avatar role={c.authorRole} />
+        {thread.comments.map((c, index) => (
+          <CommentItem
+            key={c.id}
+            comment={c}
+            actions={
+              c.draft &&
+              c.authorRole === "reviewer" &&
+              (deletingId === c.id ? (
                 <span
-                  className={cn(
-                    "font-medium capitalize",
-                    agent && "text-agent",
-                  )}
+                  className="inline-flex items-center gap-1 text-muted-foreground"
+                  role="status"
                 >
-                  {c.authorRole}
-                </span>
-                {c.createdAt && (
-                  <span
-                    className="whitespace-nowrap text-muted-foreground"
-                    title={formatDateTime(c.createdAt)}
-                  >
-                    {timeAgo(c.createdAt)}
-                  </span>
-                )}
-                {c.draft && (
-                  <Badge
-                    variant="outline"
-                    className="h-4 border-renamed/40 px-1.5 text-[10px] text-renamed"
-                  >
-                    Draft
-                  </Badge>
-                )}
-                {draftActions &&
-                  (deletingId === c.id ? (
-                    <span
-                      className="ml-auto inline-flex items-center gap-1 text-muted-foreground"
-                      role="status"
-                    >
-                      Delete this draft?
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setDeletingId(null)}
-                      >
-                        Keep
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="xs"
-                        onClick={() => deleteComment(c.id)}
-                      >
-                        Delete
-                      </Button>
-                    </span>
-                  ) : (
-                    <span className="ml-auto inline-flex items-center gap-0.5">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() => setEditingId(c.id)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => setDeletingId(c.id)}
-                      >
-                        Delete
-                      </Button>
-                    </span>
-                  ))}
-                {index === 0 && (
+                  Delete this draft?
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-xs"
-                    className={cn(
-                      "text-muted-foreground",
-                      !draftActions && "ml-auto",
-                    )}
-                    aria-label="Fold the thread"
-                    title="Fold the thread"
-                    onClick={() => setFolded(true)}
+                    size="xs"
+                    onClick={() => setDeletingId(null)}
                   >
-                    <ChevronsDownUpIcon />
+                    Keep
                   </Button>
-                )}
-              </div>
-              {editingId === c.id ? (
-                <CommentForm
-                  initial={c.body}
-                  submitLabel="Update"
-                  onSubmit={async (body) => {
-                    await api.editComment(c.id, body);
-                    setEditingId(null);
-                    onChanged();
-                  }}
-                  onCancel={() => setEditingId(null)}
-                />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="xs"
+                    onClick={() => deleteComment(c.id)}
+                  >
+                    Delete
+                  </Button>
+                </span>
               ) : (
-                <Markdown source={c.body} />
-              )}
-            </li>
-          );
-        })}
+                <span className="inline-flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => setEditingId(c.id)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => setDeletingId(c.id)}
+                  >
+                    Delete
+                  </Button>
+                </span>
+              ))
+            }
+            fold={
+              index === 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-muted-foreground"
+                  aria-label="Fold the thread"
+                  title="Fold the thread"
+                  onClick={() => setFolded(true)}
+                >
+                  <ChevronsDownUpIcon />
+                </Button>
+              )
+            }
+          >
+            {editingId === c.id ? (
+              <CommentForm
+                initial={c.body}
+                submitLabel="Update"
+                onSubmit={async (body) => {
+                  await api.editComment(c.id, body);
+                  setEditingId(null);
+                  onChanged();
+                }}
+                onCancel={() => setEditingId(null)}
+              />
+            ) : (
+              <Markdown source={c.body} />
+            )}
+          </CommentItem>
+        ))}
       </ul>
       {actionError && (
         <p className="px-3 pb-2 text-xs text-destructive" role="alert">
@@ -350,5 +326,100 @@ function Avatar({ role }: { role: AuthorRole }) {
     >
       {agent ? <BotIcon className="size-3" /> : <UserIcon className="size-3" />}
     </span>
+  );
+}
+
+// One comment: its author, time, and body. A sent comment minimizes to
+// one line that names only its author, as GitHub hides a comment.
+function CommentItem({
+  comment: c,
+  actions,
+  fold,
+  children,
+}: {
+  comment: CommentType;
+  // Draft edit and delete, before the minimize button.
+  actions?: ReactNode;
+  // The thread's fold button, on its first comment.
+  fold?: ReactNode;
+  children: ReactNode;
+}) {
+  const [minimized, setMinimized] = useCommentMinimized(c.id);
+  const agent = c.authorRole === "agent";
+  const author = (
+    <>
+      <Avatar role={c.authorRole} />
+      <span className={cn("font-medium capitalize", agent && "text-agent")}>
+        {c.authorRole}
+      </span>
+    </>
+  );
+
+  if (minimized && !c.draft) {
+    return (
+      <li
+        className="flex min-h-6 items-center gap-2 px-3 py-1.5 text-xs"
+        data-testid={`comment-${c.id}`}
+        data-minimized
+      >
+        {author}
+        <span className="text-muted-foreground">minimized</span>
+        <span className="ml-auto inline-flex items-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground"
+            onClick={() => setMinimized(false)}
+          >
+            <EyeIcon />
+            Show
+          </Button>
+          {fold}
+        </span>
+      </li>
+    );
+  }
+
+  return (
+    <li className="px-3 py-2.5" data-testid={`comment-${c.id}`}>
+      <div className="mb-1 flex min-h-6 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {author}
+        {c.createdAt && (
+          <span
+            className="whitespace-nowrap text-muted-foreground"
+            title={formatDateTime(c.createdAt)}
+          >
+            {timeAgo(c.createdAt)}
+          </span>
+        )}
+        {c.draft && (
+          <Badge
+            variant="outline"
+            className="h-4 border-renamed/40 px-1.5 text-[10px] text-renamed"
+          >
+            Draft
+          </Badge>
+        )}
+        <span className="ml-auto inline-flex items-center gap-0.5">
+          {actions}
+          {!c.draft && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="text-muted-foreground"
+              aria-label="Minimize the comment"
+              title="Minimize the comment"
+              onClick={() => setMinimized(true)}
+            >
+              <EyeOffIcon />
+            </Button>
+          )}
+          {fold}
+        </span>
+      </div>
+      {children}
+    </li>
   );
 }

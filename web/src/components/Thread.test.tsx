@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api", async (importOriginal) => ({
@@ -240,6 +246,47 @@ describe("Thread", () => {
         </FocusedThreadContext.Provider>,
       );
       expect(screen.getAllByTestId(/comment-/)).toHaveLength(2);
+    });
+  });
+
+  describe("minimizing", () => {
+    it("minimizes a comment to its author, and remembers it", () => {
+      const t = thread([
+        comment({ id: 1, body: "why this loop?" }),
+        comment({ id: 2, authorRole: "agent", body: "because of batching" }),
+      ]);
+      const { unmount } = render(<Thread thread={t} onChanged={() => {}} />);
+      const reply = screen.getByTestId("comment-2");
+      fireEvent.click(
+        within(reply).getByRole("button", { name: "Minimize the comment" }),
+      );
+      expect(screen.getByTestId("comment-2")).toHaveAttribute("data-minimized");
+      expect(screen.getByTestId("comment-2")).toHaveTextContent("agent");
+      expect(screen.getByTestId("comment-2")).not.toHaveTextContent(
+        "because of batching",
+      );
+      expect(screen.getByTestId("comment-1")).toHaveTextContent(
+        "why this loop?",
+      );
+
+      unmount();
+      render(<Thread thread={t} onChanged={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "Show" }));
+      expect(screen.getByTestId("comment-2")).toHaveTextContent(
+        "because of batching",
+      );
+    });
+
+    it("never minimizes a draft", () => {
+      render(
+        <Thread
+          thread={thread([comment({ id: 3, body: "wip", draft: true })])}
+          onChanged={() => {}}
+        />,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Minimize the comment" }),
+      ).not.toBeInTheDocument();
     });
   });
 });
