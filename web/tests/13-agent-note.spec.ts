@@ -46,9 +46,17 @@ test("opening the note leaves the diff where it was", async ({ page }) => {
     await expect(
       page.getByRole("button", { name: "Agent note", exact: true }),
     ).toBeVisible();
-    await scroller.evaluate((el) => el.scrollTo(0, 200));
+    // The diff can still be rendering when the button shows; scroll
+    // again until it is tall enough to move.
+    await expect
+      .poll(() =>
+        scroller.evaluate((el) => {
+          el.scrollTo(0, 200);
+          return el.scrollTop;
+        }),
+      )
+      .toBeGreaterThan(0);
     const before = await scroller.evaluate((el) => el.scrollTop);
-    expect(before).toBeGreaterThan(0);
 
     const body = page.getByTestId("agent-note-view");
     const button = page.getByRole("button", {
