@@ -2,6 +2,8 @@
 
 # revue
 
+[![CI](https://github.com/rphf/revue/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rphf/revue/actions/workflows/ci.yml)
+
 Review what your coding agent wrote the way you review a pull request, without pushing anything. revue shows the agent's changes as a GitHub-style diff in your browser, and the agent reads your comments and answers them through a small CLI. Everything stays on one machine: no remote, no accounts.
 
 <picture>
