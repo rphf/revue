@@ -72,6 +72,13 @@ they do not clash.
 The focused line must survive the virtualizer recycling rows, so it lives in
 revue's state as a path, side, and line number, not in the DOM.
 
+## Look at plannotator (2026-10-27)
+
+[plannotator](https://github.com/backnotprop/plannotator) annotates and
+reviews agent plans and code diffs visually and sends the feedback to the
+agent. Same space as revue: compare its feedback loop, its plan review, and
+its team sharing for ideas worth taking.
+
 ## Not planned: git-spice stack navigation (2026-09-18)
 
 U10 (stack enumeration and per-branch navigation) is dropped for now. The
