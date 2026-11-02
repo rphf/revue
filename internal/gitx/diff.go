@@ -128,10 +128,11 @@ var patchFlags = append([]string{"--no-color", "--full-index"}, forcedDiffFlags.
 // HEAD goes first, so the common case costs no extra git call.
 // A diff that reads the working tree refreshes the index it reads,
 // under index.lock, which makes the user's own git commands fail
-// meanwhile: without an index of its own, it gets a scratch copy.
+// meanwhile: without an index of its own, it reads the repository's
+// shared scratch copy.
 func runDiff(repoRoot string, env []string, flags, args []string) ([]byte, error) {
 	if env == nil && readsWorkingTree(args) {
-		scratch, done, err := scratchIndex(repoRoot)
+		scratch, done, err := sharedScratch(repoRoot)
 		if err != nil {
 			return nil, err
 		}

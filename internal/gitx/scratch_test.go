@@ -96,6 +96,8 @@ func TestSweepScratchRemovesWhatNoLiveProcessOwns(t *testing.T) {
 		fmt.Sprintf("revue-index-%d-1.lock", dead),
 		fmt.Sprintf("revue-index-%d-2", me),
 		fmt.Sprintf("revue-index-%d-3", me),
+		fmt.Sprintf("revue-index-%d-shared-4", me),
+		fmt.Sprintf("revue-index-%d-shared-5", dead),
 		"revue-index-garbled",
 		"someone-else.tmp",
 	} {
@@ -104,14 +106,16 @@ func TestSweepScratchRemovesWhatNoLiveProcessOwns(t *testing.T) {
 		}
 	}
 	stale := time.Now().Add(-2 * scratchMaxAge)
-	if err := os.Chtimes(filepath.Join(os.TempDir(), fmt.Sprintf("revue-index-%d-3", me)), stale, stale); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{fmt.Sprintf("revue-index-%d-3", me), fmt.Sprintf("revue-index-%d-shared-4", me)} {
+		if err := os.Chtimes(filepath.Join(os.TempDir(), name), stale, stale); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	if n := SweepScratch(); n != 4 {
-		t.Errorf("removed %d, want 4", n)
+	if n := SweepScratch(); n != 5 {
+		t.Errorf("removed %d, want 5", n)
 	}
-	want := []string{fmt.Sprintf("revue-index-%d-2", me), "someone-else.tmp"}
+	want := []string{fmt.Sprintf("revue-index-%d-2", me), fmt.Sprintf("revue-index-%d-shared-4", me), "someone-else.tmp"}
 	if left := scratchFiles(t); !slices.Equal(left, want) {
 		t.Errorf("left = %v, want %v", left, want)
 	}
@@ -180,6 +184,73 @@ func TestDiffsLeaveTheIndexAlone(t *testing.T) {
 			t.Fatalf("diff of %q rewrote the index", args)
 		}
 	}
+	RemoveScratch(repo)
+	if left := scratchFiles(t); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+}
+
+// The diffs that only read the index share one copy of it per
+// repository, where git keeps its refresh: a file whose stat changed but
+// not its content is hashed once, not on every poll. The copy is made
+// again when the repository's index changes.
+func TestDiffsShareACopyOfTheIndexUntilItChanges(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	repo := gittest.Init(t)
+	write(t, repo, "a.txt", "one\n")
+	commitAll(t, repo, "c1")
+	index := filepath.Join(repo, ".git", "index")
+	// An index older than the file: git finds a.txt stat-dirty and
+	// writes its refresh, at the current time, into the copy.
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(repo, "a.txt"), old.Add(time.Hour), old.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(index, old, old); err != nil {
+		t.Fatal(err)
+	}
+	copyTime := func() time.Time {
+		t.Helper()
+		left := scratchFiles(t)
+		if len(left) != 1 {
+			t.Fatalf("scratch files = %v, want the shared copy", left)
+		}
+		info, err := os.Stat(filepath.Join(os.TempDir(), left[0]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.ModTime()
+	}
+
+	if _, _, err := Fingerprint(repo, nil); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := copyTime()
+	if !refreshed.After(old.Add(time.Minute)) {
+		t.Fatalf("copy time = %v, want git's refresh", refreshed)
+	}
+	if _, _, err := Fingerprint(repo, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := copyTime(); !got.Equal(refreshed) {
+		t.Errorf("second diff: copy time = %v, want the refreshed copy reused (%v)", got, refreshed)
+	}
+
+	// git add refreshes the repository's index, so the new copy needs no
+	// refresh and keeps the index's time.
+	gittest.Git(t, repo, "add", "a.txt")
+	info, err := os.Stat(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Fingerprint(repo, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := copyTime(); !got.Equal(info.ModTime()) {
+		t.Errorf("after git add: copy time = %v, want a new copy of the index (%v)", got, info.ModTime())
+	}
+
+	RemoveScratch(repo)
 	if left := scratchFiles(t); len(left) != 0 {
 		t.Errorf("left behind: %v", left)
 	}
