@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -135,5 +136,51 @@ func TestWorkingTreeSeesASameSizeEditFromTheCommitsSecond(t *testing.T) {
 	got := gittest.Git(t, repo, "cat-file", "-p", tree+":main.go")
 	if got != "v2\n" {
 		t.Errorf("tree has main.go = %q, want the edit", got)
+	}
+}
+
+// git diff refreshes the index it reads when a tracked file's stat no
+// longer matches, holding index.lock while it writes; a user's git add
+// or commit fails meanwhile. Every diff revue runs leaves the
+// repository's index alone.
+func TestDiffsLeaveTheIndexAlone(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	repo := gittest.Init(t)
+	write(t, repo, "a.txt", "one\n")
+	commitAll(t, repo, "c1")
+	write(t, repo, "b.txt", "two\n")
+	commitAll(t, repo, "c2")
+	write(t, repo, "b.txt", "three\n")
+	// Same content, another time: stat-dirty, which git would refresh.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(repo, "a.txt"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(repo, ".git", "index")
+	before, err := os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{nil, {"--", "a.txt"}, {"HEAD~1"}, {"--staged"}, {"HEAD~1..HEAD"}} {
+		if _, _, err := Fingerprint(repo, args); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Capture(repo, args, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := IgnoringSpace(repo, args, &Result{}); err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(after, before) {
+			t.Fatalf("diff of %q rewrote the index", args)
+		}
+	}
+	if left := scratchFiles(t); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
 	}
 }

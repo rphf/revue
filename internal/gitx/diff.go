@@ -126,7 +126,18 @@ var patchFlags = append([]string{"--no-color", "--full-index"}, forcedDiffFlags.
 // compares with HEAD, not the index, so staged changes stay in it;
 // before the first commit, when HEAD names nothing, with the empty tree.
 // HEAD goes first, so the common case costs no extra git call.
+// A diff that reads the working tree refreshes the index it reads,
+// under index.lock, which makes the user's own git commands fail
+// meanwhile: without an index of its own, it gets a scratch copy.
 func runDiff(repoRoot string, env []string, flags, args []string) ([]byte, error) {
+	if env == nil && readsWorkingTree(args) {
+		scratch, done, err := scratchIndex(repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		defer done()
+		env = scratch
+	}
 	run := func(base ...string) ([]byte, error) {
 		cmd := append(append(append([]string{"diff"}, flags...), base...), args...)
 		return runGitEnv(repoRoot, env, nil, false, cmd...)
@@ -436,6 +447,24 @@ func isWorkingTreeCapture(args []string) bool {
 	// Anything before a bare "--" pins a side: --staged makes the index
 	// the new side, a revision makes the old side a commit.
 	return len(args) == 0 || args[0] == "--"
+}
+
+// readsWorkingTree reports whether a diff of args reads the working
+// tree: not --staged, and at most one revision that is not a range. A
+// form it does not know, such as rev^!, counts as reading it, which
+// costs only a copy of the index.
+func readsWorkingTree(args []string) bool {
+	var revs []string
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if allowedFlags[a] {
+			return false
+		}
+		revs = append(revs, a)
+	}
+	return len(revs) == 0 || len(revs) == 1 && !strings.Contains(revs[0], "..")
 }
 
 // pathspecs extracts everything after a bare "--".
