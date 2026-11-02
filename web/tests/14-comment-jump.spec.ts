@@ -56,18 +56,22 @@ test("a row with a new reply jumps to that reply, minimized or not", async ({
     // A click on the reply keeps it; a click anywhere else, even on
     // its thread, ends the focus, and the reply minimizes again.
     // WebKit lays the scrolled diff out a moment after the jump; until
-    // then a click at the reply lands on the diff's container.
+    // then a click at the reply lands on the diff's container. The mouse
+    // clicks where the line is: locator.click scrolls first, and in
+    // WebKit that can put the line under the file's sticky header.
+    const at = { x: 0, y: 0 };
     await expect
-      .poll(() =>
-        firstLine.evaluate((el) => {
+      .poll(async () => {
+        const hit = await firstLine.evaluate((el) => {
           const r = el.getBoundingClientRect();
-          return el.contains(
-            document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2),
-          );
-        }),
-      )
+          const p = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+          return el.contains(document.elementFromPoint(p.x, p.y)) ? p : null;
+        });
+        if (hit) Object.assign(at, hit);
+        return hit !== null;
+      })
       .toBe(true);
-    await firstLine.click();
+    await page.mouse.click(at.x, at.y);
     await expect(comment).toHaveAttribute("data-focused");
     await page.getByTestId(`thread-${id}`).getByText("jump spec note").click();
     await expect(comment).toHaveAttribute("data-minimized");
