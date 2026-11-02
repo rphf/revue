@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write
 
+# One release at a time. A new run waits instead of cancelling the one in
+# progress, which may have created its tag already.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-26.04
