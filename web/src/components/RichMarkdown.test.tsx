@@ -90,6 +90,65 @@ describe("RichMarkdown comments", () => {
   });
 });
 
+describe("RichMarkdown table rows", () => {
+  const table: RichDoc = {
+    rev: "t",
+    status: "ready",
+    blocks: diffBlocks(
+      null,
+      "Intro.\n\n| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\nEnd.\n",
+    ),
+  };
+
+  it("starts a comment on the row under the pointer", () => {
+    const onComment = vi.fn();
+    render(<RichMarkdown doc={table} path="README.md" onComment={onComment} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Comment on lines 3–6" }),
+    );
+    expect(onComment).toHaveBeenLastCalledWith({
+      side: "additions",
+      line: 6,
+      startLine: 3,
+    });
+    fireEvent.mouseOver(screen.getByText("1"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment on line 5" }));
+    expect(onComment).toHaveBeenLastCalledWith({ side: "additions", line: 5 });
+    fireEvent.mouseOver(screen.getByText("A"));
+    fireEvent.click(screen.getByRole("button", { name: "Comment on line 3" }));
+    expect(onComment).toHaveBeenLastCalledWith({ side: "additions", line: 3 });
+  });
+
+  it("draws a note under the row of its line", () => {
+    const note = (line: number, id: number) => ({
+      side: "additions" as const,
+      lineNumber: line,
+      metadata: { kind: "thread" as const, threadId: id },
+    });
+    render(
+      <RichNotesContext.Provider
+        value={new Map([["README.md", [note(5, 1), note(4, 2), note(6, 3)]]])}
+      >
+        <RichMarkdown
+          doc={table}
+          path="README.md"
+          renderNote={(n) => <span>thread {n.metadata?.threadId}</span>}
+        />
+      </RichNotesContext.Provider>,
+    );
+    const rowBefore = (text: string) =>
+      screen.getByText(text).closest("tr")?.previousElementSibling;
+    expect(rowBefore("thread 1")).toHaveTextContent("1 2");
+    // A note on the delimiter line belongs to the header.
+    expect(rowBefore("thread 2")).toHaveTextContent("A B");
+    expect(rowBefore("thread 3")).toHaveTextContent("3 4");
+    expect(screen.getByText("thread 1").closest("td")).toHaveAttribute(
+      "colspan",
+      "2",
+    );
+  });
+});
+
 describe("RichMarkdown width", () => {
   const width = () =>
     document.documentElement.style.getPropertyValue("--rich-width");

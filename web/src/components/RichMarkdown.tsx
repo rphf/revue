@@ -3,7 +3,9 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
   type RefObject,
@@ -13,7 +15,10 @@ import { CircleAlertIcon, PlusIcon } from "lucide-react";
 import {
   blockForLine,
   blockTarget,
+  rowForLine,
+  rowTarget,
   type BlockTarget,
+  type RichBlock,
   type RichDoc,
 } from "@/lib/richDiff";
 import {
@@ -185,6 +190,111 @@ function commentLabel({ line, startLine }: BlockTarget): string {
     : `Comment on lines ${startLine}–${line}`;
 }
 
+function noteKey(note: Note): string {
+  return `${note.metadata?.kind}:${note.metadata?.threadId ?? ""}`;
+}
+
+interface BlockRowProps {
+  block: RichBlock;
+  notes: Note[];
+  renderNote?: (note: Note) => ReactNode;
+  onComment?: (target: BlockTarget) => void;
+}
+
+// One block with its comment button and the notes on its lines. In a
+// table the button follows the pointer from row to row, and a note sits
+// under the row of its line.
+function BlockRow({ block, notes, renderNote, onComment }: BlockRowProps) {
+  const [hover, setHover] = useState<{ row: number; top: number } | null>(null);
+  const rows = block.rows;
+  const hovered = hover && rows?.[hover.row];
+  const target = !onComment
+    ? null
+    : hovered
+      ? rowTarget(block, hovered)
+      : blockTarget(block);
+
+  const onMouseOver = (e: MouseEvent<HTMLDivElement>) => {
+    const tr = (e.target as Element).closest("tr[data-row]");
+    if (!(tr instanceof HTMLElement)) return;
+    const row = Number(tr.dataset.row);
+    const top =
+      tr.getBoundingClientRect().top -
+      e.currentTarget.getBoundingClientRect().top;
+    if (hover?.row !== row || hover.top !== top) setHover({ row, top });
+  };
+
+  const drawNote = (note: Note) => (
+    <div key={noteKey(note)} data-rich-note={`${note.side}:${note.lineNumber}`}>
+      {renderNote?.(note)}
+    </div>
+  );
+  const className = cn(
+    "rich-block",
+    block.item && "rich-item",
+    block.change === "added" && "rich-added",
+    block.change === "removed" && "rich-removed",
+  );
+
+  const tableRow = (index: number) => {
+    const row = rows?.[index];
+    if (!row) return null;
+    const under = notes.filter(
+      (n) => rowForLine(block, n.side, n.lineNumber) === index,
+    );
+    return [
+      <tr
+        key={index}
+        data-row={index}
+        dangerouslySetInnerHTML={{ __html: row.html }}
+      />,
+      under.length > 0 && (
+        <tr key={`notes:${index}`} className="rich-row-notes">
+          <td colSpan={row.cells}>
+            <div>{under.map(drawNote)}</div>
+          </td>
+        </tr>
+      ),
+    ];
+  };
+
+  return (
+    <div className="rich-row" onMouseOver={rows && onMouseOver}>
+      <div className="markdown">
+        {rows ? (
+          <div className={className} data-change={block.change}>
+            <table>
+              <thead>{tableRow(0)}</thead>
+              {rows.length > 1 && (
+                <tbody>{rows.slice(1).map((_, i) => tableRow(i + 1))}</tbody>
+              )}
+            </table>
+          </div>
+        ) : (
+          <div
+            className={className}
+            data-change={block.change}
+            dangerouslySetInnerHTML={{ __html: block.html }}
+          />
+        )}
+      </div>
+      {target && (
+        <button
+          type="button"
+          className="rich-comment"
+          style={hovered ? { top: hover.top } : undefined}
+          aria-label={commentLabel(target)}
+          title={commentLabel(target)}
+          onClick={() => onComment?.(target)}
+        >
+          <PlusIcon />
+        </button>
+      )}
+      {!rows && notes.map(drawNote)}
+    </div>
+  );
+}
+
 // The rendered side of a markdown file: sanitized HTML per block, with
 // the changed blocks marked in the diff colors. Each block takes
 // comments on its source lines, and shows the threads on them.
@@ -229,15 +339,6 @@ export default function RichMarkdown({
     const index = at < 0 ? doc.blocks.length - 1 : at;
     notesByBlock.set(index, [...(notesByBlock.get(index) ?? []), note]);
   }
-  const drawNotes = (index: number) =>
-    notesByBlock.get(index)?.map((note) => (
-      <div
-        key={`${note.metadata?.kind}:${note.metadata?.threadId ?? ""}`}
-        data-rich-note={`${note.side}:${note.lineNumber}`}
-      >
-        {renderNote?.(note)}
-      </div>
-    ));
 
   return (
     <article
@@ -246,38 +347,23 @@ export default function RichMarkdown({
       data-testid="rich-markdown"
       data-rich-path={path}
     >
-      {doc.blocks.map((block, i) => {
-        const target = onComment ? blockTarget(block) : null;
-        return (
-          <div key={i} className="rich-row">
-            <div className="markdown">
-              <div
-                className={cn(
-                  "rich-block",
-                  block.item && "rich-item",
-                  block.change === "added" && "rich-added",
-                  block.change === "removed" && "rich-removed",
-                )}
-                data-change={block.change}
-                dangerouslySetInnerHTML={{ __html: block.html }}
-              />
-            </div>
-            {target && (
-              <button
-                type="button"
-                className="rich-comment"
-                aria-label={commentLabel(target)}
-                title={commentLabel(target)}
-                onClick={() => onComment?.(target)}
-              >
-                <PlusIcon />
-              </button>
-            )}
-            {drawNotes(i)}
-          </div>
-        );
-      })}
-      {drawNotes(-1)}
+      {doc.blocks.map((block, i) => (
+        <BlockRow
+          key={i}
+          block={block}
+          notes={notesByBlock.get(i) ?? []}
+          renderNote={renderNote}
+          onComment={onComment}
+        />
+      ))}
+      {notesByBlock.get(-1)?.map((note) => (
+        <div
+          key={noteKey(note)}
+          data-rich-note={`${note.side}:${note.lineNumber}`}
+        >
+          {renderNote?.(note)}
+        </div>
+      ))}
       <WidthHandle />
     </article>
   );

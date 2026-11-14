@@ -8,6 +8,7 @@ import {
   diffBlocks,
   isMarkdownPath,
   resolveRepoPath,
+  rowTarget,
   useRichDocs,
 } from "./richDiff";
 
@@ -17,6 +18,37 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 import { api } from "../api";
+
+describe("table rows", () => {
+  const table = "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n";
+
+  it("gives each row of a table its source line", () => {
+    const [, block] = diffBlocks(null, `Intro.\n\n${table}`);
+    expect(block.newLines).toEqual([3, 6]);
+    expect(block.rows?.map((r) => [r.head, r.offset])).toEqual([
+      [true, 0],
+      [false, 2],
+      [false, 3],
+    ]);
+    expect(block.rows?.[2].html).toBe("<td>3</td>\n<td>4</td>");
+    expect(rowTarget(block, block.rows![1])).toEqual({
+      side: "additions",
+      line: 5,
+    });
+  });
+
+  it("targets a row of a removed table on the old file", () => {
+    const [block] = diffBlocks(table, null);
+    expect(rowTarget(block, block.rows![0])).toEqual({
+      side: "deletions",
+      line: 1,
+    });
+  });
+
+  it("leaves other blocks without rows", () => {
+    expect(diffBlocks(null, "Text.\n")[0].rows).toBeUndefined();
+  });
+});
 
 describe("diffBlocks", () => {
   it("marks unchanged, added and removed blocks", () => {

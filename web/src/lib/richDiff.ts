@@ -12,7 +12,8 @@ import type { Side } from "../types";
 // common subsequence on their source text, so a moved or edited
 // paragraph shows up as a removal next to an addition. Each block keeps
 // the source lines it came from, so a comment on a block is a comment
-// on those lines.
+// on those lines. A table also keeps its rows, each one source line, so
+// a comment can be on one row.
 
 export type BlockChange = "same" | "added" | "removed";
 
@@ -27,6 +28,17 @@ export interface RichBlock {
   newLines?: LineRange;
   // One item of a list, drawn as a list of its own.
   item?: boolean;
+  // The rows of a table, header first.
+  rows?: RichRow[];
+}
+
+export interface RichRow {
+  // The cells of the row: what its <tr> holds.
+  html: string;
+  cells: number;
+  head: boolean;
+  // The row's source line, counted from the first line of the table.
+  offset: number;
 }
 
 // The lines a comment on a block is written on.
@@ -43,6 +55,23 @@ export function blockTarget(block: RichBlock): BlockTarget | null {
   if (!range) return null;
   const [start, end] = range;
   return { side, line: end, startLine: start !== end ? start : undefined };
+}
+
+// A row is one line of the side its table is commented on.
+export function rowTarget(block: RichBlock, row: RichRow): BlockTarget | null {
+  const target = blockTarget(block);
+  if (!target) return null;
+  const start = target.startLine ?? target.line;
+  return { side: target.side, line: start + row.offset };
+}
+
+// The row of a table a line of its side belongs to. The delimiter line
+// under the header counts as the header.
+export function rowForLine(block: RichBlock, side: Side, line: number): number {
+  const range = side === "deletions" ? block.oldLines : block.newLines;
+  const offset = line - (range?.[0] ?? line);
+  const upTo = (block.rows ?? []).filter((r) => r.offset <= offset).length;
+  return Math.max(0, upTo - 1);
 }
 
 // The block a line of one side belongs to: the one that holds it, or
@@ -207,6 +236,32 @@ function renderHtml(
     : html;
 }
 
+// The rows of a rendered table. A row of a table is one line of the
+// source: the header, the delimiter line, then one line per body row.
+function tableRows(token: Token, html: string): RichRow[] | undefined {
+  if (token.type !== "table") return undefined;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const rows = [...doc.body.querySelectorAll(":scope > table > * > tr")];
+  if (rows.length !== (token as Tokens.Table).rows.length + 1) return undefined;
+  return rows.map((tr, index) => ({
+    html: tr.innerHTML.trim(),
+    cells: tr.children.length,
+    head: index === 0,
+    offset: index === 0 ? 0 : index + 1,
+  }));
+}
+
+// What a unit draws, in the document whose link definitions it uses.
+function draw(
+  u: Unit,
+  links: TokensList["links"],
+  options: RenderOptions,
+): Pick<RichBlock, "html" | "item" | "rows"> {
+  const html = renderHtml(u.token, links, options);
+  const rows = tableRows(u.token, html);
+  return { html, item: u.item, ...(rows && { rows }) };
+}
+
 export function diffBlocks(
   oldMarkdown: string | null,
   newMarkdown: string | null,
@@ -220,15 +275,13 @@ export function diffBlocks(
   const m = b.length;
   const removed = (u: Unit): RichBlock => ({
     change: "removed",
-    html: renderHtml(u.token, oldTokens.links, options),
+    ...draw(u, oldTokens.links, options),
     oldLines: u.lines,
-    item: u.item,
   });
   const added = (u: Unit): RichBlock => ({
     change: "added",
-    html: renderHtml(u.token, newTokens.links, options),
+    ...draw(u, newTokens.links, options),
     newLines: u.lines,
-    item: u.item,
   });
 
   // lcs[i][j] is the common-subsequence length of a[i:] and b[j:].
@@ -252,10 +305,9 @@ export function diffBlocks(
     if (a[i].key === b[j].key) {
       out.push({
         change: "same",
-        html: renderHtml(b[j].token, newTokens.links, options),
+        ...draw(b[j], newTokens.links, options),
         oldLines: a[i].lines,
         newLines: b[j].lines,
-        item: b[j].item,
       });
       i++;
       j++;

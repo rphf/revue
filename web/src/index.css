@@ -392,6 +392,28 @@
   .rich-row:hover > .rich-comment {
     @apply opacity-100;
   }
+  /* A row of a table takes the comment button while the pointer is on
+     it. */
+  .rich-row:has(> .rich-comment) tr[data-row]:hover {
+    @apply bg-muted/60;
+  }
+  /* The notes of a row span the table. They take the width the table
+     has, so a long comment does not widen its columns, and the spacer
+     keeps a narrow table wide enough to read a thread. */
+  .markdown .rich-row-notes > td {
+    @apply px-2 py-0 font-normal;
+  }
+  .rich-row-notes > td::before {
+    @apply block w-96 content-[''];
+  }
+  .rich-row-notes > td > div {
+    @apply w-0 min-w-full;
+  }
+  /* A thread inside a table is inside the document's markdown: only
+     the text of its comments takes the markdown styles. */
+  .rich-row-notes :where(ul, ol, p):not(.rich-row-notes .markdown *) {
+    @apply m-0 list-none p-0;
+  }
   .markdown-doc .annotation-card {
     @apply mx-0;
   }
