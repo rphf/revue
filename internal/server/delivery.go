@@ -1,9 +1,14 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+
+	"github.com/rphf/revue/internal/store"
 )
 
 // settingDelivered is the cursor of the last feedback printed to the
@@ -45,6 +50,69 @@ func (s *Server) deliver(cursor int64) error {
 		return err
 	}
 	return s.store.SetSetting(settingDelivered, strconv.FormatInt(cursor, 10))
+}
+
+// unsent counts the sends the agent has not received: what the next
+// feedback or wait delivers.
+func unsent(st *store.Store) (int, error) {
+	v, ok, err := st.Setting(settingDelivered)
+	if err != nil || !ok {
+		return 0, err
+	}
+	delivered, _ := strconv.ParseInt(v, 10, 64)
+	return st.CountEventsSince(delivered, eventSent)
+}
+
+// Status is what a status line or a hook asks before anything else:
+// whether the reviewer sent something the agent has not received.
+type Status struct {
+	// Unread counts the sends not yet delivered to the agent.
+	Unread int `json:"unread"`
+	// Threads counts the open threads of the checked-out branch. Only a
+	// running server knows it.
+	Threads *int `json:"threads,omitempty"`
+}
+
+// handleStatus answers with the status and delivers nothing. It does
+// not count as activity either (see secure), so a status line that asks
+// every few seconds neither hides a send from the agent nor keeps an
+// idle server running.
+func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	unread, err := unsent(s.store)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	views, err := s.threadViews(false, false, true)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	threads := len(views)
+	writeJSON(w, http.StatusOK, Status{Unread: unread, Threads: &threads})
+}
+
+// StoredStatus reads the status of a repository from its database,
+// without a server: a send the agent never received outlasts the server
+// that took it. A repository revue never served has nothing unread.
+func StoredStatus(repoRoot string) (Status, error) {
+	dataDir, err := DataDir(repoRoot)
+	if err != nil {
+		return Status{}, err
+	}
+	path := filepath.Join(dataDir, "revue.db")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return Status{}, nil
+	} else if err != nil {
+		return Status{}, err
+	}
+	st, err := store.OpenReadOnly(path)
+	if err != nil {
+		return Status{}, err
+	}
+	defer func() { _ = st.Close() }()
+	unread, err := unsent(st)
+	return Status{Unread: unread}, err
 }
 
 // startCursor is where a feedback or wait reads from: the delivery

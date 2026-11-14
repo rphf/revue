@@ -147,3 +147,82 @@ func TestASendIsStaleOnceTheCodeChanges(t *testing.T) {
 		t.Fatalf("stale = %v, want [%d]", fb.Stale, changed.ID)
 	}
 }
+
+func (ts *testServer) status(t *testing.T) Status {
+	t.Helper()
+	var st Status
+	ts.mustStatus(t, ts.do(t, "GET", "/api/status", nil, &st), http.StatusOK)
+	return st
+}
+
+func TestStatusCountsUndeliveredSendsAndDeliversNothing(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	if st := ts.status(t); st.Unread != 0 || st.Threads == nil || *st.Threads != 0 {
+		t.Fatalf("status before any send = %+v", st)
+	}
+	ts.modify(t)
+	ts.draft(t, 1, "why this?")
+	ts.send(t, "one question")
+	for range 2 {
+		if st := ts.status(t); st.Unread != 1 || *st.Threads != 1 {
+			t.Fatalf("status after a send = %+v, want 1 unread and 1 thread", st)
+		}
+	}
+	if n := sentNotes(ts.feedback(t, 0)); len(n) != 1 {
+		t.Fatalf("feedback after two status calls = %v, want the send", n)
+	}
+	if st := ts.status(t); st.Unread != 0 || *st.Threads != 1 {
+		t.Fatalf("status after delivery = %+v, want 0 unread and the thread still open", st)
+	}
+}
+
+// A status line asks every few seconds: that must not keep the server up.
+func TestStatusPollDoesNotHoldOffIdleShutdown(t *testing.T) {
+	ts := startServer(t, initRepo(t), 300*time.Millisecond)
+	deadline := time.After(3 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ts.Done():
+			return
+		case <-deadline:
+			t.Fatal("idle shutdown did not fire while status was polled")
+		case <-tick.C:
+			req, _ := http.NewRequest("GET", ts.URL()+"/api/status", nil)
+			req.Header.Set("Authorization", "Bearer "+ts.Token())
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+}
+
+func TestStoredStatusReadsWithoutAServer(t *testing.T) {
+	t.Setenv("REVUE_DATA_DIR", t.TempDir())
+	repo := initRepo(t)
+	if st, err := StoredStatus(repo); err != nil || st.Unread != 0 {
+		t.Fatalf("status of a repository never served = %+v, %v", st, err)
+	}
+	dataDir, err := DataDir(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Start(Config{RepoRoot: repo, DataDir: dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := &testServer{Server: s, repo: repo, dataDir: dataDir, client: http.DefaultClient}
+	ts.send(t, "done reviewing")
+	if st, err := StoredStatus(repo); err != nil || st.Unread != 1 {
+		t.Fatalf("stored status beside a running server = %+v, %v; want 1 unread", st, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := StoredStatus(repo); err != nil || st.Unread != 1 || st.Threads != nil {
+		t.Fatalf("stored status after shutdown = %+v, %v; want 1 unread and no thread count", st, err)
+	}
+}

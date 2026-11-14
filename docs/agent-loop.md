@@ -32,6 +32,11 @@ returns as soon as the reviewer sends. A send that lands while no `wait` is
 active is not lost: the next `wait` or `feedback` returns it, once, on any
 revue server for the repository.
 
+The harness that runs the agent can do step 5 for it. `revue status`
+prints how many sends the agent has not received, without delivering them
+and without starting a server, so a status line can show the count and a
+hook can run `revue feedback` when a session starts or a turn ends.
+
 The commands, their JSON output, and the exit codes are in
 [cli.md](cli.md). Running the agent inside a container is covered in
 [configuration.md](configuration.md).

@@ -53,6 +53,11 @@ Agent:
   archive ID... | --landed | --resolved | --all
   unarchive ID
   export                   every thread as markdown
+  status [--json]          whether something waits, for a status line or
+                           a hook: prints "unread N", the sends not yet
+                           delivered, and with a running server
+                           "threads N" and "url URL". It delivers
+                           nothing and starts no server
 
 feedback and wait print:
   cursor C                 the last event printed; no need to keep it
@@ -130,6 +135,8 @@ func Main(args []string) int {
 		return cmdUpdate(rest, os.Stdout, os.Stderr)
 	case "prune":
 		return cmdPrune(rest, os.Stdout, os.Stderr)
+	case "status":
+		return cmdStatus(rest, os.Stdout, os.Stderr)
 	}
 
 	e, code := connect(os.Stdout, os.Stderr)

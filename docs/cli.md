@@ -41,6 +41,7 @@ code says what kind. `revue help` prints the same reference.
 | `revue archive ID... \| --landed \| --resolved \| --all` | Archive these threads, or those of the current branch whose code landed, the resolved and outdated ones, or all of them. Prints `archived: ID...`, and `skipped (holds a draft): ID...` for threads with a reviewer draft, which are never archived. |
 | `revue unarchive ID` | Bring an archived thread back. It stays: it does not land again. |
 | `revue export` | Print every thread as markdown, grouped by file, with quoted code and every sent comment, for a human to read or paste. Drafts are excluded. |
+| `revue status [--json]` | Print whether something waits, for a status line or a hook that asks often: `unread N`, the sends not yet delivered to the agent, and with a running server `threads N`, the open threads of the current branch, and `url URL`, a login link. It delivers nothing, so the next `feedback` or `wait` still prints the send. It starts no server and does not keep an idle one running; without a server it reads the count from the repository's data. `--json` prints `unread`, `threads`, `url`, and `running`. |
 
 `feedback` and `wait` print:
 

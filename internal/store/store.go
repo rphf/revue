@@ -166,6 +166,18 @@ func Open(path string) (*Store, error) {
 	return &Store{q: db, db: db}, nil
 }
 
+// OpenReadOnly opens the database at path as it is, to read it without
+// a server: nothing is created or migrated, and a server that runs
+// meanwhile keeps writing.
+func OpenReadOnly(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(1000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return &Store{q: db, db: db}, nil
+}
+
 func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
@@ -834,6 +846,13 @@ func (s *Store) LastEventID() (int64, error) {
 		return 0, nil
 	}
 	return id, err
+}
+
+// CountEventsSince counts the events of one type after since.
+func (s *Store) CountEventsSince(since int64, eventType string) (int, error) {
+	var n int
+	err := s.q.QueryRow("SELECT COUNT(*) FROM events WHERE id > ? AND type = ?", since, eventType).Scan(&n)
+	return n, err
 }
 
 func (s *Store) EventsSince(since int64) ([]*Event, error) {

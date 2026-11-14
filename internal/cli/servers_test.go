@@ -104,3 +104,42 @@ func TestServersListsAndStopStops(t *testing.T) {
 		t.Errorf("state after stop = %+v, %v; want it kept, naming %s", st, err, real(repoA))
 	}
 }
+
+func TestStatusStartsNoServerAndReadsARunningOne(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary and starts a server")
+	}
+	bin := buildRevue(t)
+	t.Setenv("REVUE_DATA_DIR", t.TempDir())
+	repo := initRepo(t)
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("revue %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	t.Cleanup(func() { _ = exec.Command(bin, "stop", "--all").Run() })
+
+	if got := run("status"); got != "unread 0\n" {
+		t.Errorf("status with no server = %q, want only the unread count", got)
+	}
+	if got := run("servers"); !strings.Contains(got, "no revue server is running") {
+		t.Errorf("status started a server: %q", got)
+	}
+
+	run("open", "--no-browser")
+	var view statusView
+	if err := json.Unmarshal([]byte(run("status", "--json")), &view); err != nil {
+		t.Fatal(err)
+	}
+	if !view.Running || view.Unread != 0 || view.Threads == nil || !strings.Contains(view.URL, "/auth?token=") {
+		t.Errorf("status with a server = %+v, want it running with a thread count and a login URL", view)
+	}
+	if got := run("status"); !strings.HasPrefix(got, "unread 0\nthreads 0\nurl http") {
+		t.Errorf("status text with a server = %q", got)
+	}
+}

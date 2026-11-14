@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/feedback", s.handleFeedback)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/wait", s.handleWait)
+	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("POST /api/focus", s.handleFocus)
 	mux.HandleFunc("POST /api/raise", s.handleRaise)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -89,7 +90,11 @@ func (s *Server) secure(next http.Handler) http.Handler {
 			httpError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 			return
 		}
-		s.activity.touch()
+		// A status poll is not activity: it would keep an idle server
+		// running for as long as a status line shows it.
+		if r.URL.Path != "/api/status" {
+			s.activity.touch()
+		}
 		next.ServeHTTP(w, r)
 	})
 }
