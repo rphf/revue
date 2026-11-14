@@ -62,6 +62,7 @@ import { coalesce } from "@/lib/coalesce";
 import { isTyping } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
+import { usePrimedHighlights } from "@/lib/primeHighlights";
 import { useRichDocs } from "@/lib/richDiff";
 import { locationLabel, threadRev } from "@/lib/threads";
 import { groupByTurn } from "@/lib/turns";
@@ -809,6 +810,22 @@ export default function DiffPage({
     const after = order.paths.slice(at + 1).filter((p) => !order.gone.has(p));
     return [before.at(-1), after[0]];
   }, [order, currentPath]);
+  // Highlighted ahead of time: in focused mode the files nearest to
+  // the one on screen first, on both sides, and else in tree order.
+  const primeQueue = useMemo(() => {
+    if (parsedFiles === null) return null;
+    const byName = new Map(parsedFiles.map((f) => [f.name, f]));
+    const at = currentPath === undefined ? 0 : filePaths.indexOf(currentPath);
+    const paths =
+      currentPath === undefined || at < 0
+        ? filePaths
+        : filePaths
+            .map((path, i) => ({ path, far: Math.abs(i - at) }))
+            .sort((a, b) => a.far - b.far)
+            .map((f) => f.path);
+    return paths.flatMap((path) => byName.get(path) ?? []);
+  }, [parsedFiles, filePaths, currentPath]);
+  usePrimedHighlights(primeQueue);
   const prevFile = useCallback(() => {
     if (prevPath !== undefined) setSelectedPath(prevPath);
   }, [prevPath]);

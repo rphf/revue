@@ -4,6 +4,7 @@ import { WorkerPoolContextProvider } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import App from "./App";
 import { THEMES } from "./components/codeViewStyle";
+import { PRIME_FILES } from "./lib/primeHighlights";
 import "./index.css";
 
 // Syntax highlighting runs in a pool of workers, not on the main thread,
@@ -19,7 +20,11 @@ const poolSize = Math.max(
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <WorkerPoolContextProvider
-      poolOptions={{ workerFactory: () => new DiffsWorker(), poolSize }}
+      poolOptions={{
+        workerFactory: () => new DiffsWorker(),
+        poolSize,
+        totalASTLRUCacheSize: PRIME_FILES,
+      }}
       highlighterOptions={{
         theme: THEMES,
         preferredHighlighter: "shiki-wasm",

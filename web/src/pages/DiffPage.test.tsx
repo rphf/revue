@@ -108,7 +108,7 @@ vi.mock("@pierre/diffs/react", async () => {
       </div>
     );
   };
-  return { CodeView };
+  return { CodeView, useWorkerPool: () => undefined };
 });
 
 // One file per section header in the patch, a.go when there is none.
