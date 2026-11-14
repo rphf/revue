@@ -52,8 +52,13 @@ const SPRITE_SHEET = `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
 // lane is a click target, and the check reads as "done". The library
 // lets the decoration absorb the row's free space and shrink to nothing
 // under a long, deeply nested name; here the name takes the ellipsis
-// and the viewed lane keeps its size.
+// and the viewed lane keeps its size. The library shows its ellipsis
+// when a name's wrapped copy is taller than one line, and a fractional
+// browser zoom rounds a single line to slightly more than that; a name
+// that wraps is at least two lines tall, so the test here is 1.5 lines.
 const UNSAFE_CSS = `
+[data-truncate-marker] { opacity: 0; }
+@container measure (height > 1.5lh) { [data-truncate-marker] { opacity: 1; } }
 [data-item-section="content"] { flex: 1 1 auto; }
 [data-item-section="decoration"] { flex: 0 0 auto; min-width: 22px; overflow: visible; }
 [data-item-section="decoration"] > span { cursor: pointer; color: var(--trees-fg-muted); overflow: visible; }
