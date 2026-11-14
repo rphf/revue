@@ -204,8 +204,12 @@
     @apply my-2 mr-3 ml-12 max-w-3xl rounded-lg border bg-card font-sans text-sm text-card-foreground shadow-xs;
   }
 
+  /* The annotation slots of @pierre/diffs set word-break: break-word,
+     which lets a table column shrink to one letter; overflow-wrap
+     still breaks a long word that overflows the line. */
   .markdown {
     @apply leading-relaxed wrap-break-word;
+    word-break: normal;
   }
   .markdown > :first-child {
     margin-top: 0;
@@ -251,6 +255,11 @@
      side. */
   .markdown img {
     @apply inline-block max-w-full rounded-md border;
+  }
+  /* As on GitHub: as wide as its content, scrolled when wider than
+     the text. */
+  .markdown table {
+    @apply block w-max max-w-full overflow-x-auto;
   }
   .markdown th,
   .markdown td {
