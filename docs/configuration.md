@@ -12,6 +12,18 @@ settings until it stops. Flags of `revue serve` override them.
 | `REVUE_DATA_DIR` | XDG directories | One root for the database and the state file. For tests and scripts. |
 | `REVUE_ARCHIVE_RETENTION` | `90d` | How long archived threads stay before they are deleted: a number of days such as `30d`, a duration such as `720h`, or `0` to keep them forever. The branch history in the page lives on archived threads. |
 
+## Sessions
+
+`REVUE_SESSION` is read by each command, not by the server. The harness that
+runs the agent sets it to the id of the agent's session. Revue then notes the
+repositories that session runs a command in, and `revue status --session ID`
+reports each of them. An agent reviews where its change is, which is not
+always its working directory, and several sessions can run on one machine:
+with the session, a status line shows the reviews of its own session, and a
+hook delivers a send to the session that handles that review. `revue status`
+itself notes nothing. A session's list is dropped 30 days after its last
+command.
+
 ## Run inside a container
 
 The default settings are for a laptop. In a sandbox, the agent runs revue

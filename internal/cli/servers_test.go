@@ -143,3 +143,72 @@ func TestStatusStartsNoServerAndReadsARunningOne(t *testing.T) {
 		t.Errorf("status text with a server = %q", got)
 	}
 }
+
+// An agent reviews where its change is: the status of a session names
+// the repositories it ran revue in, from any directory.
+func TestStatusOfASessionFollowsWhereItRanRevue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary and starts servers")
+	}
+	bin := buildRevue(t)
+	t.Setenv("REVUE_DATA_DIR", t.TempDir())
+	repoA, repoB := initRepo(t), initRepo(t)
+	run := func(dir, session string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Environ(), "REVUE_SESSION="+session)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("revue %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	t.Cleanup(func() { _ = exec.Command(bin, "stop", "--all").Run() })
+	real := func(p string) string {
+		r, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	reposOf := func(session string) []string {
+		t.Helper()
+		var out struct {
+			Repos []statusView `json:"repos"`
+		}
+		// Asked from a directory that is no repository.
+		if err := json.Unmarshal([]byte(run(t.TempDir(), "", "status", "--json", "--session", session)), &out); err != nil {
+			t.Fatal(err)
+		}
+		var repos []string
+		for _, v := range out.Repos {
+			if !v.Running || v.Threads == nil {
+				t.Errorf("status of %s = %+v, want its running server", v.Repo, v)
+			}
+			repos = append(repos, v.Repo)
+		}
+		return repos
+	}
+
+	run(repoA, "one", "open", "--no-browser")
+	run(repoB, "two", "open", "--no-browser")
+	// A status asks; it does not make the repository the session's.
+	run(repoB, "one", "status")
+	if got := reposOf("one"); len(got) != 1 || got[0] != real(repoA) {
+		t.Errorf("repos of session one = %v, want only %s", got, real(repoA))
+	}
+	run(repoB, "one", "feedback")
+	if got := reposOf("one"); len(got) != 2 || got[1] != real(repoB) {
+		t.Errorf("repos of session one after a feedback in B = %v, want A then B", got)
+	}
+	if got := reposOf("two"); len(got) != 1 || got[0] != real(repoB) {
+		t.Errorf("repos of session two = %v, want only %s", got, real(repoB))
+	}
+	if got := reposOf("nobody"); len(got) != 0 {
+		t.Errorf("repos of an unknown session = %v, want none", got)
+	}
+	if got := run(repoA, "", "status", "--session", "one"); !strings.HasPrefix(got, "repo "+real(repoA)+"\nunread 0\nthreads 0\nurl http") {
+		t.Errorf("status text of a session = %q", got)
+	}
+}

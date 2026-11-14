@@ -53,11 +53,14 @@ Agent:
   archive ID... | --landed | --resolved | --all
   unarchive ID
   export                   every thread as markdown
-  status [--json]          whether something waits, for a status line or
+  status [--json] [--session ID]
+                           whether something waits, for a status line or
                            a hook: prints "unread N", the sends not yet
                            delivered, and with a running server
                            "threads N" and "url URL". It delivers
-                           nothing and starts no server
+                           nothing and starts no server. --session: one
+                           such block per repository that session ran
+                           revue in, each after a "repo PATH" line
 
 feedback and wait print:
   cursor C                 the last event printed; no need to keep it
@@ -85,7 +88,8 @@ Human:
 
 Exit: 0 ok, 1 error, 2 bad request, 3 wait timed out. Errors: one line on
 stderr. Env, read at server start: REVUE_BIND REVUE_PORT REVUE_PUBLIC_URL
-REVUE_IDLE_TIMEOUT REVUE_DATA_DIR REVUE_ARCHIVE_RETENTION.
+REVUE_IDLE_TIMEOUT REVUE_DATA_DIR REVUE_ARCHIVE_RETENTION. REVUE_SESSION,
+read by each command: the id of the agent's session, set by its harness.
 `
 
 // env carries everything a command needs, so tests can inject a
@@ -184,6 +188,11 @@ func connect(stdout, stderr io.Writer) (*env, int) {
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "could not start the revue server:", err)
 		return nil, ExitError
+	}
+	// The harness names the agent's session; noting where it works is
+	// a convenience, so a failure to write it stops nothing.
+	if id := os.Getenv("REVUE_SESSION"); id != "" {
+		_ = server.RecordSession(id, repoRoot)
 	}
 	return &env{
 		client:   &Client{BaseURL: st.BaseURL(), Token: st.Token, HTTP: &http.Client{}},

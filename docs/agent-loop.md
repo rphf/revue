@@ -35,7 +35,10 @@ revue server for the repository.
 The harness that runs the agent can do step 5 for it. `revue status`
 prints how many sends the agent has not received, without delivering them
 and without starting a server, so a status line can show the count and a
-hook can run `revue feedback` when a session starts or a turn ends.
+hook can run `revue feedback` when a session starts or a turn ends. With
+`REVUE_SESSION` set to the session's id, `revue status --session ID` names
+the repositories that session reviews in, so the harness acts on those and
+not on whatever repository the session happens to be in.
 
 The commands, their JSON output, and the exit codes are in
 [cli.md](cli.md). Running the agent inside a container is covered in
