@@ -895,73 +895,6 @@ func TestSSEStreamsDiffChangesReplayAndLiveEvents(t *testing.T) {
 	}
 }
 
-func TestFocusReachesThePagesOnThatDiff(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	focus := func(query string) int {
-		var out struct {
-			Pages int `json:"pages"`
-		}
-		ts.do(t, "POST", "/api/focus"+query, nil, &out)
-		return out.Pages
-	}
-	if n := focus(""); n != 0 {
-		t.Fatalf("focus with no page open = %d, want 0", n)
-	}
-
-	req, _ := http.NewRequest("GET", ts.URL()+"/api/events", nil)
-	req.Header.Set("Authorization", "Bearer "+ts.Token())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	frames := readFrames(t, resp.Body)
-	if f := nextFrame(t, frames, 3*time.Second); f.Type != eventDiffChanged {
-		t.Fatalf("first frame = %+v, want diff.changed", f)
-	}
-
-	if n := focus("?arg=--&arg=a.txt"); n != 0 {
-		t.Errorf("focus on another diff = %d, want 0", n)
-	}
-	if n := focus(""); n != 1 {
-		t.Fatalf("focus with the page open = %d, want 1", n)
-	}
-	if f := nextFrame(t, frames, 3*time.Second); f.Type != eventFocus || f.ID != nil {
-		t.Fatalf("frame = %+v, want an id-less focus", f)
-	}
-}
-
-func TestFocusWaitsForThePagesOfAReplacedServer(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	ts.reconnectUntil = time.Now().Add(3 * time.Second)
-
-	// The page's stream comes back a moment after the focus asks.
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		req, _ := http.NewRequest("GET", ts.URL()+"/api/events", nil)
-		req.Header.Set("Authorization", "Bearer "+ts.Token())
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			t.Cleanup(func() { _ = resp.Body.Close() })
-		}
-	}()
-	var out struct {
-		Pages int `json:"pages"`
-	}
-	ts.do(t, "POST", "/api/focus", nil, &out)
-	if out.Pages != 1 {
-		t.Fatalf("focus while the page reconnects = %d, want 1", out.Pages)
-	}
-
-	var health struct {
-		Pages int `json:"pages"`
-	}
-	ts.do(t, "GET", "/healthz", nil, &health)
-	if health.Pages != 1 {
-		t.Errorf("healthz pages = %d, want 1", health.Pages)
-	}
-}
-
 func TestSSEResumesFromLastEventID(t *testing.T) {
 	ts := startServer(t, initRepo(t), 0)
 	ts.modify(t)
@@ -1535,33 +1468,6 @@ func TestBuildStampIgnoresSymlinks(t *testing.T) {
 	}
 }
 
-func TestRaiseBringsTheBrowserForwardForALocalPage(t *testing.T) {
-	ts := startServer(t, initRepo(t), 0)
-	raised := 0
-	ts.raise = func() error { raised++; return nil }
-	resp := ts.do(t, "POST", "/api/raise", nil, nil)
-	ts.mustStatus(t, resp, http.StatusNoContent)
-	_ = resp.Body.Close()
-	if raised != 1 {
-		t.Errorf("raised %d times, want 1", raised)
-	}
-}
-
-func TestBrowserFromHandlersPicksTheHTTPSHandler(t *testing.T) {
-	data := []byte(`{"LSHandlers":[
-		{"LSHandlerContentType":"public.html","LSHandlerRoleAll":"com.example.editor"},
-		{"LSHandlerURLScheme":"http","LSHandlerRoleAll":"com.example.old"},
-		{"LSHandlerURLScheme":"https","LSHandlerRoleAll":"app.zen-browser.zen"}]}`)
-	if got := browserFromHandlers(data); got != "app.zen-browser.zen" {
-		t.Errorf("browser = %q, want the https handler", got)
-	}
-	if got := browserFromHandlers(nil); got != "com.apple.Safari" {
-		t.Errorf("browser with no handlers = %q, want Safari", got)
-	}
-}
-
-// With w=1 the diff leaves whitespace out: a file with only whitespace
-// changes is gone, and threads keep the places the full diff gives them.
 func TestDiffIgnoringWhitespace(t *testing.T) {
 	repo := initRepo(t)
 	writeFile(t, repo, "b.txt", "one\ntwo\n")

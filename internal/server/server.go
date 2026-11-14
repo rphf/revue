@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/rphf/revue/internal/gitx"
@@ -39,9 +38,6 @@ type Config struct {
 	BuildStamp  string // identifies the binary; "" derives it from the executable
 	// Version is the running release, checked against the latest one.
 	Version string
-	// PagesReconnecting says pages of the server this one replaces will
-	// connect again shortly.
-	PagesReconnecting bool
 	// ArchiveRetention is how long archived threads are kept; 0 keeps
 	// them forever.
 	ArchiveRetention time.Duration
@@ -100,27 +96,20 @@ func normalizePublicURL(raw string) (string, error) {
 }
 
 type Server struct {
-	store    *store.Store
-	repoRoot string
-	repoName string
-	token    string
-	build    string
-	updates  *updates
-	// pages counts the open event streams: the pages connected.
-	pages atomic.Int64
-	// reconnectUntil is when pages of a replaced server should have
-	// connected again; zero when there were none.
-	reconnectUntil time.Time
-	publicURL      string
-	views          *views
-	bus            *bus
-	activity       *activity
-	repo           repoState
+	store     *store.Store
+	repoRoot  string
+	repoName  string
+	token     string
+	build     string
+	updates   *updates
+	publicURL string
+	views     *views
+	bus       *bus
+	activity  *activity
+	repo      repoState
 	// deliveryMu keeps concurrent feedback from moving the delivery
 	// cursor back.
 	deliveryMu sync.Mutex
-	// raise brings the browser to the front; tests replace it.
-	raise func() error
 
 	http    *http.Server
 	ln      net.Listener
@@ -300,7 +289,6 @@ func Start(cfg Config) (*Server, error) {
 		token:     token,
 		build:     cfg.BuildStamp,
 		updates:   newUpdates(cfg.Version),
-		raise:     raiseDefaultBrowser,
 		publicURL: publicURL,
 		views:     newViews(),
 		bus:       newBus(),
@@ -309,9 +297,6 @@ func Start(cfg Config) (*Server, error) {
 		done:      make(chan struct{}),
 	}
 	s.ln = ln
-	if cfg.PagesReconnecting {
-		s.reconnectUntil = time.Now().Add(reconnectGrace)
-	}
 	s.http = &http.Server{Handler: s.Handler()}
 	// Scratch indexes a killed server left in the temp directory.
 	if n := gitx.SweepScratch(); n > 0 {

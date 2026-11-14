@@ -29,7 +29,6 @@ import { type PanelSize, usePanelRef } from "react-resizable-panels";
 import CommentForm from "../components/CommentForm";
 import { AgentNoteView } from "../components/AgentNote";
 import ConnectionBanner from "../components/ConnectionBanner";
-import NotifyBanner from "../components/NotifyBanner";
 import OutdatedThread, {
   type SnapshotMode,
 } from "../components/OutdatedThread";
@@ -56,7 +55,6 @@ import {
 } from "../components/threadFocus";
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
-import { notifyPermission, requestAttention } from "@/lib/attention";
 import { keyForArgs } from "@/lib/diffArgs";
 import { coalesce } from "@/lib/coalesce";
 import { isTyping } from "@/lib/keys";
@@ -327,8 +325,6 @@ export default function DiffPage({
   const [focusedCommentId, setFocusedCommentId] = useState<number | null>(null);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [pulse, setPulse] = useState(0);
-  const [askNotify, setAskNotify] = useState(false);
-  const closeAskNotify = useCallback(() => setAskNotify(false), []);
   // Threads whose code landed, offered for archiving once per commit.
   // "Not now" hides the offer until HEAD moves on.
   const [landed, setLanded] = useState<Landed | null>(null);
@@ -539,17 +535,8 @@ export default function DiffPage({
   // diff. The notice also opens every stream, so a reconnect catches
   // up on anything missed. Before a diff for these arguments is on
   // screen there is nothing to compare, and the fetch in flight
-  // answers it. A focus notice means `revue open` found this tab and
-  // opened no other.
+  // answers it.
   const connection = useEvents(args, (e) => {
-    if (e.type === "focus") {
-      const waiting = requestAttention(
-        [repo ?? "revue", diff?.branch].filter(Boolean).join(" · "),
-        "Back to the review",
-      );
-      if (waiting && notifyPermission() === "default") setAskNotify(true);
-      return;
-    }
     if (e.type === "diff.changed") {
       const next = (e.payload as { version?: number } | null)?.version;
       notice.current = { argsKey, version: next };
@@ -1267,7 +1254,6 @@ export default function DiffPage({
               open={showShortcuts}
               onOpenChange={setShowShortcuts}
             />
-            {askNotify && <NotifyBanner onClose={closeAskNotify} />}
             <TopBar
               repo={repo}
               branch={diff?.branch}

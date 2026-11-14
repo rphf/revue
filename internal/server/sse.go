@@ -35,8 +35,8 @@ func (b *bus) subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// notify wakes every subscriber and reports how many there are.
-func (b *bus) notify() int {
+// notify wakes every subscriber.
+func (b *bus) notify() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs {
@@ -45,15 +45,11 @@ func (b *bus) notify() int {
 		default: // already pending; subscriber will re-query anyway
 		}
 	}
-	return len(b.subs)
 }
 
 // reconnectDelay is how long a page waits to open its event stream
 // again after losing it.
 const reconnectDelay = 500 * time.Millisecond
-
-// reconnectGrace bounds the wait for the pages of a replaced server.
-const reconnectGrace = 5 * time.Second
 
 // diffPollInterval is how often an open event stream checks whether
 // its diff moved.
@@ -80,13 +76,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	s.activity.connOpen()
 	defer s.activity.connClose()
-	s.pages.Add(1)
-	defer s.pages.Add(-1)
 
 	wake, cancel := s.bus.subscribe()
 	defer cancel()
-	focus, stopFocus := v.pages.subscribe()
-	defer stopFocus()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -165,11 +157,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				announced = c.version
 				flusher.Flush()
 			}
-		case <-focus:
-			if err := writeNotice(w, eventFocus, nil); err != nil {
-				return
-			}
-			flusher.Flush()
 		case <-keepalive.C:
 			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
@@ -192,29 +179,6 @@ func writeNotice(w io.Writer, typ string, payload any) error {
 	}
 	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
 	return err
-}
-
-// handleFocus asks the pages open on a diff to bring themselves to the
-// user's attention, and reports how many there are. `revue open` opens
-// a new tab only when there are none.
-func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
-	v, err := s.views.get(queryArgs(r))
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "validation", err.Error())
-		return
-	}
-	n := v.pages.notify()
-	// Right after replacing a server whose pages are reconnecting, wait
-	// for them, so the CLI does not open a second page beside them.
-	for n == 0 && time.Now().Before(s.reconnectUntil) {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-time.After(50 * time.Millisecond):
-		}
-		n = v.pages.notify()
-	}
-	writeJSON(w, http.StatusOK, map[string]int{"pages": n})
 }
 
 // waitOutcome is the long-poll result for the CLI's `revue wait`.

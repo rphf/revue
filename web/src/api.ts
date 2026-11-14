@@ -42,8 +42,6 @@ async function request<T>(
 }
 
 export const api = {
-  // Brings the browser app forward after a notification click (macOS).
-  raise: () => request<void>("POST", "/api/raise"),
   // hideSpace leaves whitespace changes out, as GitHub's w=1 does.
   getDiff: (args: string[], hideSpace = false) =>
     request<DiffResponse>(

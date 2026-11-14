@@ -104,6 +104,27 @@ describe("useEvents + ConnectionBanner", () => {
     );
   });
 
+  it("holds no stream while the tab is hidden, and resumes when it shows", () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    render(<Harness onEvent={() => {}} />);
+    const first = FakeEventSource.instances[0];
+    act(() => first.emit({ id: 7, type: "thread.created", payload: {} }));
+
+    visibility.mockReturnValue("hidden");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(first.closed).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    visibility.mockReturnValue("visible");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(FakeEventSource.latest().url).toBe("/api/events?since=7");
+    visibility.mockRestore();
+  });
+
   it("keeps the stream while the arguments stay the same", () => {
     const { rerender } = render(<Harness args={["main"]} onEvent={() => {}} />);
     rerender(<Harness args={["main"]} onEvent={() => {}} />);

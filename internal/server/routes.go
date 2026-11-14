@@ -17,8 +17,8 @@ import (
 
 // Event types. Draft mutations are deliberately absent: drafts never
 // reach the event log, so no agent-facing read can see them before the
-// reviewer sends. diff.changed and focus are notices on the stream
-// only, never stored.
+// reviewer sends. diff.changed is a notice on the stream only, never
+// stored.
 const (
 	eventSent        = "sent"
 	eventReplied     = "thread.replied"
@@ -26,7 +26,6 @@ const (
 	eventResolved    = "thread.resolved"
 	eventUnresolved  = "thread.unresolved"
 	eventDiffChanged = "diff.changed"
-	eventFocus       = "focus"
 )
 
 // Handler builds the full middleware + route stack.
@@ -60,8 +59,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/wait", s.handleWait)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
-	mux.HandleFunc("POST /api/focus", s.handleFocus)
-	mux.HandleFunc("POST /api/raise", s.handleRaise)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("GET /api/export", s.handleExport)
 	mux.HandleFunc("GET /api/note", s.handleGetNote)
@@ -176,7 +173,7 @@ func (s *Server) threadFromPath(w http.ResponseWriter, r *http.Request) (*store.
 // --- health ---
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "build": s.build, "pages": s.pages.Load()})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "build": s.build})
 }
 
 // --- diff ---

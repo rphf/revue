@@ -39,8 +39,6 @@ func Healthy(st *State) bool {
 type health struct {
 	OK    bool   `json:"ok"`
 	Build string `json:"build"`
-	// Pages counts the pages connected to the server.
-	Pages int `json:"pages"`
 }
 
 // probe asks the recorded server for its health and build stamp.
@@ -155,9 +153,6 @@ func Ensure(repoRoot string) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Pages of a replaced server reconnect to its successor, which
-	// waits for them before it reports that no page is open.
-	reconnecting := false
 	if st, err := ReadState(stateDir); err == nil {
 		if h, alive := probeHealth(st); alive {
 			if h.Build == BuildStamp() {
@@ -165,7 +160,6 @@ func Ensure(repoRoot string) (*State, error) {
 			}
 			// A server from another build keeps serving its own embedded
 			// UI and API; after a rebuild or an upgrade it must go.
-			reconnecting = h.Pages > 0
 			stopStale(st)
 		}
 	}
@@ -183,11 +177,7 @@ func Ensure(repoRoot string) (*State, error) {
 	}
 	defer func() { _ = logFile.Close() }()
 
-	args := []string{"__serve", "--repo", repoRoot}
-	if reconnecting {
-		args = append(args, "--pages-reconnecting")
-	}
-	cmd := exec.Command(exe, args...)
+	cmd := exec.Command(exe, "__serve", "--repo", repoRoot)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = detachSysProcAttr()
