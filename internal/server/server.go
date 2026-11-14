@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -431,7 +432,14 @@ func (a *activity) idleFor(timeout time.Duration) bool {
 
 // --- Security middleware (R23) ---
 
-const authCookie = "revue_token"
+// authCookie names this server's cookie. A browser keeps cookies per
+// host and not per port, and every repository's server is on the same
+// host, so each one has a name of its own, from its token: one page's
+// cookie then never replaces another's.
+func (s *Server) authCookie() string {
+	sum := sha256.Sum256([]byte(s.token))
+	return "revue_token_" + hex.EncodeToString(sum[:6])
+}
 
 // authorized checks the CLI header or the browser cookie against the
 // server token in constant time.
@@ -440,7 +448,7 @@ func (s *Server) authorized(r *http.Request) bool {
 		tok, ok := strings.CutPrefix(h, "Bearer ")
 		return ok && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
 	}
-	if c, err := r.Cookie(authCookie); err == nil {
+	if c, err := r.Cookie(s.authCookie()); err == nil {
 		return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1
 	}
 	return false
@@ -482,7 +490,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		next = "/"
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     authCookie,
+		Name:     s.authCookie(),
 		Value:    s.token,
 		Path:     "/",
 		HttpOnly: true,

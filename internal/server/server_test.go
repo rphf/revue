@@ -288,7 +288,7 @@ func TestTokenExchangeSetsCookieAndRedirectsTokenFree(t *testing.T) {
 	}
 	var cookie *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == authCookie {
+		if strings.HasPrefix(c.Name, "revue_token_") {
 			cookie = c
 		}
 	}
@@ -1600,5 +1600,28 @@ func TestDiffIgnoringWhitespace(t *testing.T) {
 	}
 	if fullAnchor == nil || spacedAnchor == nil || *fullAnchor != *spacedAnchor {
 		t.Errorf("anchor = %+v, want %+v", spacedAnchor, fullAnchor)
+	}
+}
+
+// A browser sends every server on the host the cookies of all of them:
+// each server reads its own, so two reviews stay signed in side by side.
+func TestTwoServersKeepTheirOwnCookie(t *testing.T) {
+	a := startServer(t, initRepo(t), 0)
+	b := startServer(t, initRepo(t), 0)
+	if a.authCookie() == b.authCookie() {
+		t.Fatalf("both servers name their cookie %q", a.authCookie())
+	}
+	for _, ts := range []*testServer{a, b} {
+		req, _ := http.NewRequest("GET", ts.URL()+"/api/threads", nil)
+		req.AddCookie(&http.Cookie{Name: a.authCookie(), Value: a.Token()})
+		req.AddCookie(&http.Cookie{Name: b.authCookie(), Value: b.Token()})
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status with both cookies = %d, want 200", resp.StatusCode)
+		}
 	}
 }
