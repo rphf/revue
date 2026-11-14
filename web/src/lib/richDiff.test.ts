@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { FileVersions } from "../types";
 import {
+  blockForLine,
+  blockTarget,
   diffBlocks,
   isMarkdownPath,
   resolveRepoPath,
@@ -32,6 +34,7 @@ describe("diffBlocks", () => {
     expect(blocks[2].html).toContain("Old paragraph.");
     expect(blocks[3].html).toContain("New paragraph.");
     expect(blocks[4].html).toContain("<li>item</li>");
+    expect(blocks[4].item).toBe(true);
   });
 
   it("treats a missing side as all added or all removed", () => {
@@ -48,6 +51,65 @@ describe("diffBlocks", () => {
     const blocks = diffBlocks(md, md);
     expect(blocks[0].html).toContain('href="https://example.com"');
     expect(blocks.map((b) => b.html).join("")).not.toContain("<script");
+  });
+});
+
+describe("block lines", () => {
+  const before = "# Title\n\nKept\nparagraph.\n\nOld paragraph.\n";
+  const after =
+    "# Title\n\nNew intro.\n\nKept\nparagraph.\n\n\n- one\n- two\n\n```js\na\n\nb\n```\n";
+
+  it("keeps the source lines of each block on the side it has", () => {
+    const blocks = diffBlocks(before, after);
+    expect(blocks.map((b) => [b.change, b.oldLines, b.newLines])).toEqual([
+      ["same", [1, 1], [1, 1]],
+      ["added", undefined, [3, 3]],
+      ["same", [3, 4], [5, 6]],
+      ["removed", [6, 6], undefined],
+      ["added", undefined, [9, 9]],
+      ["added", undefined, [10, 10]],
+      ["added", undefined, [12, 16]],
+    ]);
+  });
+
+  it("targets the old file for a removed block, the new one otherwise", () => {
+    const blocks = diffBlocks(before, after);
+    expect(blockTarget(blocks[1])).toEqual({ side: "additions", line: 3 });
+    expect(blockTarget(blocks[2])).toEqual({
+      side: "additions",
+      line: 6,
+      startLine: 5,
+    });
+    expect(blockTarget(blocks[3])).toEqual({ side: "deletions", line: 6 });
+  });
+
+  it("finds the block of a line, or the next one from a gap", () => {
+    const blocks = diffBlocks(before, after);
+    expect(blockForLine(blocks, "additions", 6)).toBe(2);
+    expect(blockForLine(blocks, "additions", 7)).toBe(4);
+    expect(blockForLine(blocks, "deletions", 4)).toBe(2);
+    expect(blockForLine(blocks, "deletions", 6)).toBe(3);
+    expect(blockForLine(blocks, "additions", 99)).toBe(-1);
+  });
+
+  it("makes each item of a list a block of its own", () => {
+    const blocks = diffBlocks(
+      "Intro.\n\n3. three\n4. four\n   more\n\n   - nested\n5. five\n",
+      "Intro.\n\n3. three\n4. changed\n5. five\n",
+    );
+    expect(
+      blocks.map((b) => [b.change, b.item, b.oldLines, b.newLines]),
+    ).toEqual([
+      ["same", false, [1, 1], [1, 1]],
+      ["same", true, [3, 3], [3, 3]],
+      ["removed", true, [4, 7], undefined],
+      ["added", true, undefined, [4, 4]],
+      ["same", true, [8, 8], [5, 5]],
+    ]);
+    expect(blocks[2].html).toContain('<ol start="4">');
+    expect(blocks[2].html).toContain("nested");
+    expect(blocks[4].html).toContain('<ol start="5">');
+    expect(blockTarget(blocks[3])).toEqual({ side: "additions", line: 4 });
   });
 });
 
@@ -84,6 +146,29 @@ describe("diffBlocks images", () => {
     );
     expect(blocks[0].html).toContain('src="/asset?path=docs%2Flogo.svg"');
     expect(blocks[1].html).toContain('src="/asset?path=docs%2Fmark.png"');
+  });
+
+  it("routes the sources of a picture through the resolver", () => {
+    const [block] = diffBlocks(
+      null,
+      '<picture>\n  <source media="(prefers-color-scheme: dark)" srcset="docs/dark.png, docs/dark@2x.png 2x">\n  <img src="docs/light.png" alt="">\n</picture>\n',
+      { resolveImage: (src) => `/asset?path=${encodeURIComponent(src)}` },
+    );
+    expect(block.html).toContain(
+      'srcset="/asset?path=docs%2Fdark.png, /asset?path=docs%2Fdark%402x.png 2x"',
+    );
+    expect(block.html).toContain('src="/asset?path=docs%2Flight.png"');
+  });
+
+  it("keeps a srcset URL with a comma inside whole", () => {
+    const [block] = diffBlocks(
+      null,
+      '<img srcset="docs/a,b.png 1x,docs/c.png 2x" alt="">\n',
+      { resolveImage: (src) => `/a/${src}` },
+    );
+    expect(block.html).toContain(
+      'srcset="/a/docs/a,b.png 1x, /a/docs/c.png 2x"',
+    );
   });
 });
 

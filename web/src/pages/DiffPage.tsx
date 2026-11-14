@@ -841,7 +841,9 @@ export default function DiffPage({
     if (mode) setSnapshotMode(mode);
   }, []);
 
-  const renderAnnotation = useCallback(
+  // A thread or the pending comment form, under a line of the diff or
+  // under a block of a rendered document.
+  const renderNote = useCallback(
     (annotation: DiffLineAnnotation<AnnotationMeta>) => {
       const meta = annotation.metadata;
       if (meta?.kind === "pending" && meta.pending) {
@@ -886,9 +888,6 @@ export default function DiffPage({
           </div>
         );
       }
-      if (meta?.kind === "rich" && meta.rich) {
-        return <RichMarkdown doc={meta.rich} />;
-      }
       if (meta?.kind === "thread" && meta.thread) {
         return <Thread thread={meta.thread} onChanged={loadThreads} />;
       }
@@ -905,6 +904,26 @@ export default function DiffPage({
       return null;
     },
     [args, loadThreads, openSnapshot],
+  );
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<AnnotationMeta>, path: string) => {
+      const meta = annotation.metadata;
+      if (meta?.kind === "rich" && meta.rich) {
+        return (
+          <RichMarkdown
+            doc={meta.rich}
+            path={path}
+            renderNote={renderNote}
+            onComment={(target) => {
+              pendingBody.current = "";
+              setPending({ path, ...target });
+            }}
+          />
+        );
+      }
+      return renderNote(annotation);
+    },
+    [renderNote],
   );
 
   const onLineSelect = useCallback((path: string, range: SelectedLineRange) => {

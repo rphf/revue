@@ -46,7 +46,7 @@ revue open abc123 def456      # two commits
 
 The page shows one diff, named by its `git diff` arguments, and keeps it current. A thread remembers the code it was written on: it follows its hunk as code moves, goes outdated when that hunk changes, and comes back if the code does. The agent can reply; only you resolve.
 
-A send records the working tree under `refs/revue/last-send`, a commit on no branch that a plain `git push` leaves behind. Threads belong to their branch, and a commit ends the conversation as a merge does on GitHub: its threads land, and History keeps them. Comments are GitHub-flavored markdown, and markdown files have a rendered view.
+A send records the working tree under `refs/revue/last-send`, a commit on no branch that a plain `git push` leaves behind. Threads belong to their branch, and a commit ends the conversation as a merge does on GitHub: its threads land, and History keeps them. Comments are GitHub-flavored markdown, and markdown files have a rendered view that takes comments on its blocks, at a width you set by dragging its right edge.
 
 ## Documentation
 

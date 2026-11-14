@@ -247,8 +247,10 @@
   .markdown blockquote {
     @apply border-l-2 pl-3 text-muted-foreground;
   }
+  /* Inline as on GitHub, so badges on consecutive lines sit side by
+     side. */
   .markdown img {
-    @apply max-w-full rounded-md border;
+    @apply inline-block max-w-full rounded-md border;
   }
   .markdown th,
   .markdown td {
@@ -328,23 +330,25 @@
   }
 
   /* A whole markdown file rendered in the diff pane: document scale
-     on top of the comment styles, and the changed blocks marked. */
+     on top of the comment styles, and the changed blocks marked. The
+     left padding holds the comment button of each block. */
   .markdown-doc {
-    @apply mx-auto max-w-[80ch] px-6 py-4 font-sans text-sm text-foreground;
+    @apply relative mx-auto py-4 pr-6 pl-10 font-sans text-sm text-foreground;
+    max-width: min(100%, var(--rich-width, 80ch));
   }
-  .markdown-doc h1 {
+  .rich-block h1 {
     @apply mt-6 mb-3 border-b pb-2 text-2xl font-semibold tracking-tight;
   }
-  .markdown-doc h2 {
+  .rich-block h2 {
     @apply mt-6 mb-3 border-b pb-1.5 text-xl font-semibold tracking-tight;
   }
-  .markdown-doc h3 {
+  .rich-block h3 {
     @apply mt-5 mb-2 text-base font-semibold;
   }
-  .markdown-doc h4 {
+  .rich-block h4 {
     @apply mt-4 mb-2 text-sm font-semibold;
   }
-  .markdown-doc > .rich-block:first-child > :first-child {
+  .markdown-doc > .rich-row:first-child .rich-block > :first-child {
     margin-top: 0;
   }
   /* Like GitHub's rich diff: a bar beside a changed block, no fill.
@@ -353,11 +357,51 @@
   .rich-block {
     @apply -ml-4 border-l-4 border-transparent pl-3;
   }
+  /* Each item of a list is a list of its own: without margins they
+     read as the one list they came from. */
+  .rich-item > ul,
+  .rich-item > ol {
+    margin-block: 0;
+  }
   .rich-added {
     @apply border-added/50;
   }
   .rich-removed {
     @apply border-removed/50 text-muted-foreground;
+  }
+  /* A block with its comment button in the left padding, shown while
+     the pointer is on the block, and the threads on its lines. */
+  .rich-row {
+    @apply relative;
+  }
+  .rich-comment {
+    @apply absolute top-0 -left-10 flex size-5 cursor-pointer items-center justify-center rounded-sm bg-primary text-primary-foreground opacity-0 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring;
+  }
+  .rich-comment svg {
+    @apply size-3.5;
+  }
+  .rich-row:hover > .rich-comment {
+    @apply opacity-100;
+  }
+  .markdown-doc .annotation-card {
+    @apply mx-0;
+  }
+  /* The right edge of the document, dragged to set its width: a line
+     that shows only while the pointer is on the edge. */
+  .rich-width-handle {
+    @apply absolute inset-y-0 right-0 w-4 cursor-col-resize touch-none outline-none;
+  }
+  .rich-width-handle::after {
+    @apply absolute inset-y-0 right-1 w-0.5 rounded-full bg-border opacity-0 transition-opacity content-[''];
+  }
+  .rich-width-handle:hover::after,
+  .rich-width-handle:active::after,
+  .rich-width-handle:focus-visible::after {
+    @apply opacity-100;
+  }
+  .rich-width-handle:active::after,
+  .rich-width-handle:focus-visible::after {
+    @apply bg-primary;
   }
   /* A checkerboard behind image previews, so transparent pixels read as
      transparent in both themes. */

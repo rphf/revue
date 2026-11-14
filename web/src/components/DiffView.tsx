@@ -42,6 +42,7 @@ import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
 import { fileOrder } from "./fileOrder";
+import { RichNotesContext } from "./richNotes";
 
 export type DiffStyle = "unified" | "split";
 
@@ -154,8 +155,37 @@ interface ItemMemo {
 
 // A markdown file in rich view is a one-line file item whose file-level
 // annotation carries the rendered document: the library renders that
-// annotation only above a line, so the line is a short caption.
-const RICH_CAPTION = "Switch to Source to comment on lines.";
+// annotation only above a line, so the line is a short caption. The
+// document draws the annotations on the file's lines itself.
+const RICH_CAPTION = "Switch to Source for the line diff.";
+
+// A rendered document has no lines to scroll to: a thread sits under
+// its block, in the page once the list has drawn the item. The list
+// goes on placing the item for a few frames, so the thread is brought
+// to the middle again until it stays there.
+function scrollToRichNote(path: string, side: Side, line: number): void {
+  const selector = `[data-rich-path="${CSS.escape(path)}"] [data-rich-note="${side}:${line}"]`;
+  let frames = 0;
+  let steady = 0;
+  let last: number | null = null;
+  const step = () => {
+    const note = document.querySelector(selector);
+    if (note) {
+      if (
+        last !== null &&
+        Math.abs(note.getBoundingClientRect().top - last) < 2
+      ) {
+        steady++;
+      } else {
+        steady = 0;
+        note.scrollIntoView({ block: "center", behavior: "instant" });
+        last = note.getBoundingClientRect().top;
+      }
+    }
+    if (++frames < 30 && steady < 3) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 
 // A binary file is a one-line file item too: the caption, with an image
 // file's preview as the annotation above it.
@@ -228,13 +258,18 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         });
       },
       scrollToLine: (path: string, side: Side, line: number) => {
-        const id = richRef.current?.has(path) ? richItemId(path) : path;
+        const rich = richRef.current?.has(path) ?? false;
+        const id = rich ? richItemId(path) : path;
         codeView.current?.scrollTo({
           type: "item",
           id,
           align: "start",
           behavior: "instant",
         });
+        if (rich) {
+          scrollToRichNote(path, side, line);
+          return;
+        }
         codeView.current?.scrollTo({
           type: "line",
           id,
@@ -481,8 +516,9 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       // onLineSelectionEnd.
       enableGutterUtility: Boolean(onLineSelect),
       enableLineSelection: Boolean(onLineSelect),
-      // Only diff items take comments: the rich view and binary files
-      // are one-line file items with a caption.
+      // The gutter takes comments on diff items only: the rich view and
+      // binary files are one-line file items with a caption, and a
+      // rendered document has a comment button per block.
       onGutterUtilityClick: onLineSelect
         ? (range, context) => {
             if (context.item.type === "diff")
@@ -669,16 +705,18 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           since they started.
         </p>
       )}
-      <CodeView<AnnotationMeta>
-        ref={codeView}
-        className="diff-scroll"
-        items={items}
-        options={options}
-        onScroll={onScroll}
-        renderAnnotation={renderItemAnnotation}
-        renderHeaderPrefix={renderHeaderPrefix}
-        renderHeaderMetadata={renderHeaderMetadata}
-      />
+      <RichNotesContext.Provider value={annotationsByFile}>
+        <CodeView<AnnotationMeta>
+          ref={codeView}
+          className="diff-scroll"
+          items={items}
+          options={options}
+          onScroll={onScroll}
+          renderAnnotation={renderItemAnnotation}
+          renderHeaderPrefix={renderHeaderPrefix}
+          renderHeaderMetadata={renderHeaderMetadata}
+        />
+      </RichNotesContext.Provider>
     </>
   );
 });

@@ -206,6 +206,40 @@ describe("DiffView rich markdown", () => {
     );
     expect(screen.queryByTestId("filediff-README.md")).not.toBeInTheDocument();
   });
+  it("keeps a rich file's item as it is when a line annotation changes", () => {
+    const doc = { rev: "r", status: "ready" as const, blocks: [] };
+    const files = [meta("README.md")];
+    const rich = new Map([["README.md", doc]]);
+    const thread = (line: number, rev: string) => ({
+      side: "additions" as const,
+      lineNumber: line,
+      metadata: { kind: "thread" as const, threadId: 7, rev },
+    });
+    const view = (lineRev: string, fileRev: string) => (
+      <DiffView
+        files={files}
+        diffFiles={[diffFile("README.md")]}
+        diffStyle="unified"
+        theme="light"
+        richByFile={rich}
+        annotationsByFile={
+          new Map([["README.md", [thread(0, fileRev), thread(4, lineRev)]]])
+        }
+        renderAnnotation={(a) => (
+          <div data-testid={`note-${a.metadata?.kind}`} />
+        )}
+      />
+    );
+    const { rerender } = render(view("a", "a"));
+    expect(screen.getByTestId("note-rich")).toBeInTheDocument();
+    expect(screen.getAllByTestId("note-thread")).toHaveLength(1);
+    const item = screen.getByTestId("fileitem-rich:README.md");
+    const version = item.dataset.version;
+    rerender(view("b", "a"));
+    expect(item.dataset.version).toBe(version);
+    rerender(view("b", "b"));
+    expect(item.dataset.version).not.toBe(version);
+  });
 });
 
 describe("DiffView ordering", () => {
