@@ -58,6 +58,7 @@ import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { notifyPermission, requestAttention } from "@/lib/attention";
 import { keyForArgs } from "@/lib/diffArgs";
+import { coalesce } from "@/lib/coalesce";
 import { isTyping } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
@@ -447,9 +448,9 @@ export default function DiffPage({
   }, []);
   useEffect(loadThreads, [loadThreads]);
 
-  const loadLanded = useCallback(() => {
-    api.getLanded().then(setLanded, () => setLanded(null));
-  }, []);
+  const [loadLanded] = useState(() =>
+    coalesce(() => api.getLanded().then(setLanded, () => setLanded(null))),
+  );
   const loadSettings = useCallback(() => {
     api.getSettings().then(
       (s) => setAutoArchive(s.autoArchiveLanded),
@@ -461,15 +462,17 @@ export default function DiffPage({
   // the top bar, and closes with the note once it is gone.
   const [agentNote, setAgentNote] = useState<AgentNoteData | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
-  const loadNote = useCallback(() => {
-    api.getNote().then(
-      (r) => {
-        setAgentNote(r.note);
-        if (!r.note) setNoteOpen(false);
-      },
-      () => {},
-    );
-  }, []);
+  const [loadNote] = useState(() =>
+    coalesce(() =>
+      api.getNote().then(
+        (r) => {
+          setAgentNote(r.note);
+          if (!r.note) setNoteOpen(false);
+        },
+        () => {},
+      ),
+    ),
+  );
   const toggleNote = useCallback(() => setNoteOpen((open) => !open), []);
   const closeNote = useCallback(() => setNoteOpen(false), []);
   useEffect(() => {
@@ -1102,10 +1105,29 @@ export default function DiffPage({
     snapshotThread !== null ||
     historyThread !== null ||
     (noteOpen && agentNote !== null);
+  // A held J or K steps once per painted frame: a repeat that comes
+  // while the file before it is still rendering is dropped, so the
+  // steps never queue up and the files stop when the key does.
+  const stepping = useRef(false);
   const onShortcut = useEffectEvent((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || showShortcuts) return;
     if (!e.metaKey && !e.ctrlKey) {
       if (isTyping(e) || (e.repeat && !REPEATING_KEYS.has(e.key))) return;
+      if (
+        e.repeat &&
+        fileMode === "focused" &&
+        !covered &&
+        (e.key === "j" || e.key === "k")
+      ) {
+        e.preventDefault();
+        if (stepping.current) return;
+        stepping.current = true;
+        requestAnimationFrame(() =>
+          setTimeout(() => {
+            stepping.current = false;
+          }),
+        );
+      }
       if (e.key === "?") setShowShortcuts(true);
       else if (e.key === "w") toggleHideSpace();
       else if (e.key === "n" && agentNote) toggleNote();
