@@ -123,7 +123,7 @@ function FileTree({
     stickyFolders: true,
     search: true,
     density: "compact" as const,
-    icons: { set: "standard" as const, spriteSheet: SPRITE_SHEET },
+    icons: { set: "complete" as const, spriteSheet: SPRITE_SHEET },
     unsafeCSS: UNSAFE_CSS,
     renderRowDecoration: ({ item }: FileTreeRowDecorationContext) => {
       if (item.kind !== "file") return null;
