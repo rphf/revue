@@ -61,7 +61,7 @@ import { isTyping } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { usePrimedHighlights } from "@/lib/primeHighlights";
-import { useRichDocs } from "@/lib/richDiff";
+import { isMarkdownPath, useRichDocs } from "@/lib/richDiff";
 import { locationLabel, threadRev } from "@/lib/threads";
 import { groupByTurn } from "@/lib/turns";
 import { useViewed } from "@/lib/viewed";
@@ -363,11 +363,13 @@ export default function DiffPage({
     setFileMode(mode);
     saveFileMode(mode);
   }, []);
-  // Markdown files shown rendered instead of as source (GitHub's rich
-  // diff); the choice is per path and survives refreshes.
-  const [richPaths, setRichPaths] = useState<ReadonlySet<string>>(new Set());
+  // Markdown files show rendered (GitHub's rich diff) unless switched
+  // to source; the choice is per path and survives refreshes.
+  const [sourcePaths, setSourcePaths] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const toggleRich = useCallback((path: string) => {
-    setRichPaths((prev) => {
+    setSourcePaths((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
@@ -683,6 +685,15 @@ export default function DiffPage({
   const loadFile = useCallback(
     async (path: string) => loadedFiles(await api.getDiffFile(args, path)),
     [args],
+  );
+  const richPaths = useMemo(
+    () =>
+      new Set(
+        (parsedFiles ?? [])
+          .map((f) => f.name)
+          .filter((p) => isMarkdownPath(p) && !sourcePaths.has(p)),
+      ),
+    [parsedFiles, sourcePaths],
   );
   const richByFile = useRichDocs(args, parsedFiles, richPaths);
   const imageUrl = useCallback(
