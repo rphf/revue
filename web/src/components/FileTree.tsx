@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type Ref,
 } from "react";
@@ -17,6 +18,7 @@ import type {
 import { FileTree as Tree, useFileTree } from "@pierre/trees/react";
 import { CopyIcon, EyeIcon, EyeOffIcon, InboxIcon } from "lucide-react";
 import type { DiffFile } from "../types";
+import { isTyping } from "@/lib/keys";
 import { treeEntryCompare } from "./treePath";
 
 // The changed-file sidebar is a @pierre/trees model: virtualized rows,
@@ -47,6 +49,8 @@ export interface FileTreeHandle {
   step(delta: 1 | -1): { path: string; isFile: boolean } | null;
   // Folds or unfolds the folder under the cursor; false on a file.
   toggleFolder(): boolean;
+  // Moves the focus into the search box.
+  focusSearch(): void;
 }
 
 const VIEWED_ICON = "revue-viewed";
@@ -78,6 +82,9 @@ const UNSAFE_CSS = `
 [data-item-section="decoration"] [data-icon-name="${VIEWED_ICON}"] { color: var(--trees-git-added-color); }
 [data-item-section="git"] { opacity: 1; font-weight: var(--trees-font-weight-semibold); }
 `;
+
+// The keys that open the library's search: one letter or digit.
+const SEARCH_SEED = /^[\p{L}\p{N}]$/u;
 
 const DECORATION_SELECTOR = '[data-item-section="decoration"] > span';
 
@@ -218,6 +225,14 @@ function FileTree({
         item.toggle();
         return true;
       },
+      focusSearch() {
+        model
+          .getFileTreeContainer()
+          ?.shadowRoot?.querySelector<HTMLInputElement>(
+            "[data-file-tree-search-input]",
+          )
+          ?.focus();
+      },
     }),
     [model, selectedPath],
   );
@@ -283,6 +298,39 @@ function FileTree({
     onToggleViewed(path);
   };
 
+  // The library opens its search on a letter or digit typed in the tree
+  // and moves the focus into the search box. Here the search starts only
+  // from a click on the box: the key never reaches the library and goes
+  // on to the page as if the tree did not have the focus, so the page's
+  // shortcuts work. The library ignores a prevented default, so the key
+  // is stopped and sent again from outside the tree.
+  const onKeyDownCapture = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const key = e.nativeEvent;
+    // Escape leaves the search box, as it leaves every box in revue; the
+    // library only clears the search and keeps the focus in the box.
+    // Leaving the box closes the search.
+    const box = key.composedPath()[0];
+    if (key.key === "Escape" && box instanceof HTMLInputElement) {
+      e.stopPropagation();
+      e.preventDefault();
+      box.blur();
+      return;
+    }
+    if (!SEARCH_SEED.test(key.key) || key.ctrlKey || key.metaKey) return;
+    if (key.altKey || isTyping(key)) return;
+    e.stopPropagation();
+    const again = new KeyboardEvent("keydown", {
+      key: key.key,
+      code: key.code,
+      shiftKey: key.shiftKey,
+      repeat: key.repeat,
+      bubbles: true,
+      cancelable: true,
+    });
+    e.currentTarget.parentElement?.dispatchEvent(again);
+    if (again.defaultPrevented) e.preventDefault();
+  };
+
   // Mouse clicks and Enter/Space on a focused row both land here as a
   // button click, so re-activating the selected file jumps again.
   const onClick = (e: ReactMouseEvent<HTMLElement>) => {
@@ -342,6 +390,7 @@ function FileTree({
       renderContextMenu={renderContextMenu}
       onClickCapture={onClickCapture}
       onClick={onClick}
+      onKeyDownCapture={onKeyDownCapture}
     />
   );
 }

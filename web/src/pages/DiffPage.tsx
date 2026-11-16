@@ -842,6 +842,12 @@ export default function DiffPage({
     },
     [showTree, nextFile, prevFile],
   );
+  // A hidden tree opens first: its search box is out of reach while the
+  // panel is collapsed.
+  const searchFiles = useCallback(() => {
+    if (!showTree) toggleTree();
+    requestAnimationFrame(() => fileTree.current?.focusSearch());
+  }, [showTree, toggleTree]);
   // Marks the file on screen viewed and moves on to the next one not
   // viewed yet, round to the start; on a viewed file, takes the mark
   // back and stays.
@@ -1120,10 +1126,10 @@ export default function DiffPage({
   // ⌘B toggles the tree, like the side bar in editors, ⌘I the threads,
   // and ⌘⇧↵ does what the Send button does. They work from inside a
   // text box too, as in an editor, unless the box used the key itself.
-  // W hides whitespace, as in lazygit, | switches split and unified
-  // views, N opens the agent's note, and ? lists every shortcut, as on
-  // GitHub; being bare keys,
-  // they are text inside a box. None acts behind the open list.
+  // / searches the files, as in vim, W hides whitespace, as in lazygit,
+  // | switches split and unified views, N opens the agent's note, and ?
+  // lists every shortcut, as on GitHub; being bare keys, they are text
+  // inside a box. None acts behind the open list.
   // F switches to focused mode, where J and K step through the
   // files, and the folders of the tree when it shows, Enter folds or
   // unfolds a folder, and V marks one viewed and moves on, unless
@@ -1157,6 +1163,7 @@ export default function DiffPage({
         );
       }
       if (e.key === "?") setShowShortcuts(true);
+      else if (e.key === "/") searchFiles();
       else if (e.key === "w") toggleHideSpace();
       else if (e.key === "n" && agentNote) toggleNote();
       else if (e.key === "|")

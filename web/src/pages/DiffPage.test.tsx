@@ -1251,6 +1251,16 @@ describe("DiffPage focused mode", () => {
     expect(shown()).toEqual(["dir/c.go"]);
   });
 
+  it("focuses the search box of the tree with /", async () => {
+    const { container } = renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "/" });
+    const tree = container.querySelector("file-tree-container")!.shadowRoot!;
+    await waitFor(() =>
+      expect(tree.activeElement).toHaveAttribute("data-file-tree-search-input"),
+    );
+  });
+
   it("marks the file viewed with V and moves on to the next one not viewed", async () => {
     renderPage();
     await screen.findByTestId("filediff-a.go");

@@ -30,6 +30,7 @@ const SECTIONS: Section[] = [
     title: "Anywhere",
     shortcuts: [
       { keys: [[MOD, "B"]], label: "Show or hide the files" },
+      { keys: [["/"]], label: "Search the files" },
       { keys: [[MOD, "I"]], label: "Show or hide the threads" },
       { keys: [["N"]], label: "Open or close the agent's note" },
       {

@@ -171,6 +171,54 @@ describe("FileTree", () => {
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
+  it("hands a typed letter to the page instead of opening the search", () => {
+    const { container } = render(
+      <FileTree
+        files={[file("a.go"), file("b.go")]}
+        viewed={new Set()}
+        onToggleViewed={noop}
+        onSelect={noop}
+      />,
+    );
+    const seen: string[] = [];
+    const listener = (e: KeyboardEvent) => seen.push(e.key);
+    window.addEventListener("keydown", listener);
+    try {
+      fireEvent.keyDown(row(container, "a.go")!, { key: "j" });
+    } finally {
+      window.removeEventListener("keydown", listener);
+    }
+    expect(seen).toEqual(["j"]);
+    const search = shadow(container).querySelector(
+      "[data-file-tree-search-container]",
+    );
+    expect(search).toHaveAttribute("data-open", "false");
+    expect(shadow(container).activeElement).toBeNull();
+  });
+
+  it("leaves the search box and closes the search on Escape", async () => {
+    const { container } = render(
+      <FileTree
+        files={[file("a.go"), file("b.go")]}
+        viewed={new Set()}
+        onToggleViewed={noop}
+        onSelect={noop}
+      />,
+    );
+    const input = shadow(container).querySelector<HTMLInputElement>(
+      "[data-file-tree-search-input]",
+    )!;
+    input.focus();
+    fireEvent.input(input, { target: { value: "a" } });
+    const search = shadow(container).querySelector(
+      "[data-file-tree-search-container]",
+    );
+    await waitFor(() => expect(search).toHaveAttribute("data-open", "true"));
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(shadow(container).activeElement).toBeNull();
+    await waitFor(() => expect(search).toHaveAttribute("data-open", "false"));
+  });
+
   it("mirrors an outside selection into the tree, revealing collapsed dirs", async () => {
     const onSelect = vi.fn();
     const files = [file("a.go"), file("lib/deep/b.go")];
