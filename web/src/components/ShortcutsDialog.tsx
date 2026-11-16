@@ -52,8 +52,9 @@ const SECTIONS: Section[] = [
   {
     title: "Focused mode",
     shortcuts: [
-      { keys: [["J"]], label: "Next file" },
-      { keys: [["K"]], label: "Previous file" },
+      { keys: [["J"]], label: "Next file or folder" },
+      { keys: [["K"]], label: "Previous file or folder" },
+      { keys: [["↵"]], label: "Fold or unfold the folder" },
       {
         keys: [["V"]],
         label: "Mark the file viewed and go to the next unviewed one",

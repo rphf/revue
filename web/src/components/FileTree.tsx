@@ -1,10 +1,12 @@
 import {
   memo,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
 } from "react";
 import type {
   ContextMenuItem,
@@ -35,6 +37,16 @@ export interface FileTreeProps {
   onToggleViewed: (path: string) => void;
   onSelect: (path: string) => void;
   selectedPath?: string;
+  ref?: Ref<FileTreeHandle>;
+}
+
+// The tree's cursor, for J and K: the selected row, a file or a folder.
+export interface FileTreeHandle {
+  // Moves the cursor to the row shown next to it, if any, and returns
+  // the row it is on; null when the cursor is not on a shown row.
+  step(delta: 1 | -1): { path: string; isFile: boolean } | null;
+  // Folds or unfolds the folder under the cursor; false on a file.
+  toggleFolder(): boolean;
 }
 
 const VIEWED_ICON = "revue-viewed";
@@ -108,6 +120,7 @@ function FileTree({
   onToggleViewed,
   onSelect,
   selectedPath,
+  ref,
 }: FileTreeProps) {
   const viewedRef = useRef(viewed);
   const initialFiles = useRef(files);
@@ -173,6 +186,41 @@ function FileTree({
     item.select();
     model.scrollToPath(selectedPath, { focus: false, offset: "nearest" });
   }, [model, selectedPath, files]);
+
+  // The cursor moves over the rows shown, folders too, as in lazygit:
+  // the rows inside a folded folder are skipped. A row taken over from
+  // the outside selection stays in place when it is not shown.
+  useImperativeHandle(
+    ref,
+    () => ({
+      step(delta) {
+        const count = model.getVisibleCount();
+        const rows = count > 0 ? model.getVisibleRows(0, count - 1) : [];
+        const cursor = model.getSelectedPaths()[0] ?? selectedPath;
+        const at = rows.findIndex((r) => r.path === cursor);
+        if (at < 0) return null;
+        const next = rows[at + delta] ?? rows[at];
+        for (const path of model.getSelectedPaths())
+          if (path !== next.path) model.getItem(path)?.deselect();
+        model.getItem(next.path)?.select();
+        // With the focus in the tree, the focus moves with the cursor,
+        // so Enter on the row and the cursor act on the same row. A
+        // scroll request would keep the focus where it is.
+        const host = model.getFileTreeContainer();
+        if (host?.contains(document.activeElement)) model.focusPath(next.path);
+        else model.scrollToPath(next.path, { focus: false, offset: "nearest" });
+        return { path: next.path, isFile: next.kind === "file" };
+      },
+      toggleFolder() {
+        const cursor = model.getSelectedPaths()[0];
+        const item = cursor === undefined ? null : model.getItem(cursor);
+        if (!item || !("toggle" in item)) return false;
+        item.toggle();
+        return true;
+      },
+    }),
+    [model, selectedPath],
+  );
 
   const viewedCount = useMemo(
     () => files.reduce((n, f) => n + (viewed.has(f.path) ? 1 : 0), 0),

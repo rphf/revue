@@ -1222,6 +1222,35 @@ describe("DiffPage focused mode", () => {
     expect(screen.queryByTestId("file-stepper")).not.toBeInTheDocument();
   });
 
+  it("steps onto the folders of the tree with J and K, and folds one with Enter", async () => {
+    const { container } = renderPage();
+    await screen.findByTestId("filediff-a.go");
+    fireEvent.keyDown(window, { key: "f" });
+    const tree = container.querySelector("file-tree-container")!.shadowRoot!;
+    const row = (path: string) =>
+      tree.querySelector<HTMLElement>(
+        `[data-type="item"]:not([data-file-tree-sticky-row])[data-item-path="${path}"]`,
+      );
+
+    // The folder takes the cursor; the diff keeps its file.
+    fireEvent.keyDown(window, { key: "k" });
+    await waitFor(() =>
+      expect(row("dir/")).toHaveAttribute("aria-selected", "true"),
+    );
+    expect(shown()).toEqual(["dir/c.go"]);
+    expect(row("dir/c.go")).not.toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    await waitFor(() => expect(row("dir/c.go")).toBeNull());
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["a.go"]);
+    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    await waitFor(() => expect(row("dir/c.go")).not.toBeNull());
+    fireEvent.keyDown(window, { key: "j" });
+    expect(shown()).toEqual(["dir/c.go"]);
+  });
+
   it("marks the file viewed with V and moves on to the next one not viewed", async () => {
     renderPage();
     await screen.findByTestId("filediff-a.go");

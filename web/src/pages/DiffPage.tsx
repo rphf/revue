@@ -42,7 +42,7 @@ import DiffView, {
 import { LINE_SCROLL_OFFSET } from "../components/codeViewStyle";
 import { fileOrder } from "../components/fileOrder";
 import FileStepper from "../components/FileStepper";
-import FileTree from "../components/FileTree";
+import FileTree, { type FileTreeHandle } from "../components/FileTree";
 import LoadingBlocks from "../components/LoadingBlocks";
 import RichMarkdown from "../components/RichMarkdown";
 import SendComposer from "../components/SendComposer";
@@ -57,7 +57,7 @@ import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { keyForArgs } from "@/lib/diffArgs";
 import { coalesce } from "@/lib/coalesce";
-import { isTyping } from "@/lib/keys";
+import { isTyping, onControl } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
 import { freshCacheKey, loadedFiles, splitPatch } from "@/lib/patch";
 import { usePrimedHighlights } from "@/lib/primeHighlights";
@@ -830,6 +830,18 @@ export default function DiffPage({
   const nextFile = useCallback(() => {
     if (nextPath !== undefined) setSelectedPath(nextPath);
   }, [nextPath]);
+  // J and K move the tree's cursor, over folders too, while the tree
+  // shows; a file under the cursor shows in the diff. A file the tree
+  // does not list, kept for its outdated threads, steps by the diff.
+  const fileTree = useRef<FileTreeHandle>(null);
+  const stepFile = useCallback(
+    (delta: 1 | -1) => {
+      const row = showTree ? fileTree.current?.step(delta) : null;
+      if (!row) (delta > 0 ? nextFile : prevFile)();
+      else if (row.isFile) setSelectedPath(row.path);
+    },
+    [showTree, nextFile, prevFile],
+  );
   // Marks the file on screen viewed and moves on to the next one not
   // viewed yet, round to the start; on a viewed file, takes the mark
   // back and stays.
@@ -1113,9 +1125,10 @@ export default function DiffPage({
   // GitHub; being bare keys,
   // they are text inside a box. None acts behind the open list.
   // F switches to focused mode, where J and K step through the
-  // files and V marks one viewed and moves on, unless something covers
-  // the diff. Shift+J and Shift+K scroll the diff, as in lazygit. Held
-  // down, J and K repeat.
+  // files, and the folders of the tree when it shows, Enter folds or
+  // unfolds a folder, and V marks one viewed and moves on, unless
+  // something covers the diff. Shift+J and Shift+K scroll the diff, as
+  // in lazygit. Held down, J and K repeat.
   const covered =
     snapshotThread !== null ||
     historyThread !== null ||
@@ -1150,9 +1163,18 @@ export default function DiffPage({
         changeDiffStyle(diffStyle === "split" ? "unified" : "split");
       else if (e.key === "f")
         changeFileMode(fileMode === "focused" ? "all" : "focused");
-      else if (fileMode === "focused" && !covered && e.key === "j") nextFile();
-      else if (fileMode === "focused" && !covered && e.key === "k") prevFile();
-      else if (fileMode === "focused" && !covered && e.key === "v")
+      else if (fileMode === "focused" && !covered && e.key === "j") stepFile(1);
+      else if (fileMode === "focused" && !covered && e.key === "k")
+        stepFile(-1);
+      else if (
+        fileMode === "focused" &&
+        !covered &&
+        showTree &&
+        e.key === "Enter" &&
+        !onControl(e)
+      ) {
+        if (!fileTree.current?.toggleFolder()) return;
+      } else if (fileMode === "focused" && !covered && e.key === "v")
         markAndAdvance();
       else if (!covered && e.key === "J")
         diffViewRef.current?.scrollBy(LINE_SCROLL_OFFSET);
@@ -1380,6 +1402,7 @@ export default function DiffPage({
                     className="flex min-w-0 flex-col bg-sidebar text-sidebar-foreground"
                   >
                     <FileTree
+                      ref={fileTree}
                       files={diffFiles}
                       additions={lineTotals.additions}
                       deletions={lineTotals.deletions}

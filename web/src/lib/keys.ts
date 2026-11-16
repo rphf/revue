@@ -8,3 +8,12 @@ export function isTyping(e: KeyboardEvent): boolean {
       el.closest("input, textarea, select, [contenteditable]") !== null)
   );
 }
+
+// Enter on a focused button or link already clicks it.
+export function onControl(e: KeyboardEvent): boolean {
+  const el = e.composedPath()[0] ?? e.target;
+  return (
+    el instanceof HTMLElement &&
+    el.closest("button, a[href], [role='button']") !== null
+  );
+}
