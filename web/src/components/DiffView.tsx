@@ -281,11 +281,20 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
         });
       },
       clearSelection: () => codeView.current?.clearSelectedLines(),
-      scrollBy: (top: number) =>
-        codeView.current
-          ?.getInstance()
-          ?.getContainerElement()
-          ?.scrollBy({ top, behavior: "instant" }),
+      // After a quick run of these scrolls, Safari's scrolling thread can
+      // keep an older position than the page, and paint the pane for it:
+      // black until the next scroll by hand. Turning the pane's overflow
+      // off and on, within the same frame, makes it take the page's
+      // position again; it costs about a millisecond.
+      scrollBy: (top: number) => {
+        const el = codeView.current?.getInstance()?.getContainerElement();
+        if (!el) return;
+        el.scrollBy({ top, behavior: "instant" });
+        const overflow = el.style.overflowY;
+        el.style.overflowY = "hidden";
+        void el.offsetHeight;
+        el.style.overflowY = overflow;
+      },
     }),
     [],
   );
