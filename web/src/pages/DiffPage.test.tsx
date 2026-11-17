@@ -34,6 +34,8 @@ const paneScrolls: number[] = [];
 const pane = {
   scrollTo: () => {},
   scrollBy: ({ top }: { top: number }) => paneScrolls.push(top),
+  style: { overflowY: "" },
+  offsetHeight: 0,
 };
 interface StubOptions {
   onGutterUtilityClick?: (
