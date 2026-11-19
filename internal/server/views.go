@@ -37,6 +37,8 @@ type capture struct {
 	hunks   []*anchor.Hunk
 	target  *anchor.Target
 	files   map[string]*gitx.File
+	// Why a file starts folded, from .gitattributes.
+	folds map[string]string
 
 	// The same diff with whitespace changes left out, read on first
 	// request. Threads are still placed with the full diff's hunks.
@@ -124,11 +126,16 @@ func (v *view) refresh(repoRoot string, force bool) (bool, error) {
 		c.version = v.cur.version + 1
 	}
 	c.target = anchor.NewTarget(c.hunks)
+	paths := make([]string, 0, len(result.Files))
 	for i := range result.Files {
 		f := &result.Files[i]
 		c.files[f.Path] = f
 		c.target.AddFile(f.Path, f.OldPath, blobHash(f.OldContent), blobHash(f.NewContent))
+		paths = append(paths, f.Path)
 	}
+	// Folding is a convenience: attributes git cannot read fold nothing,
+	// and the diff is still served.
+	c.folds, _ = gitx.Folds(repoRoot, paths)
 	v.fingerprint = fp
 	v.cur = c
 	return true, nil
@@ -163,18 +170,19 @@ type fileView struct {
 	IsBinary bool   `json:"isBinary"`
 	OldSize  *int64 `json:"oldSize,omitempty"`
 	NewSize  *int64 `json:"newSize,omitempty"`
+	Fold     string `json:"fold,omitempty"`
 }
 
-// fileViews lists the files; a binary file also carries the byte size
-// of each side it has, since no diff describes it.
-// fileViews lists the capture's files, less the hidden ones.
+// fileViews lists the capture's files, less the hidden ones. A binary
+// file also carries the byte size of each side it has, since no diff
+// describes it.
 func (c *capture) fileViews(hidden map[string]bool) []fileView {
 	out := make([]fileView, 0, len(c.result.Files))
 	for _, f := range c.result.Files {
 		if hidden[f.Path] {
 			continue
 		}
-		v := fileView{Path: f.Path, OldPath: f.OldPath, Status: f.Status, IsBinary: f.IsBinary}
+		v := fileView{Path: f.Path, OldPath: f.OldPath, Status: f.Status, IsBinary: f.IsBinary, Fold: c.folds[f.Path]}
 		if f.IsBinary {
 			if f.OldOID != "" {
 				v.OldSize = &f.OldSize

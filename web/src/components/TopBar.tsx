@@ -4,6 +4,7 @@ import {
   Columns2Icon,
   FileIcon,
   FilesIcon,
+  FoldVerticalIcon,
   KeyboardIcon,
   MessageSquarePlusIcon,
   MessageSquareTextIcon,
@@ -152,6 +153,9 @@ export interface TopBarProps {
   onFileModeChange: (mode: FileMode) => void;
   hideSpace: boolean;
   onToggleHideSpace: () => void;
+  // Generated, vendored and large files start folded.
+  autoFold: boolean;
+  onToggleAutoFold: () => void;
   onShowShortcuts: () => void;
   theme: Theme;
   onToggleTheme: () => void;
@@ -183,6 +187,8 @@ export default function TopBar({
   onFileModeChange,
   hideSpace,
   onToggleHideSpace,
+  autoFold,
+  onToggleAutoFold,
   onShowShortcuts,
   theme,
   onToggleTheme,
@@ -305,6 +311,24 @@ export default function TopBar({
           </TooltipTrigger>
           <TooltipContent>
             {hideSpace ? "Show" : "Hide"} whitespace <Kbd>W</Kbd>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Toggle
+              variant="outline"
+              size="sm"
+              className="rounded-lg px-2"
+              pressed={autoFold}
+              onPressedChange={onToggleAutoFold}
+              aria-label="Fold generated and large files"
+            >
+              <FoldVerticalIcon />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipContent>
+            {autoFold ? "Unfold" : "Fold"} generated, vendored and large files
           </TooltipContent>
         </Tooltip>
 

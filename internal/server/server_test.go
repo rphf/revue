@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -340,6 +341,22 @@ func TestDiffValidatesArguments(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest || out.Error != "validation" {
 			t.Errorf("args %v: status %d, error %q; want 400 validation", args, resp.StatusCode, out.Error)
 		}
+	}
+}
+
+func TestDiffNamesFoldedFiles(t *testing.T) {
+	ts := startServer(t, initRepo(t), 0)
+	writeFile(t, ts.repo, ".gitattributes", "*.lock linguist-generated\n")
+	writeFile(t, ts.repo, "deps.lock", "pinned\n")
+	ts.modify(t)
+
+	folds := map[string]string{}
+	for _, f := range ts.getDiff(t).Files {
+		folds[f.Path] = f.Fold
+	}
+	want := map[string]string{".gitattributes": "", "a.txt": "", "deps.lock": "generated"}
+	if !maps.Equal(folds, want) {
+		t.Errorf("folds = %v, want %v", folds, want)
 	}
 }
 

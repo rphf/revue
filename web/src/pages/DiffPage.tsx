@@ -19,6 +19,7 @@ import type {
   AgentNote as AgentNoteData,
   ArchiveSelector,
   DiffResponse,
+  FoldReason,
   Landed,
   Side,
   Thread as ThreadType,
@@ -56,6 +57,7 @@ import {
 import ThreadsPanel from "../components/ThreadsPanel";
 import TopBar from "../components/TopBar";
 import { keyForArgs } from "@/lib/diffArgs";
+import { autoFolds, loadAutoFold, saveAutoFold } from "@/lib/autoFold";
 import { coalesce } from "@/lib/coalesce";
 import { isTyping, onControl } from "@/lib/keys";
 import { IS_MAC } from "@/lib/platform";
@@ -614,10 +616,6 @@ export default function DiffPage({
     },
     [toggleViewedMark],
   );
-  const toggleCollapsed = useCallback(
-    (path: string) => overrideCollapse(path, !collapsed.has(path)),
-    [collapsed, overrideCollapse],
-  );
 
   const diffViewRef = useRef<DiffViewHandle>(null);
   // A jump runs after the render that opens its file, so it scrolls
@@ -777,6 +775,43 @@ export default function DiffPage({
     }
     return next;
   }, [threads, positions, pending, diffFiles, landed, args]);
+
+  // Generated, vendored and large files start folded to a notice, as
+  // GitHub folds them, unless the reviewer turned that off. A file with
+  // threads stays open, and so does one the header arrow, the notice's
+  // button or a jump opened: an override wins either way.
+  const [autoFold, setAutoFold] = useState(loadAutoFold);
+  const toggleAutoFold = useCallback(() => {
+    setAutoFold((on) => {
+      saveAutoFold(!on);
+      return !on;
+    });
+  }, []);
+  const folded = useMemo(() => {
+    const next = new Map<string, FoldReason>();
+    if (!autoFold) return next;
+    for (const [path, reason] of autoFolds(parsedFiles ?? [], diffFiles)) {
+      if (
+        !collapsed.has(path) &&
+        !collapseOverride.has(path) &&
+        !annotationsByFile.has(path)
+      )
+        next.set(path, reason);
+    }
+    return next;
+  }, [
+    autoFold,
+    parsedFiles,
+    diffFiles,
+    collapsed,
+    collapseOverride,
+    annotationsByFile,
+  ]);
+  const toggleCollapsed = useCallback(
+    (path: string) =>
+      overrideCollapse(path, !(collapsed.has(path) || folded.has(path))),
+    [collapsed, folded, overrideCollapse],
+  );
 
   // Focused mode: the file selected, or the first one, stepped
   // through in the order the diff pane lists them. J and K step through
@@ -1318,6 +1353,8 @@ export default function DiffPage({
               onFileModeChange={changeFileMode}
               hideSpace={hideSpace}
               onToggleHideSpace={toggleHideSpace}
+              autoFold={autoFold}
+              onToggleAutoFold={toggleAutoFold}
               onShowShortcuts={openShortcuts}
               theme={theme}
               onToggleTheme={onToggleTheme}
@@ -1490,6 +1527,7 @@ export default function DiffPage({
                           onToggleViewed={toggleViewed}
                           onFileComment={onFileComment}
                           collapsed={collapsed}
+                          folded={folded}
                           onToggleCollapsed={toggleCollapsed}
                           scrollKey={
                             fileMode === "focused" ? undefined : argsKey

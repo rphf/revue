@@ -1423,3 +1423,58 @@ describe("DiffPage focused mode", () => {
     );
   });
 });
+
+describe("DiffPage auto-fold", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const diff = threeFiles(1);
+    diff.files[0].fold = "generated";
+    vi.mocked(api.getDiff).mockResolvedValue(diff);
+    vi.mocked(api.listThreads).mockResolvedValue({ threads: [] });
+    vi.mocked(api.getLanded).mockResolvedValue({ head: "", threadIds: [] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("folds a generated file to its notice until its button shows it", async () => {
+    renderPage();
+    const show = await screen.findByRole("button", {
+      name: "Show the diff of b.go",
+    });
+    expect(screen.queryByTestId("filediff-b.go")).toBeNull();
+    expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument();
+
+    fireEvent.click(show);
+    expect(screen.getByTestId("filediff-b.go")).not.toHaveAttribute(
+      "data-collapsed",
+    );
+    // The arrow folds it to its header from there.
+    fireEvent.click(screen.getByRole("button", { name: "Collapse b.go" }));
+    expect(screen.getByTestId("filediff-b.go")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+  });
+
+  it("turns folding off from the top bar, and remembers it", async () => {
+    const { unmount } = renderPage();
+    await screen.findByTestId("filediff-fold:b.go");
+    const toggle = screen.getByRole("button", {
+      name: "Fold generated and large files",
+    });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("filediff-b.go")).toBeInTheDocument();
+    expect(screen.queryByTestId("filediff-fold:b.go")).toBeNull();
+
+    unmount();
+    renderPage();
+    expect(await screen.findByTestId("filediff-b.go")).toBeInTheDocument();
+  });
+});

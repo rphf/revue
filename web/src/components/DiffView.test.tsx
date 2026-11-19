@@ -340,6 +340,52 @@ describe("DiffView viewed files", () => {
   });
 });
 
+describe("DiffView folded files", () => {
+  it("folds a file to its notice, opened by its button or the arrow", () => {
+    const onToggleCollapsed = vi.fn();
+    const props = {
+      files: [meta("a.go"), meta("yarn.lock")],
+      diffFiles: [diffFile("a.go"), diffFile("yarn.lock")],
+      diffStyle: "unified" as const,
+      theme: "light" as const,
+      onToggleCollapsed,
+    };
+    const { rerender } = render(
+      <DiffView {...props} folded={new Map([["yarn.lock", "generated"]])} />,
+    );
+    expect(screen.getByTestId("filediff-a.go")).toBeInTheDocument();
+    const item = screen.getByTestId("fileitem-fold:yarn.lock");
+    expect(screen.queryByTestId("filediff-yarn.lock")).toBeNull();
+    expect(
+      within(item).getByRole("button", { name: "Expand yarn.lock" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(
+      within(item).getByRole("button", { name: "Show the diff of yarn.lock" }),
+    );
+    expect(onToggleCollapsed).toHaveBeenCalledWith("yarn.lock");
+
+    rerender(<DiffView {...props} folded={new Map()} />);
+    expect(screen.getByTestId("filediff-yarn.lock")).toBeInTheDocument();
+  });
+
+  it("collapses a folded file to its header when told to", () => {
+    render(
+      <DiffView
+        files={[meta("big.go")]}
+        diffFiles={[diffFile("big.go")]}
+        diffStyle="unified"
+        theme="light"
+        collapsed={new Set(["big.go"])}
+        folded={new Map([["big.go", "large"]])}
+      />,
+    );
+    expect(screen.getByTestId("filediff-big.go")).toHaveAttribute(
+      "data-collapsed",
+      "true",
+    );
+  });
+});
+
 describe("DiffView context expansion", () => {
   it("hands the renderer a loader that fetches the file by its path", async () => {
     const loadFile = vi.fn(async () => ({

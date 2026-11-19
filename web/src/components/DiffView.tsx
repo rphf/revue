@@ -30,8 +30,9 @@ import {
   FileDiffIcon,
   MessageSquarePlusIcon,
 } from "lucide-react";
-import type { DiffFile, Side, Thread } from "../types";
+import type { DiffFile, FoldReason, Side, Thread } from "../types";
 import type { Theme } from "../theme";
+import { foldNotice } from "@/lib/autoFold";
 import { binarySummary, isImagePath } from "@/lib/binary";
 import { isMarkdownPath, type RichDoc } from "@/lib/richDiff";
 import { Button } from "@/components/ui/button";
@@ -54,13 +55,14 @@ export type FileMode = "all" | "focused";
 // visible content so item versions bump only when something changed.
 // An outdated thread sits at line 0, under its file's header.
 export interface AnnotationMeta {
-  kind: "thread" | "outdated" | "pending" | "rich" | "image";
+  kind: "thread" | "outdated" | "pending" | "rich" | "image" | "fold";
   threadId?: number;
   rev?: string;
   thread?: Thread;
   pending?: PendingComment;
   rich?: RichDoc;
   image?: Omit<ImageDiffProps, "diffStyle">;
+  fold?: FoldReason;
 }
 
 export interface PendingComment {
@@ -135,6 +137,9 @@ export interface DiffViewProps {
   onFileComment?: (path: string) => void;
   // Files shown as their header only.
   collapsed?: ReadonlySet<string>;
+  // Files folded to a notice, with why; the notice's button and the
+  // header arrow open them through onToggleCollapsed.
+  folded?: ReadonlyMap<string, FoldReason>;
   onToggleCollapsed?: (path: string) => void;
   // Names the diff whose scroll position survives a reload.
   scrollKey?: string;
@@ -195,6 +200,14 @@ const BINARY_CAPTION = "Binary file: no line diff.";
 // one-line file item too, so its threads stay in the diff.
 const GONE_CAPTION = "No change left in this file.";
 
+// A folded file is a one-line file item too: the notice says why, and
+// its annotation holds the button that shows the diff.
+interface FoldMemo {
+  file: FileContents;
+  notes?: DiffLineAnnotation<AnnotationMeta>[];
+  version: number;
+}
+
 interface BinaryMemo {
   file: FileContents;
   rev?: string;
@@ -203,13 +216,18 @@ interface BinaryMemo {
   version: number;
 }
 
-// The rich variant is a separate item: the virtualizer prepares a layout
-// per item id and refuses to render a file where it laid out a diff.
+// The rich and folded variants are separate items: the virtualizer
+// prepares a layout per item id and refuses to render a file where it
+// laid out a diff.
 const RICH_PREFIX = "rich:";
+const FOLD_PREFIX = "fold:";
 const richItemId = (path: string) => RICH_PREFIX + path;
-const isRichItemId = (id: string) => id.startsWith(RICH_PREFIX);
-const pathFromItemId = (id: string) =>
-  isRichItemId(id) ? id.slice(RICH_PREFIX.length) : id;
+const foldItemId = (path: string) => FOLD_PREFIX + path;
+const pathFromItemId = (id: string) => {
+  for (const prefix of [RICH_PREFIX, FOLD_PREFIX])
+    if (id.startsWith(prefix)) return id.slice(prefix.length);
+  return id;
+};
 
 // The whole diff pane is ONE CodeView (the diffs.com architecture):
 // every file is an item in a single virtualized list whose layout is
@@ -236,6 +254,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     onToggleViewed,
     onFileComment,
     collapsed,
+    folded,
     onToggleCollapsed,
     scrollKey,
     onlyPath,
@@ -246,27 +265,34 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   useStickyHeaderFix(codeView);
   const richRef = useRef(richByFile);
   richRef.current = richByFile;
+  const foldedRef = useRef(folded);
+  foldedRef.current = folded;
+  const itemIdOf = (path: string) =>
+    foldedRef.current?.has(path)
+      ? foldItemId(path)
+      : richRef.current?.has(path)
+        ? richItemId(path)
+        : path;
   useImperativeHandle(
     ref,
     () => ({
       scrollToFile: (path: string) => {
         codeView.current?.scrollTo({
           type: "item",
-          id: richRef.current?.has(path) ? richItemId(path) : path,
+          id: itemIdOf(path),
           align: "start",
           behavior: "instant",
         });
       },
       scrollToLine: (path: string, side: Side, line: number) => {
-        const rich = richRef.current?.has(path) ?? false;
-        const id = rich ? richItemId(path) : path;
+        const id = itemIdOf(path);
         codeView.current?.scrollTo({
           type: "item",
           id,
           align: "start",
           behavior: "instant",
         });
-        if (rich) {
+        if (id !== path) {
           scrollToRichNote(path, side, line);
           return;
         }
@@ -309,6 +335,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
   const memoRef = useRef<Map<string, ItemMemo>>(new Map());
   const binaryMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
   const goneMemoRef = useRef<Map<string, BinaryMemo>>(new Map());
+  const foldMemoRef = useRef<Map<string, FoldMemo>>(new Map());
 
   const order = useMemo(
     () => fileOrder(files, diffFiles, annotationsByFile),
@@ -420,6 +447,39 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           version: memo.version,
         } as CodeViewItem<AnnotationMeta>;
       }
+      const fold = isCollapsed ? undefined : folded?.get(path);
+      if (fold) {
+        const prev = foldMemoRef.current.get(path);
+        const caption = foldNotice(fold);
+        const memo: FoldMemo = {
+          file:
+            prev?.file.contents === caption
+              ? prev.file
+              : { name: path, contents: caption, lang: "text" },
+          notes: fileNotes,
+          version:
+            prev === undefined
+              ? 0
+              : prev.file.contents === caption &&
+                  annotationsEqual(prev.notes, fileNotes)
+                ? prev.version
+                : prev.version + 1,
+        };
+        foldMemoRef.current.set(path, memo);
+        return {
+          id: foldItemId(path),
+          type: "file",
+          file: memo.file,
+          annotations: [
+            ...(fileNotes ?? []).map(({ lineNumber, metadata }) => ({
+              lineNumber,
+              metadata,
+            })),
+            { lineNumber: 1, metadata: { kind: "fold", rev: fold, fold } },
+          ],
+          version: memo.version,
+        } as CodeViewItem<AnnotationMeta>;
+      }
       const richDoc = richByFile?.get(path);
       const annotations = richDoc
         ? [
@@ -491,6 +551,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
     richByFile,
     imageUrl,
     collapsed,
+    folded,
   ]);
   // One file alone is the same item as in the whole diff, so switching
   // between the two re-processes nothing.
@@ -558,12 +619,28 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       if (meta?.kind === "image" && meta.image) {
         return <ImageDiff {...meta.image} diffStyle={diffStyle} />;
       }
+      if (meta?.kind === "fold") {
+        const path = pathFromItemId(item.id);
+        return (
+          <div className="flex justify-center px-4 py-3 font-sans">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label={`Show the diff of ${path}`}
+              onClick={() => onToggleCollapsed?.(path)}
+            >
+              Show diff
+            </Button>
+          </div>
+        );
+      }
       return renderAnnotation?.(
         annotation as DiffLineAnnotation<AnnotationMeta>,
         pathFromItemId(item.id),
       );
     },
-    [diffStyle, renderAnnotation],
+    [diffStyle, renderAnnotation, onToggleCollapsed],
   );
 
   const renderHeaderPrefix = useMemo(
@@ -571,7 +648,8 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
       onToggleCollapsed &&
       ((item: CodeViewItem<AnnotationMeta>) => {
         const path = pathFromItemId(item.id);
-        const isCollapsed = collapsed?.has(path) ?? false;
+        const isCollapsed =
+          (collapsed?.has(path) ?? false) || (folded?.has(path) ?? false);
         return (
           <Button
             type="button"
@@ -586,7 +664,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           </Button>
         );
       }),
-    [collapsed, onToggleCollapsed],
+    [collapsed, folded, onToggleCollapsed],
   );
 
   const renderHeaderMetadata = useCallback(

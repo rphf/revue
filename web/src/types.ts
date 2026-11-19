@@ -13,7 +13,13 @@ export interface DiffFile {
   // Byte size of each side a binary file has.
   oldSize?: number;
   newSize?: number;
+  // Set when .gitattributes marks the file linguist-generated or
+  // linguist-vendored.
+  fold?: "generated" | "vendored";
 }
+
+// Why a file starts folded: its attributes, or the size of its diff.
+export type FoldReason = NonNullable<DiffFile["fold"]> | "large";
 
 // Where a thread sits in one diff: at its current line when the hunk
 // is still there, at its origin when it is not.
