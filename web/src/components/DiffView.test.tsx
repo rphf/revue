@@ -21,6 +21,7 @@ vi.mock("@pierre/diffs/react", () => ({
     options,
     renderAnnotation,
     renderHeaderPrefix,
+    renderHeaderFilenameSuffix,
     renderHeaderMetadata,
     className,
   }: {
@@ -28,6 +29,7 @@ vi.mock("@pierre/diffs/react", () => ({
     options: typeof lastOptions;
     renderAnnotation?: (a: unknown, item: StubItem) => React.ReactNode;
     renderHeaderPrefix?: (item: StubItem) => React.ReactNode;
+    renderHeaderFilenameSuffix?: (item: StubItem) => React.ReactNode;
     renderHeaderMetadata?: (item: StubItem) => React.ReactNode;
     className?: string;
   }) => {
@@ -43,6 +45,7 @@ vi.mock("@pierre/diffs/react", () => ({
           >
             {renderHeaderPrefix?.(item)}
             {item.id}
+            {renderHeaderFilenameSuffix?.(item)}
             {renderHeaderMetadata?.(item)}
             {item.annotations?.map((a, i) => (
               <div key={i}>{renderAnnotation?.(a, item)}</div>
@@ -337,6 +340,36 @@ describe("DiffView viewed files", () => {
     ).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(expand);
     expect(onToggleCollapsed).toHaveBeenCalledWith("a.go");
+  });
+});
+
+describe("DiffView file path", () => {
+  it("copies a file's path from its header", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(
+      <DiffView
+        files={[meta("src/a.go")]}
+        diffFiles={[
+          diffFile("src/a.go"),
+          diffFile("logo.png", { isBinary: true }),
+        ]}
+        diffStyle="unified"
+        theme="light"
+        folded={new Map([["src/a.go", "large"]])}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy the path of src/a.go" }),
+    );
+    expect(writeText).toHaveBeenCalledWith("src/a.go");
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Copy the path of logo.png" }),
+    ).toBeInTheDocument();
   });
 });
 

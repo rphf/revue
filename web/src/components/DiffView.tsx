@@ -39,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
+import CopyPathButton from "./CopyPathButton";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
@@ -215,6 +216,10 @@ interface BinaryMemo {
   collapsed: boolean;
   version: number;
 }
+
+const renderHeaderFilenameSuffix = (item: CodeViewItem<AnnotationMeta>) => (
+  <CopyPathButton path={pathFromItemId(item.id)} />
+);
 
 // The rich and folded variants are separate items: the virtualizer
 // prepares a layout per item id and refuses to render a file where it
@@ -801,6 +806,7 @@ const DiffView = forwardRef<DiffViewHandle, DiffViewProps>(function DiffView(
           onScroll={onScroll}
           renderAnnotation={renderItemAnnotation}
           renderHeaderPrefix={renderHeaderPrefix}
+          renderHeaderFilenameSuffix={renderHeaderFilenameSuffix}
           renderHeaderMetadata={renderHeaderMetadata}
         />
       </RichNotesContext.Provider>
