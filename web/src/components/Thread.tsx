@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CommentForm from "./CommentForm";
+import CopyButton from "./CopyButton";
 import Markdown from "./Markdown";
 import { LINE_SCROLL_OFFSET } from "./codeViewStyle";
 import { FocusedCommentContext, FocusedThreadContext } from "./threadFocus";
@@ -436,6 +437,11 @@ function CommentItem({
         )}
         <span className="ml-auto inline-flex items-center gap-0.5">
           {actions}
+          <CopyButton
+            text={c.body}
+            label="Copy the comment"
+            title="Copy the comment as markdown"
+          />
           {!c.draft && (
             <Button
               type="button"

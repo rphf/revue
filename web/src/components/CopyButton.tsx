@@ -2,9 +2,17 @@ import { useEffect, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Copies the file's path, as GitHub's button after the name does;
-// a check for a moment says it worked.
-export default function CopyPathButton({ path }: { path: string }) {
+// An icon button that copies `text`; a check for a moment says it
+// worked. `label` names the button for screen readers, `title` on hover.
+export default function CopyButton({
+  text,
+  label,
+  title,
+}: {
+  text: string;
+  label: string;
+  title: string;
+}) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -17,10 +25,10 @@ export default function CopyPathButton({ path }: { path: string }) {
       variant="ghost"
       size="icon-xs"
       className="text-muted-foreground hover:text-foreground"
-      aria-label={copied ? "Copied" : `Copy the path of ${path}`}
-      title={copied ? "Copied" : "Copy the path"}
+      aria-label={copied ? "Copied" : label}
+      title={copied ? "Copied" : title}
       onClick={() => {
-        void navigator.clipboard?.writeText(path).then(() => setCopied(true));
+        void navigator.clipboard?.writeText(text).then(() => setCopied(true));
       }}
     >
       {copied ? <CheckIcon /> : <CopyIcon />}

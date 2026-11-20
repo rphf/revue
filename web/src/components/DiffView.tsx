@@ -39,7 +39,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { BASE_OPTIONS, LINE_SCROLL_OFFSET } from "./codeViewStyle";
-import CopyPathButton from "./CopyPathButton";
+import CopyButton from "./CopyButton";
 import ImageDiff, { type ImageDiffProps } from "./ImageDiff";
 import { useScrollMemory } from "./scrollMemory";
 import { useStickyHeaderFix } from "./stickyHeaderFix";
@@ -217,9 +217,17 @@ interface BinaryMemo {
   version: number;
 }
 
-const renderHeaderFilenameSuffix = (item: CodeViewItem<AnnotationMeta>) => (
-  <CopyPathButton path={pathFromItemId(item.id)} />
-);
+// Copies the file's path, as GitHub's button after the name does.
+const renderHeaderFilenameSuffix = (item: CodeViewItem<AnnotationMeta>) => {
+  const path = pathFromItemId(item.id);
+  return (
+    <CopyButton
+      text={path}
+      label={`Copy the path of ${path}`}
+      title="Copy the path"
+    />
+  );
+};
 
 // The rich and folded variants are separate items: the virtualizer
 // prepares a layout per item id and refuses to render a file where it

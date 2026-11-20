@@ -290,6 +290,39 @@ describe("Thread", () => {
     });
   });
 
+  it("copies a comment as markdown", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(
+      <Thread
+        thread={thread([
+          comment({ id: 1, body: "why **this** loop?" }),
+          comment({ id: 2, body: "wip", draft: true }),
+        ])}
+        onChanged={() => {}}
+      />,
+    );
+    fireEvent.click(
+      within(screen.getByTestId("comment-1")).getByRole("button", {
+        name: "Copy the comment",
+      }),
+    );
+    expect(writeText).toHaveBeenCalledWith("why **this** loop?");
+    expect(
+      await within(screen.getByTestId("comment-1")).findByRole("button", {
+        name: "Copied",
+      }),
+    ).toBeVisible();
+    expect(
+      within(screen.getByTestId("comment-2")).getByRole("button", {
+        name: "Copy the comment",
+      }),
+    ).toBeInTheDocument();
+  });
+
   describe("a link to one comment", () => {
     it("outlines that comment, not the card, and shows it if minimized", () => {
       Element.prototype.scrollIntoView = vi.fn();
